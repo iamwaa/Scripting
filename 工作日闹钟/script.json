@@ -1,0 +1,44 @@
+{
+  "color" : "rgba(243, 159, 68,1)",
+  "version" : "1.0.0",
+  "localizedDescriptions" : {
+    "ja" : "スマートな平日アラーム管理。休日ルール、カレンダー購読、手動マークに対応し、平日にのみアラームを鳴らします。",
+    "pt" : "Gerenciamento inteligente de alarmes para dias úteis. Suporta regras de folga, assinatura de calendário e marcação manual. O alarme toca apenas em dias úteis.",
+    "ru" : "Умное управление будильником для рабочих дней. Поддерживает правила выходных, подписку на календарь и ручную маркировку. Будильник срабатывает только по рабочим дням.",
+    "zh" : "智能工作日闹钟管理。支持休息日规则、节假日订阅和手动标注，仅在工作日响铃，休息日自动跳过。",
+    "fr" : "Gestion intelligente des alarmes pour les jours ouvrables. Prend en charge les règles de repos, l'abonnement au calendrier et le marquage manuel. L'alarme sonne uniquement les jours ouvrables.",
+    "en" : "Smart workday alarm management. Supports rest day rules, calendar subscriptions, and manual overrides. Alarm rings only on workdays, automatically skips rest days.",
+    "es" : "Gestión inteligente de alarmas para días laborales. Compatible con reglas de descanso, suscripciones de calendario y marcado manual. La alarma suena solo en días laborales.",
+    "de" : "Intelligente Werktag-Alarmverwaltung. Unterstützt Ruhetagsregeln, Kalenderabonnements und manuelle Markierungen. Der Alarm klingelt nur an Werktagen.",
+    "it" : "Gestione intelligente delle sveglie nei giorni lavorativi. Supporta regole di riposo, sottoscrizioni calendario e marcatura manuale. La sveglia suona solo nei giorni lavorativi."
+  },
+  "runInApp" : true,
+  "description" : "智能工作日闹钟管理。支持休息日规则、节假日订阅和手动标注，仅在工作日响铃，休息日自动跳过。",
+  "icon" : "calendar.badge.clock",
+  "name" : "工作日闹钟",
+  "iconImage" : null,
+  "remoteResource" : null,
+  "contributors" : [
+
+  ],
+  "author" : {
+    "homepage" : "https:\/\/github.com\/iamwaa",
+    "name" : "Waa",
+    "email" : null
+  },
+  "localizedNames" : {
+    "en" : "Workday Alarm",
+    "pt" : "Alarme Dias Úteis",
+    "it" : "Sveglia Giorni Lavorativi",
+    "es" : "Alarma Laboral",
+    "ru" : "Будильник на рабочие дни",
+    "fr" : "Réveil Jours Ouvrables",
+    "zh" : "工作日闹钟",
+    "ja" : "平日アラーム",
+    "de" : "Werktag-Alarm"
+  },
+  "intentInputTypes" : [
+    "Text"
+  ],
+  "entry" : "index.tsx"
+}

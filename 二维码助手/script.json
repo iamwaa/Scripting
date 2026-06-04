@@ -1,0 +1,44 @@
+{
+  "intentInputTypes" : [
+
+  ],
+  "remoteResource" : null,
+  "author" : {
+    "email" : null,
+    "name" : "Waa",
+    "homepage" : "https:\/\/github.com\/iamwaa"
+  },
+  "description" : "基于 Scripting 打造的 iOS 实用工具。它不仅拥有纯粹、丝滑的苹果原生 UI 体验，更在传统的“扫码-生成”流程上进行了深度优化，加入了极具效率的自定义智能跳转引擎，让二维码的处理变得前所未有的简单和自由。",
+  "localizedDescriptions" : {
+    "zh" : "",
+    "de" : "",
+    "it" : "",
+    "pt" : "",
+    "es" : "",
+    "ja" : "",
+    "ru" : "",
+    "en" : "",
+    "fr" : ""
+  },
+  "icon" : "qrcode.viewfinder",
+  "entry" : "index.tsx",
+  "contributors" : [
+
+  ],
+  "name" : "二维码助手",
+  "localizedNames" : {
+    "de" : "",
+    "es" : "",
+    "ru" : "",
+    "it" : "",
+    "zh" : "",
+    "fr" : "",
+    "pt" : "",
+    "ja" : "",
+    "en" : ""
+  },
+  "version" : "1.0.0",
+  "color" : "rgba(71, 102, 194,1)",
+  "iconImage" : "",
+  "runInApp" : false
+}

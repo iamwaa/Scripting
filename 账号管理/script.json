@@ -1,0 +1,44 @@
+{
+  "description" : "基于 Scripting App 构建，专为 iOS 原生体验优化的凭据管理工具。安全存储您的 API Keys、Token、服务器密码及开发账号。支持自定义字段、标签分组，并通过 iCloud 和WebDAV 实现云同步。",
+  "color" : "rgba(128, 138, 148,1)",
+  "runInApp" : false,
+  "version" : "1.0.0",
+  "localizedNames" : {
+    "fr" : "",
+    "en" : "",
+    "pt" : "",
+    "ru" : "",
+    "it" : "",
+    "ja" : "",
+    "zh" : "",
+    "es" : "",
+    "de" : ""
+  },
+  "icon" : "key.fill",
+  "entry" : "index.tsx",
+  "remoteResource" : null,
+  "iconImage" : "",
+  "localizedDescriptions" : {
+    "zh" : "",
+    "fr" : "",
+    "ja" : "",
+    "es" : "",
+    "en" : "",
+    "it" : "",
+    "pt" : "",
+    "de" : "",
+    "ru" : ""
+  },
+  "intentInputTypes" : [
+
+  ],
+  "contributors" : [
+
+  ],
+  "name" : "账号管理",
+  "author" : {
+    "email" : null,
+    "name" : "Waa",
+    "homepage" : "https:\/\/github.com\/iamwaa"
+  }
+}

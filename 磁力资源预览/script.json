@@ -1,0 +1,44 @@
+{
+  "name" : "磁力资源预览",
+  "intentInputTypes" : [
+
+  ],
+  "icon" : "link",
+  "color" : "rgba(10, 132, 255, 1)",
+  "runInApp" : false,
+  "contributors" : [
+
+  ],
+  "version" : "1.0.0",
+  "iconImage" : "",
+  "localizedNames" : {
+    "ru" : "",
+    "ja" : "",
+    "es" : "",
+    "pt" : "",
+    "zh" : "磁力资源预览",
+    "de" : "",
+    "fr" : "",
+    "it" : "",
+    "en" : "Magnet Preview"
+  },
+  "remoteResource" : null,
+  "entry" : "index.tsx",
+  "author" : {
+    "email" : null,
+    "name" : "Waa",
+    "homepage" : "https:\/\/github.com\/iamwaa"
+  },
+  "description" : "磁力搜索与资源预览工具。支持通过 xcili.net 搜索资源、提取纯磁力链接和文件列表，并基于 whatslink.info 查询磁力、ED2K 与下载链接的资源名称、大小、文件数量、类型和截图；支持收藏、复制链接、保存预览截图。",
+  "localizedDescriptions" : {
+    "pt" : "",
+    "es" : "",
+    "it" : "",
+    "de" : "",
+    "fr" : "",
+    "zh" : "磁力、ED2K 与下载链接资源预览工具。基于 whatslink.info 查询接口，展示资源名称、大小、文件数量、类型和截图，并支持收藏、复制链接、保存预览截图。",
+    "ru" : "",
+    "ja" : "",
+    "en" : "Search magnet resources via xcili.net, extract pure magnet links and file lists, and preview magnet, ED2K and download link metadata via whatslink.info."
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "color" : "rgba(124, 76, 179,1)",
+  "author" : {
+    "email" : null,
+    "name" : "Waa",
+    "homepage" : "https:\/\/github.com\/iamwaa"
+  },
+  "icon" : "square.2.layers.3d.fill",
+  "version" : "1.0.0",
+  "intentInputTypes" : [
+
+  ],
+  "localizedNames" : {
+    "de" : "",
+    "zh" : "",
+    "pt" : "",
+    "it" : "",
+    "ja" : "",
+    "es" : "",
+    "ru" : "",
+    "en" : "",
+    "fr" : ""
+  },
+  "name" : "NewAPI账号管理",
+  "localizedDescriptions" : {
+    "pt" : "",
+    "es" : "",
+    "en" : "",
+    "it" : "",
+    "zh" : "",
+    "ja" : "",
+    "de" : "",
+    "fr" : "",
+    "ru" : ""
+  },
+  "iconImage" : null,
+  "description" : null,
+  "runInApp" : false,
+  "entry" : "index.tsx",
+  "contributors" : [
+
+  ],
+  "remoteResource" : null
+}

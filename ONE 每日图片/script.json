@@ -1,0 +1,44 @@
+{
+  "description" : "ONE 每日图片小组件，支持最新和手动显示模式。修改于@Link's Channel 的Bing 壁纸小组件",
+  "remoteResource" : null,
+  "localizedNames" : {
+    "it" : "",
+    "zh" : "ONE 每日图片",
+    "en" : "",
+    "ru" : "",
+    "pt" : "",
+    "ja" : "",
+    "fr" : "",
+    "de" : "",
+    "es" : ""
+  },
+  "iconImage" : "",
+  "color" : "rgba(43, 190, 81,1)",
+  "name" : "ONE 每日图片",
+  "intentInputTypes" : [
+
+  ],
+  "author" : {
+    "name" : "Waa",
+    "email" : null,
+    "homepage" : "https:\/\/github.com\/iamwaa"
+  },
+  "contributors" : [
+
+  ],
+  "version" : "1.0.0",
+  "localizedDescriptions" : {
+    "ru" : "",
+    "ja" : "",
+    "pt" : "",
+    "en" : "",
+    "it" : "",
+    "zh" : "ONE 每日图片小组件，支持最新和手动显示模式。",
+    "es" : "",
+    "fr" : "",
+    "de" : ""
+  },
+  "runInApp" : false,
+  "entry" : "index.tsx",
+  "icon" : "photo.on.rectangle"
+}

@@ -1,0 +1,38 @@
+[
+  {
+    "appName" : "微信（多场景聚合）",
+    "iconUrl" : "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/8b/9f/53/8b9f534e-e826-d72a-f3ae-04231eef8ccf/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-0-85-220.png/512x512bb.png",
+    "keyword" : "4XV.CN,x.5dp.top,z.didi.cn",
+    "urlScheme" : "weixin://scanqrcode"
+  },
+  {
+    "appName" : "支付宝（多场景聚合）",
+    "iconUrl" : "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/c9/6a/b4/c96ab483-5589-1806-e7f7-97802455e6b3/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.png",
+    "keyword" : "yaoyao.cebbank.com,modao.cc,api.paypay.ne.jp,page.cainiao.com,active.starbucks.com.cn,life.qujie365.com,qr.youonbike.com,qrcode-som.bkchina.cn,99zhe.com,d.sbux.cn,m.hualala.com,member.sunsea.net,cjmz.nbmiao.com,bjzxwxzj.gjj.beijing.gov.cn,weixin.ankuaicloud.com,dsf.etcp.cn,wfcl.jtgl.beijing.gov.cn,wx.gateway.cxyun.net.cn",
+    "urlScheme" : "alipay://platformapi/startapp?appId=10000007&qrcode={content}"
+  },
+  {
+    "appName" : "学习强国",
+    "iconUrl" : "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/ba/66/34/ba6634e0-8d61-340c-116d-fe9036c0fa43/StudyAppIcon-1x_U007emarketing-0-7-0-85-220-0.png/512x512bb.png",
+    "keyword" : "login.xuexi.cn",
+    "urlScheme" : "dtxuexi://appclient/page/study_feeds?url={content}"
+  },
+  {
+    "appName" : "小米",
+    "iconUrl" : "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/ac/8b/49/ac8b49ab-0f3a-607b-2d7a-dab42bb1a7ec/AppIcon-0-1x_U007emarketing-0-6-0-0-85-220-0.png/512x512bb.png",
+    "keyword" : "mi.cn,xiaomi",
+    "urlScheme" : "{url}"
+  },
+  {
+    "appName" : "停车扫码支付",
+    "iconUrl" : "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/c9/6a/b4/c96ab483-5589-1806-e7f7-97802455e6b3/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.png",
+    "keyword" : "member.sunsea.net,weixin.ankuaicloud.com,wx.gateway.cxyun.net.cn",
+    "urlScheme" : "alipay://platformapi/startapp?appId=10000007&qrcode={content}"
+  },
+  {
+    "appName" : "小红书",
+    "iconUrl" : "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/4e/3e/b8/4e3eb8c9-3e39-fba7-7134-1b6952dc503a/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.png",
+    "keyword" : "xhslink.com",
+    "urlScheme" : "xhsdiscover://scan"
+  }
+]

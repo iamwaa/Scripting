@@ -1,0 +1,44 @@
+{
+  "iconImage" : "",
+  "entry" : "index.tsx",
+  "color" : "rgba(36, 120, 98, 1)",
+  "localizedDescriptions" : {
+    "ja" : "",
+    "ru" : "",
+    "de" : "",
+    "pt" : "",
+    "it" : "",
+    "es" : "",
+    "zh" : "查看 Project Auto Backup 生成的项目历史，并将项目还原到任意备份快照。",
+    "fr" : "",
+    "en" : "Browse Project Auto Backup snapshots and restore projects to a selected history point."
+  },
+  "version" : "1.0.0",
+  "localizedNames" : {
+    "zh" : "项目历史管理器",
+    "it" : "",
+    "en" : "Project History Manager",
+    "ja" : "",
+    "es" : "",
+    "fr" : "",
+    "de" : "",
+    "pt" : "",
+    "ru" : ""
+  },
+  "intentInputTypes" : [
+
+  ],
+  "author" : {
+    "email" : null,
+    "name" : "Waa",
+    "homepage" : "https:\/\/github.com\/iamwaa"
+  },
+  "contributors" : [
+
+  ],
+  "description" : "查看 Project Auto Backup 生成的项目历史，并将项目还原到任意备份快照。",
+  "name" : "项目历史管理器",
+  "icon" : "clock.arrow.circlepath",
+  "runInApp" : true,
+  "remoteResource" : null
+}

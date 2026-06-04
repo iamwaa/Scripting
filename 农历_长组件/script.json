@@ -1,0 +1,43 @@
+{
+  "intentInputTypes" : [
+
+  ],
+  "version" : "1.0.0",
+  "contributors" : [
+
+  ],
+  "remoteResource" : null,
+  "iconImage" : "",
+  "icon" : "calendar",
+  "author" : {
+    "homepage" : "https:\/\/github.com\/iamwaa",
+    "email" : null,
+    "name" : "Waa"
+  },
+  "runInApp" : false,
+  "name" : "农历_长组件",
+  "localizedDescriptions" : {
+    "de" : "",
+    "zh" : "",
+    "it" : "",
+    "fr" : "",
+    "pt" : "",
+    "es" : "",
+    "ja" : "",
+    "en" : "",
+    "ru" : ""
+  },
+  "description" : "",
+  "localizedNames" : {
+    "zh" : "",
+    "en" : "",
+    "fr" : "",
+    "ru" : "",
+    "es" : "",
+    "de" : "",
+    "pt" : "",
+    "ja" : "",
+    "it" : ""
+  },
+  "color" : "rgba(243, 159, 68,1)"
+}
