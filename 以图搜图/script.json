@@ -1,0 +1,46 @@
+{
+  "version" : "1.0.0",
+  "localizedNames" : {
+    "en" : "",
+    "zh" : "以图搜图",
+    "it" : "",
+    "ja" : "",
+    "ru" : "",
+    "de" : "",
+    "fr" : "",
+    "pt" : "",
+    "es" : ""
+  },
+  "color" : "rgba(10, 132, 255, 1)",
+  "remoteResource" : null,
+  "runInApp" : false,
+  "localizedDescriptions" : {
+    "en" : "",
+    "ja" : "",
+    "zh" : "从相册选择图片或从分享表单接收图片，然后使用多个搜索引擎以图搜图。",
+    "it" : "",
+    "pt" : "",
+    "de" : "",
+    "fr" : "",
+    "es" : "",
+    "ru" : ""
+  },
+  "entry" : "index.tsx",
+  "name" : "以图搜图",
+  "icon" : "photo.on.rectangle.angled",
+  "intentInputTypes" : [
+    "images",
+    "fileURLs",
+    "Images"
+  ],
+  "description" : "从相册选择图片或从分享表单接收图片，然后使用多个搜索引擎以图搜图。",
+  "contributors" : [
+
+  ],
+  "author" : {
+    "email" : null,
+    "homepage" : "https:\/\/github.com\/iamwaa",
+    "name" : "Waa"
+  },
+  "iconImage" : ""
+}

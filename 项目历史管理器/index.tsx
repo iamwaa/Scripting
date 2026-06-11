@@ -14,6 +14,9 @@ import {
   Spacer,
   Text,
   TextField,
+  Toolbar,
+  ToolbarItem,
+  ToolbarSpacer,
   VStack,
   useMemo,
   useObservable,
@@ -22,10 +25,11 @@ import {
 
 declare const Dialog: any
 
-const managerName = "Project History Manager"
-const configPath = Path.join(FileManager.appGroupDocumentsDirectory, "project-history-manager-config.json")
+const configStorageKey = "project-history-manager-config"
 const defaultBackupRoot = Path.join(FileManager.iCloudDocumentsDirectory, "backup")
 const defaultProjectRoot = FileManager.scriptsDirectory
+const managerProjectName = "项目历史管理器"
+const managerProjectPath = Path.join(defaultProjectRoot, managerProjectName)
 
 type Snapshot = {
   id: string
@@ -54,6 +58,12 @@ type AppConfig = {
   projectRoot: string
   backupBookmarkName: string | null
   projectBookmarkName: string | null
+}
+
+type ProjectCandidate = {
+  id: string
+  name: string
+  path: string
 }
 
 type DirectorySummary = {
@@ -244,34 +254,38 @@ function shortPath(path: string) {
   return path
 }
 
-function resolveConfig(): AppConfig {
-  const defaultConfig: AppConfig = {
-    backupRoot: defaultBackupRoot,
-    projectRoot: defaultProjectRoot,
-    backupBookmarkName: null,
-    projectBookmarkName: null,
-  }
+function normalizeComparablePath(path: string) {
+  const normalized = path.trim().replace(/\/+$/g, "")
+  return normalized.startsWith("/private/var/") ? normalized.slice("/private".length) : normalized
+}
 
-  if (!pathExists(configPath)) {
-    return defaultConfig
-  }
+function isSamePath(left: string, right: string) {
+  return normalizeComparablePath(left) === normalizeComparablePath(right)
+}
 
-  try {
-    const savedConfig = JSON.parse(FileManager.readAsStringSync(configPath)) as Partial<AppConfig>
+function isSelfProject(project: ProjectHistory) {
+  return isSamePath(project.projectPath, managerProjectPath)
+}
 
-    return {
-      backupRoot: savedConfig.backupRoot || defaultBackupRoot,
-      projectRoot: savedConfig.projectRoot || defaultProjectRoot,
-      backupBookmarkName: null,
-      projectBookmarkName: null,
-    }
-  } catch {
-    return defaultConfig
+function normalizeConfig(config: Partial<AppConfig> | null | undefined): AppConfig {
+  return {
+    backupRoot: config?.backupRoot || defaultBackupRoot,
+    projectRoot: config?.projectRoot || defaultProjectRoot,
+    backupBookmarkName: config?.backupBookmarkName || null,
+    projectBookmarkName: config?.projectBookmarkName || null,
   }
 }
 
+function resolveConfig(): AppConfig {
+  return normalizeConfig(Storage.get<Partial<AppConfig>>(configStorageKey))
+}
+
 function saveConfig(config: AppConfig) {
-  FileManager.writeAsStringSync(configPath, JSON.stringify(config, null, 2))
+  const nextConfig = normalizeConfig(config)
+  const saved = Storage.set(configStorageKey, nextConfig)
+  if (!saved) {
+    throw new Error("保存路径配置失败")
+  }
 }
 
 function validateDirectory(path: string, setStatus: (status: string) => void) {
@@ -328,6 +342,21 @@ function scanHistories(config: AppConfig): ProjectHistory[] {
     .sort((a, b) => (b.latest?.timestamp || 0) - (a.latest?.timestamp || 0))
 }
 
+function scanProjectDirectories(projectRoot: string): ProjectCandidate[] {
+  if (!pathExists(projectRoot)) {
+    return []
+  }
+
+  return listChildren(projectRoot)
+    .filter(isDirectory)
+    .map((path) => ({
+      id: path,
+      name: Path.basename(path),
+      path,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"))
+}
+
 function filterProjects(projects: ProjectHistory[], query: string) {
   const keyword = query.trim().toLowerCase()
   if (!keyword) {
@@ -372,15 +401,37 @@ function copyDirectory(source: string, destination: string) {
   }
 }
 
+function createProjectBackup(projectPath: string, backupRoot: string, description: string) {
+  if (!pathExists(projectPath) || !isDirectory(projectPath)) {
+    throw new Error(`项目目录不存在或不是文件夹：${projectPath}`)
+  }
+
+  if (!pathExists(backupRoot)) {
+    FileManager.createDirectorySync(backupRoot, true)
+  }
+
+  const projectName = Path.basename(projectPath)
+  const backupProjectPath = Path.join(backupRoot, projectName)
+  const folderName = `${projectName}_${safeName(description || "主动备份")}_${timestampForName()}`
+  const destination = Path.join(backupProjectPath, folderName)
+
+  if (pathExists(destination)) {
+    throw new Error(`备份目录已存在：${destination}`)
+  }
+
+  copyDirectory(projectPath, destination)
+  return parseSnapshot(projectName, destination)
+}
+
 function createRestoreSafetyBackup(project: ProjectHistory, snapshot: Snapshot) {
-  const folderName = `${Path.basename(project.path)}_还原前_还原到${safeName(snapshot.description)}_${timestampForName()}`
+  const folderName = `${Path.basename(project.path)}_${safeName(snapshot.description)}_还原前备份_${timestampForName()}`
   const destination = Path.join(project.path, folderName)
   copyDirectory(project.projectPath, destination)
   return destination
 }
 
 async function restoreSnapshot(project: ProjectHistory, snapshot: Snapshot) {
-  if (project.name === managerName) {
+  if (isSelfProject(project)) {
     throw new Error("不能在运行时还原历史管理器自身")
   }
 
@@ -494,6 +545,20 @@ function ProjectRow({ project }: { project: ProjectHistory }) {
   )
 }
 
+function ProjectCandidateRow({ project }: { project: ProjectCandidate }) {
+  return (
+    <VStack alignment="leading" spacing={6}>
+      <HStack spacing={10}>
+        <Image systemName="folder" foregroundStyle="tintColor" />
+        <Text font="headline" foregroundStyle="label">{project.name}</Text>
+      </HStack>
+      <Text font="caption" foregroundStyle="secondaryLabel">
+        {shortPath(project.path)}
+      </Text>
+    </VStack>
+  )
+}
+
 function SnapshotRow({ snapshot }: { snapshot: Snapshot }) {
   return (
     <VStack alignment="leading" spacing={6}>
@@ -528,18 +593,31 @@ function RefreshButton({ action }: { action: () => void }) {
   )
 }
 
+function SettingsButton({ config, onConfigChanged }: { config: AppConfig; onConfigChanged: (config: AppConfig) => void }) {
+  return (
+    <NavigationLink destination={<SettingsPage config={config} onConfigChanged={onConfigChanged} />}>
+      <Image systemName="gearshape" fontWeight="semibold" />
+    </NavigationLink>
+  )
+}
+
 function ProjectListPage() {
   const dismiss = Navigation.useDismiss()
   const [config, setConfigState] = useState<AppConfig>(resolveConfig())
-  const projects = useObservable<ProjectHistory[]>(() => scanHistories(config))
-  const visibleProjects = useObservable<ProjectHistory[]>(() => projects.value)
+  const [projects, setProjectsState] = useState<ProjectHistory[]>(scanHistories(config))
+  const [visibleProjects, setVisibleProjects] = useState<ProjectHistory[]>(projects)
   const [query, setQuery] = useState("")
+  const [searchPresented, setSearchPresented] = useState(false)
   const [toast, setToast] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false })
   const showToast = (msg: string, isError = false) => setToast({ msg, isError })
 
+  function updateVisible(list: ProjectHistory[]) {
+    setVisibleProjects(list)
+  }
+
   function setProjectList(nextProjects: ProjectHistory[], nextQuery = query) {
-    projects.setValue(nextProjects)
-    visibleProjects.setValue(filterProjects(nextProjects, nextQuery))
+    setProjectsState(nextProjects)
+    updateVisible(filterProjects(nextProjects, nextQuery))
   }
 
   function applyConfig(nextConfig: AppConfig) {
@@ -556,7 +634,16 @@ function ProjectListPage() {
 
   function handleQueryChanged(nextQuery: string) {
     setQuery(nextQuery)
-    visibleProjects.setValue(filterProjects(projects.value, nextQuery))
+    updateVisible(filterProjects(projects, nextQuery))
+  }
+
+  function handleSearchPresentedChanged(presented: boolean) {
+    setSearchPresented(presented)
+    if (!presented) {
+      // 搜索关闭时重置查询并刷新列表
+      setQuery("")
+      updateVisible(projects)
+    }
   }
 
   async function deleteProject(project: ProjectHistory) {
@@ -585,54 +672,55 @@ function ProjectListPage() {
       <List
         navigationTitle="项目历史"
         navigationBarTitleDisplayMode="inline"
-        searchable={{ value: query, onChanged: handleQueryChanged, prompt: "搜索项目" }}
+        searchable={{ value: query, onChanged: handleQueryChanged, prompt: "搜索项目", presented: { value: searchPresented, onChanged: handleSearchPresentedChanged } }}
         toast={{ isPresented: toast.msg !== "", onChanged: (v) => { if (!v) setToast({ msg: "", isError: false }) }, content: <Text foregroundStyle={toast.isError ? "#FF3B30" : "label"}>{toast.msg}</Text>, position: "top" }}
-        toolbar={{
-          cancellationAction: <CloseButton action={dismiss} />,
-          primaryAction: <RefreshButton action={refreshProjects} />,
-        }}
+        toolbar={
+          <Toolbar>
+            <ToolbarItem placement="topBarLeading">
+              <CloseButton action={dismiss} />
+            </ToolbarItem>
+            <ToolbarItem placement="topBarTrailing">
+              <RefreshButton action={refreshProjects} />
+            </ToolbarItem>
+            <ToolbarSpacer placement="topBarTrailing" />
+            <ToolbarItem placement="topBarTrailing">
+              <SettingsButton config={config} onConfigChanged={applyConfig} />
+            </ToolbarItem>
+          </Toolbar>
+        }
       >
-        <Section>
-          <NavigationLink destination={<PathSettingPage type="backup" config={config} onConfigChanged={applyConfig} />}>
+        <Section title="主动备份">
+          <NavigationLink destination={<ManualBackupPage config={config} onBackupComplete={refreshProjects} />}>
             <HStack spacing={10}>
-              <Image systemName="externaldrive" foregroundStyle="tintColor" />
-              <PathMetric title="备份目录" value={config.backupRoot} />
+              <Image systemName="plus.circle" foregroundStyle="tintColor" />
+              <Text>选择项目并备份</Text>
             </HStack>
           </NavigationLink>
-          <NavigationLink destination={<PathSettingPage type="project" config={config} onConfigChanged={applyConfig} />}>
-            <HStack spacing={10}>
-              <Image systemName="folder" foregroundStyle="tintColor" />
-              <PathMetric title="项目目录" value={config.projectRoot} />
-            </HStack>
-          </NavigationLink>
-          <Metric title="项目数量" value={projects.value.length} />
+          <Text font="caption" foregroundStyle="secondaryLabel">选择项目并输入描述后立即保存到当前备份目录。</Text>
         </Section>
-        {visibleProjects.value.length === 0 ? (
-          <ContentUnavailableView title="暂无备份" systemImage="tray" description="当前路径下没有可显示的项目备份" frame={{ maxWidth: "infinity", minHeight: 300 }} listRowBackground={<VStack />} listRowSeparator="hidden" />
+        {visibleProjects.length === 0 ? (
+          <ContentUnavailableView title={query.trim() ? "没有匹配的项目" : "暂无备份"} systemImage="tray" description={query.trim() ? "请尝试更换搜索关键词" : "当前路径下没有可显示的项目备份"} frame={{ maxWidth: "infinity", minHeight: 300 }} listRowBackground={<VStack />} listRowSeparator="hidden" />
         ) : (
-          <Section title="项目">
-            <ForEach
-              data={visibleProjects}
-              builder={(project) => (
-                <NavigationLink
-                  key={project.id}
-                  destination={<HistoryPage project={project} onProjectChange={refreshProjects} />}
-                  trailingSwipeActions={{
-                    allowsFullSwipe: false,
-                    actions: [
-                      <Button
-                        title="删除"
-                        systemImage="trash"
-                        tint="#FF3B30"
-                        action={() => deleteProject(project)}
-                      />
-                    ],
-                  }}
-                >
-                  <ProjectRow project={project} />
-                </NavigationLink>
-              )}
-            />
+          <Section title={`项目（${visibleProjects.length}）`}>
+            {visibleProjects.map((project) => (
+              <NavigationLink
+                key={project.id}
+                destination={<HistoryPage project={project} onProjectChange={refreshProjects} />}
+                trailingSwipeActions={{
+                  allowsFullSwipe: false,
+                  actions: [
+                    <Button
+                      title="删除"
+                      systemImage="trash"
+                      tint="#FF3B30"
+                      action={() => deleteProject(project)}
+                    />
+                  ],
+                }}
+              >
+                <ProjectRow project={project} />
+              </NavigationLink>
+            ))}
           </Section>
         )}
       </List>
@@ -641,6 +729,121 @@ function ProjectListPage() {
 }
 
 type PathSettingType = "backup" | "project"
+
+function SettingsPage({ config, onConfigChanged }: { config: AppConfig; onConfigChanged: (config: AppConfig) => void }) {
+  const [currentConfig, setCurrentConfig] = useState<AppConfig>(config)
+
+  function applyConfig(nextConfig: AppConfig) {
+    setCurrentConfig(nextConfig)
+    onConfigChanged(nextConfig)
+  }
+
+  return (
+    <List navigationTitle="设置" navigationBarTitleDisplayMode="inline">
+      <Section title="路径设置">
+        <NavigationLink destination={<PathSettingPage type="backup" config={currentConfig} onConfigChanged={applyConfig} />}>
+          <HStack spacing={10}>
+            <Image systemName="externaldrive" foregroundStyle="tintColor" />
+            <PathMetric title="备份目录" value={currentConfig.backupRoot} />
+          </HStack>
+        </NavigationLink>
+        <NavigationLink destination={<PathSettingPage type="project" config={currentConfig} onConfigChanged={applyConfig} />}>
+          <HStack spacing={10}>
+            <Image systemName="folder" foregroundStyle="tintColor" />
+            <PathMetric title="项目目录" value={currentConfig.projectRoot} />
+          </HStack>
+        </NavigationLink>
+      </Section>
+    </List>
+  )
+}
+
+function filterCandidates(candidates: ProjectCandidate[], query: string) {
+  const keyword = query.trim().toLowerCase()
+  if (!keyword) {
+    return candidates
+  }
+
+  return candidates.filter((item) => item.name.toLowerCase().includes(keyword))
+}
+
+function ManualBackupPage({ config, onBackupComplete }: { config: AppConfig; onBackupComplete?: () => void }) {
+  const [candidates, setCandidates] = useState<ProjectCandidate[]>(scanProjectDirectories(config.projectRoot))
+  const [visibleCandidates, setVisibleCandidates] = useState<ProjectCandidate[]>(candidates)
+  const [query, setQuery] = useState("")
+  const [searchPresented, setSearchPresented] = useState(false)
+  const [toast, setToast] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false })
+  const showToast = (msg: string, isError = false) => setToast({ msg, isError })
+
+  function updateVisible(list: ProjectCandidate[]) {
+    setVisibleCandidates(list)
+  }
+
+  function refreshCandidates() {
+    const next = scanProjectDirectories(config.projectRoot)
+    setCandidates(next)
+    updateVisible(filterCandidates(next, query))
+  }
+
+  function handleQueryChanged(nextQuery: string) {
+    setQuery(nextQuery)
+    updateVisible(filterCandidates(candidates, nextQuery))
+  }
+
+  function handleSearchPresentedChanged(presented: boolean) {
+    setSearchPresented(presented)
+    if (!presented) {
+      // 搜索关闭时重置查询并刷新列表
+      setQuery("")
+      updateVisible(candidates)
+    }
+  }
+
+  async function createManualBackup(project: ProjectCandidate) {
+    try {
+      const description = await Dialog.prompt({
+        title: "备份描述",
+        message: `为项目「${project.name}」创建备份`,
+        defaultValue: "主动备份",
+        placeholder: "例如：发布前备份",
+        cancelLabel: "取消",
+        confirmLabel: "开始备份",
+      })
+      if (description == null) {
+        showToast("已取消备份")
+        return
+      }
+
+      createProjectBackup(project.path, config.backupRoot, description)
+      showToast("备份已创建")
+      onBackupComplete?.()
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), true)
+    }
+  }
+
+  return (
+    <List
+      navigationTitle="选择项目"
+      navigationBarTitleDisplayMode="inline"
+      searchable={{ value: query, onChanged: handleQueryChanged, prompt: "搜索项目", presented: { value: searchPresented, onChanged: handleSearchPresentedChanged } }}
+      toast={{ isPresented: toast.msg !== "", onChanged: (v) => { if (!v) setToast({ msg: "", isError: false }) }, content: <Text foregroundStyle={toast.isError ? "#FF3B30" : "label"}>{toast.msg}</Text>, position: "top" }}
+      toolbar={{ primaryAction: <RefreshButton action={refreshCandidates} /> }}
+    >
+      {visibleCandidates.length === 0 ? (
+        <ContentUnavailableView title={query.trim() ? "没有匹配的项目" : "暂无项目"} systemImage="folder" description={query.trim() ? "请尝试更换搜索关键词" : "当前项目目录下没有可备份的项目文件夹"} frame={{ maxWidth: "infinity", minHeight: 300 }} listRowBackground={<VStack />} listRowSeparator="hidden" />
+      ) : (
+        <Section title={`项目列表（${visibleCandidates.length}）`}>
+          {visibleCandidates.map((project) => (
+            <Button key={project.id} action={() => createManualBackup(project)}>
+              <ProjectCandidateRow project={project} />
+            </Button>
+          ))}
+        </Section>
+      )}
+    </List>
+  )
+}
 
 function PathSettingPage({ type, config, onConfigChanged }: { type: PathSettingType; config: AppConfig; onConfigChanged: (config: AppConfig) => void }) {
   const isBackup = type === "backup"
@@ -749,14 +952,8 @@ function HistoryPage({ project, onProjectChange }: { project: ProjectHistory; on
       navigationBarTitleDisplayMode="inline"
       toast={{ isPresented: toast.msg !== "", onChanged: (v) => { if (!v) setToast({ msg: "", isError: false }) }, content: <Text foregroundStyle={toast.isError ? "#FF3B30" : "label"}>{toast.msg}</Text>, position: "top" }}
     >
-      <Section>
-        <PathMetric title="项目目录" value={currentProject.value.projectPath} />
-        <PathMetric title="备份目录" value={currentProject.value.path} />
-        <Metric title="历史数量" value={snapshots.value.length} />
-        <Metric title="最新备份" value={currentProject.value.latest?.timestampLabel || "无"} />
-      </Section>
       <Section
-        header={<Text>历史记录</Text>}
+        header={<Text>{`历史记录（${snapshots.value.length}）`}</Text>}
         footer={<Text>描述表示创建该备份时将要进行的修改，备份内容是修改前的项目状态。</Text>}
       >
         {snapshots.value.length === 0 ? (
@@ -767,7 +964,7 @@ function HistoryPage({ project, onProjectChange }: { project: ProjectHistory; on
             builder={(snapshot) => (
               <NavigationLink
                 key={snapshot.id}
-                destination={<SnapshotDetailPage project={currentProject.value} snapshot={snapshot} onRestoreComplete={() => { refreshSnapshots(); showToast("已还原") }} />}
+                destination={<SnapshotDetailPage project={currentProject.value} snapshot={snapshot} onRestoreComplete={() => { refreshSnapshots(); showToast("已还原，如未生效请手动构建项目") }} />}
                 trailingSwipeActions={{
                   allowsFullSwipe: false,
                   actions: [
@@ -796,7 +993,7 @@ function SnapshotDetailPage({ project, snapshot, onRestoreComplete }: { project:
   const showToast = (msg: string, isError = false) => setToast({ msg, isError })
   const [isRestoring, setIsRestoring] = useState(false)
   const files = useMemo(() => collectFiles(snapshot.path), [snapshot.path])
-  const canRestore = project.name !== managerName && pathExists(project.projectPath)
+  const canRestore = !isSelfProject(project) && pathExists(project.projectPath)
 
   function handleRestore() {
     if (isRestoring) {
@@ -828,7 +1025,6 @@ function SnapshotDetailPage({ project, snapshot, onRestoreComplete }: { project:
         <Metric title="描述" value={snapshot.description} />
         <Metric title="时间" value={snapshot.timestampLabel} />
         <Metric title="文件" value={`${snapshot.fileCount} 个 · ${formatBytes(snapshot.byteSize)}`} />
-        <PathMetric title="快照目录" value={snapshot.path} />
       </Section>
       <Section title="操作">
         {canRestore ? (
@@ -837,7 +1033,7 @@ function SnapshotDetailPage({ project, snapshot, onRestoreComplete }: { project:
           <Text foregroundStyle="secondaryLabel">当前项目不可还原</Text>
         )}
       </Section>
-      <Section title="文件预览">
+      <Section title={`文件预览（${snapshot.fileCount}）`}>
         {files.map((file) => (
           <HStack spacing={10}>
             <Image systemName="doc" foregroundStyle="secondaryLabel" />

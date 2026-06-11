@@ -1,6 +1,5 @@
 import {
   Button,
-  DatePicker,
   HStack,
   Image,
   List,
@@ -274,8 +273,7 @@ const RefreshLogPage = () => {
               </Text>
 
               <Text font="caption2" foregroundStyle="tertiaryLabel" lineLimit={1}>
-                下次 {log.nextRefreshLabel}
-                {log.displayDate ? ` · 显示 ${log.displayDate}` : ''}
+                {log.displayDate ? `显示内容 ${log.displayDate}` : ''}
               </Text>
             </VStack>
           ))
@@ -300,9 +298,6 @@ const OneWallpaperDetail = () => {
   const [showTitle, setShowTitle] = useState<boolean>(() => BingSettingsManager.getShowTitle())
   const [showCopyright, setShowCopyright] = useState<boolean>(() =>
     BingSettingsManager.getShowCopyright(),
-  )
-  const [refreshTimeValue, setRefreshTimeValue] = useState<number>(() =>
-    BingSettingsManager.getRefreshTimeValue(),
   )
   const [refreshLogs, setRefreshLogs] = useState<RefreshLogViewItem[]>(() =>
     buildRefreshLogViewItems(),
@@ -341,7 +336,6 @@ const OneWallpaperDetail = () => {
       setDisplayModeState(settings.displayMode)
       setShowTitle(settings.showTitle)
       setShowCopyright(settings.showCopyright)
-      setRefreshTimeValue(BingSettingsManager.getRefreshTimeValue())
       refreshLogItems()
 
       const displayWallpaper: WallpaperData = await getDisplayWallpaper(forceRefresh)
@@ -401,13 +395,6 @@ const OneWallpaperDetail = () => {
     setShowCopyright(value)
     BingSettingsManager.setShowCopyright(value)
     Widget.reloadAll()
-  }
-
-  const handleRefreshTimeChange = (timestamp: number): void => {
-    setRefreshTimeValue(timestamp)
-    BingSettingsManager.setRefreshTime(timestamp)
-    clearLastUpdateTime()
-    setTimeout(() => Widget.reloadAll(), 300)
   }
 
   const clearImageCache = async (): Promise<void> => {
@@ -485,13 +472,6 @@ const OneWallpaperDetail = () => {
             title="显示 VOL / 日期信息"
             value={showCopyright}
             onChanged={handleShowCopyrightChange}
-          />
-
-          <DatePicker
-            title="刷新时间"
-            value={refreshTimeValue}
-            displayedComponents={['hourAndMinute']}
-            onChanged={handleRefreshTimeChange}
           />
         </Section>
 

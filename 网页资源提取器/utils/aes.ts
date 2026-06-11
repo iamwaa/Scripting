@@ -238,9 +238,9 @@ export async function aes128CBCDecryptAsync(
   const decrypted = new Uint8Array(encrypted.length)
 
   let prev = iv
-  // 每次处理 512 个块（8KB），然后让出主线程。
+  // 每次处理 4096 个块（64KB），减少大量分片解密时的调度开销。
   // 加密 m3u8 依赖这些让出机会刷新页面和实时活动，块太大会显得进度滞后。
-  const CHUNK = 512
+  const CHUNK = 4096
 
   for (let i = 0; i < numBlocks; i += CHUNK) {
     const end = Math.min(i + CHUNK, numBlocks)

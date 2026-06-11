@@ -3,10 +3,9 @@ import {
   getCurrentSettings,
   getDisplayWallpaper,
   BingSettingsManager,
+  shouldRetryRefreshAfterFetch,
   getNextRefreshDate,
   getRetryRefreshDate,
-  shouldRefresh,
-  shouldRetryRefreshAfterFetch,
   addRefreshLog,
 } from './utils/one-service'
 import { ImageCacheManager } from './utils/image-cache'
@@ -342,36 +341,42 @@ const formatErrorMessage = (error: unknown): string => {
   return '未知错误'
 }
 
+const buildReloadPolicy = (retryRefresh: boolean): { policy: 'after'; date: Date } => {
+  return {
+    policy: 'after',
+    date: retryRefresh ? getRetryRefreshDate() : getNextRefreshDate(),
+  }
+}
+
 const presentWidget = async (): Promise<void> => {
   const settings = getCurrentSettings()
-  const forceRefresh: boolean = settings.autoRefresh ? shouldRefresh() : false
-  let reloadDate: Date = getNextRefreshDate(settings)
+  const previousDisplayDate: string = settings.currentDisplayDate
+  const forceRefresh: boolean = settings.autoRefresh && settings.displayMode === 'latest'
 
   addRefreshLog({
     status: 'start',
-    message: '小组件被系统唤醒',
+    message: '小组件被系统唤醒，交给系统调度下次刷新',
     forceRefresh,
-    nextRefreshAt: reloadDate.getTime(),
   })
 
   addRefreshLog({
     status: 'start',
-    message: forceRefresh ? '开始强制加载最新内容' : '开始加载显示内容',
+    message: forceRefresh ? '开始检查最新内容' : '开始加载显示内容',
     forceRefresh,
-    nextRefreshAt: reloadDate.getTime(),
   })
 
   const wallpaperData = await getDisplayWallpaper(forceRefresh)
   const retryRefresh: boolean = shouldRetryRefreshAfterFetch(wallpaperData)
-  if (retryRefresh) {
-    reloadDate = getRetryRefreshDate()
-  }
+
+  const reloadPolicy = buildReloadPolicy(retryRefresh)
+  const shouldNotifyReload: boolean =
+    forceRefresh && !!previousDisplayDate && wallpaperData.rawDate !== previousDisplayDate
 
   addRefreshLog({
     status: 'start',
     message: '内容加载完成，开始准备图片缓存',
     forceRefresh,
-    nextRefreshAt: reloadDate.getTime(),
+    nextRefreshAt: reloadPolicy.date.getTime(),
     displayDate: wallpaperData.date,
   })
 
@@ -383,12 +388,12 @@ const presentWidget = async (): Promise<void> => {
   addRefreshLog({
     status: 'success',
     message: retryRefresh
-      ? '内容仍未更新，继续安排重试'
+      ? '当前内容仍不是今天，等待系统下次唤醒后继续检查'
       : forceRefresh
-        ? '到达或临近刷新时间，尝试获取最新内容'
-        : '未到刷新时间，使用当前内容',
+        ? '已检查并更新最新内容'
+        : '已加载当前显示内容',
     forceRefresh,
-    nextRefreshAt: reloadDate.getTime(),
+    nextRefreshAt: reloadPolicy.date.getTime(),
     displayDate: wallpaperData.date,
   })
 
@@ -402,30 +407,30 @@ const presentWidget = async (): Promise<void> => {
       showCopyright={showCopyright}
     />,
     {
-      reloadPolicy: {
-        policy: 'after',
-        date: reloadDate,
-      },
+      reloadPolicy,
     },
   )
+
+  if (shouldNotifyReload) {
+    Widget.reloadAll()
+  }
 }
 
 const presentErrorWidget = (error?: unknown): void => {
-  const nextRefreshDate: Date = getNextRefreshDate(getCurrentSettings())
   const errorMessage: string = error ? formatErrorMessage(error) : '未知错误'
+
+  const retryRefresh: boolean = true
+  const reloadPolicy = buildReloadPolicy(retryRefresh)
 
   addRefreshLog({
     status: 'error',
-    message: `加载失败，已安排下次刷新：${errorMessage}`,
+    message: `加载失败，等待系统下次唤醒后重试：${errorMessage}`,
     forceRefresh: false,
-    nextRefreshAt: nextRefreshDate.getTime(),
+    nextRefreshAt: reloadPolicy.date.getTime(),
   })
 
   Widget.present(<ErrorWidget message="加载失败，请稍后重试" />, {
-    reloadPolicy: {
-      policy: 'after',
-      date: nextRefreshDate,
-    },
+    reloadPolicy,
   })
 }
 

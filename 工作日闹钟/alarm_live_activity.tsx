@@ -20,6 +20,7 @@ import {
 const WORKDAY_SNOOZE_ACTIVITY_NAME = "WorkdaySnoozeCountdownActivity"
 const ACCENT_COLOR = "#FF8A00" as const
 const ACCENT_DEEP = "#F97316" as const
+const STOP_COLOR = "#EF4444" as const
 const LOCK_BACKGROUND = { light: "#FFF7ED", dark: "#24160A" } as const
 const PRIMARY_TEXT = { light: "#1F2937", dark: "#FFF7ED" } as const
 const WHITE = "white" as const
@@ -190,13 +191,17 @@ function PrimaryAction(state: AlarmLiveActivityState<SnoozeMetadata>) {
 
 function StopAction(state: AlarmLiveActivityState<SnoozeMetadata>) {
   return (
-    <Button intent={state.actions.stop.intent} role="destructive" buttonStyle="glassProminent" controlSize="small">
+    <Button
+      intent={state.actions.stop.intent}
+      role="destructive"
+      buttonStyle="glassProminent"
+      controlSize="small"
+      tint={STOP_COLOR}>
       <Label title="关闭" systemImage={state.actions.stop.systemImageName ?? "xmark"} />
     </Button>
   )
 }
 
-// ── 灵动岛紧凑倒计时（共用组件，字号更小） ──────────
 function CompactCountdownLabel(state: AlarmLiveActivityState<SnoozeMetadata>) {
   if (state.countdown?.fireDate) {
     return (
@@ -304,13 +309,35 @@ function ExpandedTrailing(state: AlarmLiveActivityState<SnoozeMetadata>) {
   )
 }
 
+function ExpandedProjectIdentity() {
+  return (
+    <HStack alignment="center" spacing={6}>
+      <Image
+        systemName="calendar.badge.clock"
+        foregroundStyle={ACCENT_COLOR}
+        font="subheadline"
+        frame={{ width: 16, height: 18, alignment: "center" }}
+      />
+      <Text
+        font="subheadline"
+        fontWeight="semibold"
+        foregroundStyle={PRIMARY_TEXT}
+        lineLimit={1}
+        frame={{ height: 18, alignment: "center" }}>
+        工作日闹钟
+      </Text>
+    </HStack>
+  )
+}
+
 function ExpandedBottom(state: AlarmLiveActivityState<SnoozeMetadata>) {
   return (
-    <VStack alignment="leading" spacing={16} padding={{ top: -4, bottom: 8 }}>
+    <VStack alignment="leading" spacing={16} padding={{ top: 4, bottom: 0 }}>
       <CountdownProgress {...state} />
       <HStack spacing={8}>
-        <PrimaryAction {...state} />
+        <ExpandedProjectIdentity />
         <Spacer />
+        <PrimaryAction {...state} />
         <StopAction {...state} />
       </HStack>
     </VStack>

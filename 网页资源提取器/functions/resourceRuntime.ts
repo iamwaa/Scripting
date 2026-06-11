@@ -6,7 +6,11 @@ import {
   normalizeResourceURL,
 } from "./resourceParsing"
 
-const SNAPSHOT_FILE_NAME = "web-resource-extractor-runtime-snapshot.json"
+const SNAPSHOT_STORAGE_KEY = "runtimeSnapshot"
+const SNAPSHOT_STORAGE_FILE_NAMES = [
+  `${encodeURIComponent("网页资源提取器")}.json`,
+  `${encodeURIComponent("Web Resource Extractor Runtime Sniffer")}.json`,
+]
 const SNAPSHOT_MAX_AGE_MS = 30 * 60 * 1000
 
 export type RuntimeResourceSnapshot = {
@@ -24,8 +28,15 @@ type RuntimeResourceCandidate = {
   height?: number
 }
 
-function getSnapshotPath(): string {
-  return `${FileManager.safariBrowserStorageDirectory}/${SNAPSHOT_FILE_NAME}`
+function getSnapshotPaths(): string[] {
+  return SNAPSHOT_STORAGE_FILE_NAMES.map(fileName => `${FileManager.safariBrowserStorageDirectory}/${fileName}`)
+}
+
+function parseStoredSnapshot(raw: string): RuntimeResourceSnapshot | null {
+  const storage = JSON.parse(raw)
+  const snapshot = storage?.[SNAPSHOT_STORAGE_KEY] ?? storage
+  if (!snapshot || !Array.isArray(snapshot.resources)) return null
+  return snapshot as RuntimeResourceSnapshot
 }
 
 function normalizeForCompare(rawURL: string): string {
@@ -65,20 +76,23 @@ function classifyRuntimeResource(candidate: RuntimeResourceCandidate, normalized
 }
 
 export async function readRuntimeSnapshot(targetURL: string): Promise<RuntimeResourceSnapshot | null> {
-  const path = getSnapshotPath()
-  const exists = await FileManager.exists(path).catch(() => false)
-  if (!exists) return null
+  for (const path of getSnapshotPaths()) {
+    const exists = await FileManager.exists(path).catch(() => false)
+    if (!exists) continue
 
-  try {
-    const raw = await FileManager.readAsString(path)
-    const snapshot = JSON.parse(raw) as RuntimeResourceSnapshot
-    if (!snapshot || !Array.isArray(snapshot.resources)) return null
-    if (!isSamePageSnapshot(snapshot.pageUrl, targetURL)) return null
-    if (Date.now() - snapshot.capturedAt > SNAPSHOT_MAX_AGE_MS) return null
-    return snapshot
-  } catch {
-    return null
+    try {
+      const raw = await FileManager.readAsString(path)
+      const snapshot = parseStoredSnapshot(raw)
+      if (!snapshot) continue
+      if (!isSamePageSnapshot(snapshot.pageUrl, targetURL)) continue
+      if (Date.now() - snapshot.capturedAt > SNAPSHOT_MAX_AGE_MS) continue
+      return snapshot
+    } catch {
+      continue
+    }
   }
+
+  return null
 }
 
 export function parseRuntimeSnapshotResources(

@@ -1,11 +1,9 @@
 import { Script, Intent } from "scripting"
 
-// ---- Storage keys (must match index.tsx) ----
 const KEY_SUB_CACHE = "alarm_sub_cache"
 const KEY_OVERRIDES = "alarm_overrides"
 const KEY_REST_RULE = "alarm_rest_rule"
 
-// ---- Types (must match index.tsx) ----
 interface DayEntry {
   date: string
   type: "holiday" | "workday"
@@ -27,7 +25,6 @@ interface RestRule {
   dayCycleRestDays: number
 }
 
-// ---- Helpers ----
 function pad(n: number): string {
   return n < 10 ? `0${n}` : `${n}`
 }
@@ -114,7 +111,6 @@ function isRestDay(type: "holiday" | "workday" | "weekend" | "normal"): boolean 
   return type === "holiday" || type === "weekend"
 }
 
-// ---- Main ----
 function collectStrings(value: unknown): string[] {
   if (typeof value === "string") return [value]
   if (Array.isArray(value)) return value.flatMap(collectStrings)
@@ -179,7 +175,6 @@ if (query.includes("明天") && query.includes("休息")) {
 } else if (query.includes("下一个休息日")) {
   result = findNextDate(true, new Date())
 } else {
-  // Default: check tomorrow (backward compatible)
   const tomorrow = new Date()
   tomorrow.setDate(tomorrow.getDate() + 1)
   const type = getDayType(formatDateObj(tomorrow), subDays, overrides, restRule)

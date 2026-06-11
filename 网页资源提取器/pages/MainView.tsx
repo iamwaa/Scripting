@@ -12,6 +12,7 @@ import {
   ProgressView,
   ScrollView,
   Toggle,
+  useEffect,
 } from "scripting"
 import type { ResourceItem } from "../types/resource"
 import {
@@ -28,11 +29,14 @@ import {
   isFiltering,
   filterProgress,
   showToast,
+  initialViewMode,
 } from "../state/appState"
 import { extractResources } from "../functions/resourceExtractor"
 import { getCategoryStats, getFilteredResources } from "../functions/resourceInfo"
 import { validateResources } from "../functions/resourceValidator"
 import { ResourceItemRow } from "../components/ResourceItemRow"
+import { DownloadManagerView } from "./DownloadManagerView"
+import { hasDownloadManagerContent, getActiveDownloadCount } from "../state/downloadManager"
 
 export function MainView() {
   const dismiss = Navigation.useDismiss()
@@ -40,6 +44,19 @@ export function MainView() {
   const categoryStats = getCategoryStats()
   const listTitle = pageTitle.value || "资源列表"
   const hasResources = resources.value.length > 0
+  const hasDownloads = hasDownloadManagerContent()
+  const activeDownloadCount = getActiveDownloadCount()
+
+  function openDownloadManager() {
+    initialViewMode.setValue("main")
+    Navigation.present(<DownloadManagerView />)
+  }
+
+  useEffect(() => {
+    if (initialViewMode.value !== "downloads") return
+    initialViewMode.setValue("main")
+    setTimeout(openDownloadManager, 100)
+  }, [])
 
   function resetToConfig() {
     resources.setValue([])
@@ -62,7 +79,21 @@ export function MainView() {
             foregroundStyle={hasResources ? "#007AFF" : "red"}
             fontWeight="semibold" />
             </Button>
-          )
+          ),
+          primaryAction: hasDownloads ? (
+            <Button action={openDownloadManager}>
+              <HStack spacing={4}>
+                <Image
+                  systemName={activeDownloadCount > 0 ? "arrow.down.circle.fill" : "arrow.down.circle"}
+                  foregroundStyle="#007AFF"
+                  fontWeight="semibold"
+                />
+                {activeDownloadCount > 0 ? (
+                  <Text font="subheadline" fontWeight="semibold">{activeDownloadCount}</Text>
+                ) : null}
+              </HStack>
+            </Button>
+          ) : undefined,
         }}
         toast={{
           message: toastMessage.value,

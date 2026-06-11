@@ -18,6 +18,7 @@ import {
   Spacer,
   Group,
   Image,
+  Picker,
   ProgressView,
   Toolbar,
   ToolbarItem,
@@ -31,11 +32,17 @@ type SelfInfo = {
   id?: number
   username?: string
   display_name?: string
+  email?: string
   group?: string
   quota?: number
   used_quota?: number
   request_count?: number
+  balance?: number
+  concurrency?: number
+  status?: string
 }
+
+type AccountPlatform = "newapi" | "sub2api"
 
 type CheckinRecord = {
   checkin_date?: string
@@ -56,10 +63,19 @@ type CheckinStatus = {
   stats?: CheckinStats
 }
 
+type SiteStatus = {
+  state: "online" | "warning" | "offline"
+  statusCode?: number
+  message?: string
+  checkedAt: number
+  latencyMs?: number
+}
+
 type Account = {
   id: string
   name: string
   baseUrl: string
+  platform?: AccountPlatform
   username?: string
   passwordKey?: string
   cookieKey?: string
@@ -70,6 +86,7 @@ type Account = {
   lastTodayCheckin?: CheckinRecord
   lastTodayCheckinDate?: string
   lastError?: string
+  lastSiteStatus?: SiteStatus
   authSource?: "password" | "web" | "cookie"
   excludeFromBatchCheckin?: boolean
 }
@@ -78,6 +95,7 @@ type AccountDraft = {
   id?: string
   name: string
   baseUrl: string
+  platform?: AccountPlatform
   username: string
   password: string
   cookie: string
@@ -86,7 +104,7 @@ type AccountDraft = {
   authSource?: Account["authSource"]
 }
 
-type AccountSortKey = "name" | "quota" | "checkin"
+type AccountSortKey = "name" | "platform" | "quota" | "checkin"
 type SortDirection = "asc" | "desc"
 
 type AccountSortPreference = {
@@ -107,6 +125,7 @@ type ApiResult<T = any> = {
 
 type WebLoginCookieResult = {
   cookieHeader: string
+  authToken?: string
   storageSelf?: SelfInfo
 }
 
@@ -116,6 +135,36 @@ const SECRET_PREFIX = "newapi.secret."
 const SHARED = { shared: false }
 const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.2 Mobile/15E148 Safari/604.1"
 const QUOTA_PER_USD = 500000
+const SITE_STATUS_AUTO_CHECK_INTERVAL = 30 * 60
+
+function getAccountPlatform(account: Pick<Account, "platform">): AccountPlatform {
+  return account.platform ?? "newapi"
+}
+
+function isSub2ApiAccount(account: Pick<Account, "platform">) {
+  return getAccountPlatform(account) === "sub2api"
+}
+
+function getPlatformText(account: Pick<Account, "platform">) {
+  return isSub2ApiAccount(account) ? "Sub2API" : "NewAPI"
+}
+
+function quotaFromUsd(value: any) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n * QUOTA_PER_USD : undefined
+}
+
+function getSelfQuotaValue(self?: SelfInfo) {
+  return self?.quota ?? quotaFromUsd(self?.balance)
+}
+
+function getSelfUsedQuotaValue(self?: SelfInfo) {
+  return self?.used_quota
+}
+
+function getSelfDisplayName(self?: SelfInfo) {
+  return self?.display_name || self?.username || self?.email
+}
 
 function uid() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
@@ -176,6 +225,11 @@ function fmtRawQuota(value: any) {
   return `${n} q`
 }
 
+function fmtRawQuotaForAccount(account: Account, value: any) {
+  if (isSub2ApiAccount(account)) return fmtQuota(value)
+  return fmtRawQuota(value)
+}
+
 function fmtMonth(value: string) {
   const [year, month] = value.split("-")
   return `${year}年${Number(month)}月`
@@ -234,20 +288,66 @@ function shortUrl(url: string) {
   return url.replace(/^https?:\/\//, "")
 }
 
+// 错误消息中文翻译规则
 const ERROR_TRANSLATIONS: Array<[RegExp, string]> = [
+  // API 兼容性
   [/can'?t\s+find\s+variable:\s*alert/i, "弹窗 API 不可用，请升级 Scripting 或重新运行脚本"],
-  [/invalid\s+username\s+or\s+password/i, "用户名或密码错误"],
-  [/invalid\s+password/i, "密码错误"],
-  [/user\s+not\s+found/i, "用户不存在"],
-  [/unauthorized|not\s+logged\s+in|no\s+access\s+token|permission\s+denied|forbidden/i, "未登录或权限不足，请检查 Cookie/登录状态"],
-  [/token\s+expired|session\s+expired|cookie\s+expired/i, "登录状态已过期，请重新复制 Cookie"],
-  [/too\s+many\s+requests|rate\s+limit/i, "请求过于频繁，请稍后再试"],
-  [/not\s+found/i, "请求的资源不存在"],
-  [/network\s+request\s+failed|failed\s+to\s+fetch|timed\s*out|timeout/i, "网络请求失败或超时，请检查站点地址和网络"],
-  [/internal\s+server\s+error/i, "服务器内部错误"],
-  [/bad\s+gateway/i, "网关错误"],
-  [/service\s+unavailable/i, "服务暂不可用"],
-  [/turnstile|签名|signature/i, "站点启用了 Turnstile 验证，请使用“手动网页签到”"],
+  
+  // 认证错误
+  [/invalid\s+username\s+or\s+password|invalid\s+credentials|incorrect\s+password/i, "用户名或密码错误，请检查账号信息"],
+  [/invalid\s+password/i, "密码错误，请重新输入"],
+  [/invalid\s+email/i, "邮箱格式错误"],
+  [/email\s+not\s+found|user\s+not\s+found|account\s+not\s+found/i, "账号不存在，请检查用户名/邮箱"],
+  [/account\s+(is\s+)?(disabled|suspended|banned|blocked)/i, "账号已被禁用或封禁，请联系站点管理员"],
+  [/unauthorized|not\s+logged\s+in|no\s+access\s+token|permission\s+denied|access\s+denied|forbidden|authentication\s+(is\s+)?required/i, "未登录或权限不足，请重新登录或检查 Cookie"],
+  [/token\s+(has\s+)?expired|session\s+(has\s+)?expired|cookie\s+(has\s+)?expired|login\s+expired/i, "登录状态已过期，请重新获取 Cookie 或登录"],
+  [/invalid\s+token|token\s+invalid|malformed\s+token/i, "登录令牌无效，请重新获取"],
+  [/missing\s+token|no\s+token/i, "缺少登录令牌，请先登录"],
+  [/requires?\s+2fa|two.?factor|需要.*验证码/i, "该账号需要二步验证，请使用\"网页登录\""],
+  
+  // 限流和配额
+  [/too\s+many\s+requests|rate\s+limit(ed)?|请求.*频繁/i, "请求过于频繁，请稍后再试（建议等待 1-5 分钟）"],
+  [/quota\s+exceeded|额度.*不足|余额不足/i, "账号额度不足，请充值后再试"],
+  [/daily\s+limit|daily\s+quota/i, "已达到每日请求限制"],
+  [/concurrency\s+limit/i, "并发请求数超限，请稍后再试"],
+  
+  // 资源错误
+  [/not\s+found|404/i, "请求的资源不存在，请检查站点地址或 API 路径"],
+  [/already\s+exists|duplicate/i, "资源已存在或重复"],
+  [/invalid\s+request|bad\s+request|400/i, "请求参数错误"],
+  [/method\s+not\s+allowed|405/i, "请求方法不支持"],
+  
+  // 网络错误
+  [/network\s+request\s+failed|failed\s+to\s+fetch|fetch\s+failed/i, "网络请求失败，请检查网络连接"],
+  [/timed?\s*out|timeout|请求超时/i, "请求超时，站点响应过慢或网络不稳定"],
+  [/connection\s+(refused|reset)|ECONNREFUSED|ECONNRESET/i, "无法连接到站点，请检查站点地址和网络"],
+  [/dns\s+resolution\s+failed|getaddrinfo\s+ENOTFOUND/i, "域名解析失败，请检查站点地址"],
+  [/ssl|certificate|cert/i, "SSL 证书错误，站点可能不安全或证书过期"],
+  
+  // 服务器错误
+  [/internal\s+server\s+error|server\s+error|500/i, "服务器内部错误，请稍后重试或联系站点管理员"],
+  [/bad\s+gateway|502/i, "网关错误，站点服务可能暂时不可用"],
+  [/service\s+unavailable|503/i, "服务暂不可用，站点可能正在维护"],
+  [/gateway\s+timeout|504/i, "网关超时，站点响应过慢"],
+  
+  // 验证和防护
+  [/turnstile|签名|signature|challenge/i, "站点启用了 Cloudflare Turnstile 验证，请使用\"网页签到\"或\"网页登录\""],
+  [/captcha|验证码/i, "需要验证码，请使用\"网页登录\"完成验证"],
+  [/cloudflare|cf.?ray/i, "站点触发了 Cloudflare 防护，请使用\"网页登录\"通过验证"],
+  [/响应不是 JSON.*<html|<script>var\s+arg1=/i, "站点返回了网页而非 API 数据，可能触发了验证或重定向"],
+  
+  // 功能和配置
+  [/签到.*未开启|check.?in.*(disabled|not\s+enabled)|sign.?in.*(disabled|not\s+enabled)/i, "该站点未启用签到功能"],
+  [/功能.*关闭|feature.*disabled/i, "该功能已关闭"],
+  [/maintenance|维护中/i, "站点正在维护中，请稍后再试"],
+  
+  // 数据格式
+  [/unexpected\s+token|json\s+parse|invalid\s+json/i, "服务器返回了无效的数据格式"],
+  [/syntax\s+error/i, "数据解析错误"],
+  
+  // Sub2API 特定
+  [/缺少 Sub2API 登录令牌/i, "缺少 Sub2API 登录令牌，请使用\"网页登录获取 Cookie\"或粘贴 auth_token"],
+  [/未获取到 Sub2API auth_token/i, "未获取到登录令牌，请确认已登录后再关闭页面"],
 ]
 
 function translateErrorMessage(message: any) {
@@ -294,7 +394,7 @@ function saveAccounts(accounts: Account[]) {
 }
 
 function isAccountSortKey(value: any): value is AccountSortKey {
-  return value === "name" || value === "quota" || value === "checkin"
+  return value === "name" || value === "platform" || value === "quota" || value === "checkin"
 }
 
 function isSortDirection(value: any): value is SortDirection {
@@ -336,6 +436,54 @@ function getAuthSourceText(account: Account) {
   if (getSecret(account.cookieKey)) return "Cookie"
   if (account.username && getSecret(account.passwordKey)) return "账号密码"
   return "未配置"
+}
+
+function getSiteStatusView(account: Account) {
+  const status = account.lastSiteStatus
+  if (!status) {
+    return { color: "systemGray", text: "未检测", icon: "network" }
+  }
+  if (status.state === "online") {
+    return { color: "systemGreen", text: "在线", icon: "server.rack" }
+  }
+  if (status.state === "warning") {
+    return {
+      color: "systemOrange",
+      text: status.statusCode ? `HTTP ${status.statusCode}` : "异常",
+      icon: "exclamationmark.triangle.fill",
+    }
+  }
+  return { color: "systemRed", text: "离线", icon: "network.slash" }
+}
+
+function getSiteStatusDetail(status?: SiteStatus) {
+  if (!status) return "站点状态：未检测"
+  const time = new Date(status.checkedAt * 1000).toLocaleTimeString()
+  const latency = status.latencyMs !== undefined ? `，${status.latencyMs}ms` : ""
+  return `${status.message ?? "站点状态已更新"}${latency}，${time}`
+}
+
+function getSiteStatusLatencyText(status?: SiteStatus) {
+  if (!status || status.state !== "online") return ""
+  return status.latencyMs !== undefined ? `${status.latencyMs}ms` : ""
+}
+
+function getSiteStatusLatencyColor(status?: SiteStatus) {
+  if (!status) return "secondaryLabel"
+  if (status.state === "offline") return "systemRed"
+  const latency = status.latencyMs
+  if (latency === undefined) return "secondaryLabel"
+  if (latency < 300) return "systemGreen"
+  if (latency <= 800) return "systemOrange"
+  return "systemRed"
+}
+
+function getOfflineSiteStatus(e: any): SiteStatus {
+  return {
+    state: "offline",
+    message: getErrorMessage(e),
+    checkedAt: now(),
+  }
 }
 
 function mergeCookies(oldCookie: string, setCookieHeader?: string, responseCookies?: Array<{ name: string, value: string }>) {
@@ -381,6 +529,19 @@ function parseCookieHeader(cookieHeader: string) {
 
 function getUrlHostname(url: string) {
   return url.replace(/^https?:\/\//, "").split("/")[0].split(":")[0]
+}
+
+function isHttpUrl(url: string) {
+  return /^https?:\/\//i.test(url)
+}
+
+function resolveWebUrl(url: string, baseUrl: string) {
+  try {
+    const URLCtor = (globalThis as any).URL
+    return URLCtor ? new URLCtor(url, baseUrl).href : url
+  } catch {
+    return url
+  }
 }
 
 function escapeHTML(value: string) {
@@ -442,9 +603,9 @@ async function presentWebViewAndLoadURL(webView: WebViewController, url: string,
   await webView.loadHTML(getWebViewLoadingHTML(url, "正在打开网页..."), url)
   const openPage = async () => {
     try {
-      const loaded = await webView.loadURL(url)
+      const loaded = await loadWebUrlWithFallback(webView, url, url)
       if (!loaded) throw new Error("页面加载失败，请检查站点地址或网络")
-      await prepareWebLoginPage(webView)
+      await prepareWebLoginPage(webView, url)
     } catch (e: any) {
       await webView.loadHTML(getWebViewLoadingHTML(url, `网页打开失败：${getErrorMessage(e)}`), url)
     }
@@ -465,6 +626,21 @@ function findSelfInfo(value: any): SelfInfo | undefined {
   return undefined
 }
 
+function extractSub2ApiToken(items: Record<string, string>) {
+  for (const key of ["auth_token", "token", "access_token"]) {
+    const value = items[key]
+    if (value) return value
+  }
+  for (const raw of Object.values(items)) {
+    try {
+      const parsed = JSON.parse(raw)
+      const token = parsed?.auth_token || parsed?.access_token || parsed?.token || parsed?.state?.auth_token || parsed?.state?.token
+      if (typeof token === "string" && token) return token
+    } catch {}
+  }
+  return ""
+}
+
 function extractSelfInfoFromStorage(items: Record<string, string>) {
   for (const raw of Object.values(items)) {
     try {
@@ -476,24 +652,67 @@ function extractSelfInfoFromStorage(items: Record<string, string>) {
   return undefined
 }
 
-async function prepareWebLoginPage(webView: WebViewController) {
+async function prepareWebLoginPage(webView: WebViewController, baseUrl = "") {
+  const fallbackBaseUrl = JSON.stringify(baseUrl)
   const script = `
+    const fallbackBaseUrl = ${fallbackBaseUrl};
+    const resolveUrl = (url) => {
+      if (!url) return '';
+      try { return new URL(url, location.href || fallbackBaseUrl).href; }
+      catch { return String(url); }
+    };
     const patch = () => {
-      window.open = (url) => {
-        if (url) {
-          try { location.href = new URL(url, location.href).href; }
-          catch { location.href = url; }
+      const postNavigate = (url) => {
+        try {
+          const handler = window.webkit?.messageHandlers?.newapiNavigate;
+          if (!handler) return false;
+          handler.postMessage(url);
+          return true;
+        } catch {
+          return false;
         }
+      };
+      const navigate = (url) => {
+        const nextUrl = resolveUrl(url);
+        if (nextUrl && !postNavigate(nextUrl)) location.href = nextUrl;
+      };
+      window.open = (url) => {
+        navigate(url);
         return window;
       };
+      try {
+        const originalAssign = location.assign.bind(location);
+        const originalReplace = location.replace.bind(location);
+        location.assign = (url) => navigate(url || location.href);
+        location.replace = (url) => navigate(url || location.href);
+        window.__newapiOriginalLocationAssign = window.__newapiOriginalLocationAssign || originalAssign;
+        window.__newapiOriginalLocationReplace = window.__newapiOriginalLocationReplace || originalReplace;
+      } catch {}
       document.querySelectorAll('a[target="_blank"], a[target="blank"]').forEach(a => a.setAttribute('target', '_self'));
       document.querySelectorAll('form[target="_blank"], form[target="blank"]').forEach(f => f.setAttribute('target', '_self'));
-      document.addEventListener('click', (event) => {
-        const a = event.target?.closest?.('a[target="_blank"], a[target="blank"]');
-        if (!a || !a.href) return;
-        event.preventDefault();
-        location.href = a.href;
-      }, true);
+      const findClickableUrl = (element) => {
+        const clickable = element?.closest?.('a[href], button, [role="button"], [onclick]');
+        if (!clickable) return '';
+        const href = clickable.getAttribute?.('href') || clickable.href;
+        if (href) return href;
+        const onclick = clickable.getAttribute?.('onclick') || '';
+        const match = onclick.match(/https?:\/\/[^'"\s)]+|['"]((?:\/|\.\/|\.\.\/)[^'"]+)['"]/i);
+        return match?.[1] || match?.[0] || '';
+      };
+      if (!window.__newapiNavigationClickPatched) {
+        window.__newapiNavigationClickPatched = true;
+        document.addEventListener('click', (event) => {
+          const a = event.target?.closest?.('a[href]');
+          const href = a ? resolveUrl(a.getAttribute('href') || a.href) : resolveUrl(findClickableUrl(event.target));
+          if (!href) return;
+          const target = (a?.getAttribute('target') || '').toLowerCase();
+          const text = (event.target?.closest?.('button, [role="button"], a, div, span')?.innerText || '').trim();
+          if (target === '_blank' || target === 'blank' || a?.rel?.includes?.('external') || /^(https?:)?\/\//i.test(href) || /前往|访问|打开|签到|簽到/.test(text)) {
+            event.preventDefault();
+            navigate(href);
+          }
+        }, true);
+      }
       return true;
     };
     patch();
@@ -501,6 +720,25 @@ async function prepareWebLoginPage(webView: WebViewController) {
     return true;
   `
   try { await webView.evaluateJavaScript(script) } catch {}
+}
+
+async function installWebNavigationBridge(webView: WebViewController, baseUrl: string) {
+  try {
+    await webView.addScriptMessageHandler("newapiNavigate", async (url: any) => {
+      const targetUrl = resolveWebUrl(String(url ?? ""), baseUrl)
+      if (!isHttpUrl(targetUrl)) return false
+      const loaded = await loadWebUrlWithFallback(webView, targetUrl, baseUrl)
+      setTimeout(() => prepareWebLoginPage(webView, targetUrl), 300)
+      setTimeout(() => prepareWebLoginPage(webView, targetUrl), 1200)
+      return loaded
+    })
+  } catch {}
+}
+
+async function loadWebUrlWithFallback(webView: WebViewController, url: string, fallbackBaseUrl: string) {
+  const targetUrl = resolveWebUrl(url, fallbackBaseUrl)
+  if (!isHttpUrl(targetUrl)) return false
+  return await webView.loadURL(targetUrl)
 }
 
 async function readWebLoginStorage(webView: WebViewController) {
@@ -533,6 +771,118 @@ function getHeader(response: any, name: string) {
 function removeAccountSecrets(account: Account) {
   if (account.passwordKey) Keychain.remove(account.passwordKey)
   if (account.cookieKey) Keychain.remove(account.cookieKey)
+}
+
+function unwrapSub2ApiJson<T>(json: any): T {
+  if (json && typeof json === "object" && "code" in json) {
+    if (json.code === 0) return json.data as T
+    throw new Error(translateErrorMessage(json.message || json.detail || `API code ${json.code}`))
+  }
+  return json as T
+}
+
+async function sub2ApiRequest<T = any>(account: Account, method: string, path: string, body?: any): Promise<T> {
+  const baseUrl = normalizeBaseUrl(account.baseUrl)
+  if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+    throw new Error("站点地址必须以 http:// 或 https:// 开头")
+  }
+
+  const token = getSecret(account.cookieKey)
+  if (!token) throw new Error("缺少 Sub2API 登录令牌，请使用“网页登录获取 Cookie”或粘贴 auth_token")
+
+  const hasQuery = path.includes("?")
+  const timezone = encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC")
+  const url = `${baseUrl}/api/v1${path}${method.toUpperCase() === "GET" ? `${hasQuery ? "&" : "?"}timezone=${timezone}` : ""}`
+
+  const headers: Record<string, string> = {
+    "User-Agent": UA,
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh",
+    "Authorization": token.startsWith("Bearer ") ? token : `Bearer ${token}`,
+    "Origin": baseUrl,
+    "Referer": `${baseUrl}/`,
+  }
+  if (body !== undefined) headers["Content-Type"] = "application/json"
+
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    allowInsecureRequest: baseUrl.startsWith("http://"),
+    timeout: 25,
+  } as any)
+
+  const raw = await response.text()
+  let json: any
+  try {
+    json = raw ? JSON.parse(raw) : {}
+  } catch {
+    throw new Error(`响应不是 JSON：${raw.slice(0, 60)}`)
+  }
+  if (!response.ok) throw new Error(translateErrorMessage(json?.message || json?.detail || `HTTP ${response.status}`))
+  return unwrapSub2ApiJson<T>(json)
+}
+
+function firstFiniteNumber(...values: any[]) {
+  for (const value of values) {
+    const n = Number(value)
+    if (Number.isFinite(n)) return n
+  }
+  return undefined
+}
+
+async function fetchSub2ApiSelf(account: Account) {
+  const data = await sub2ApiRequest<any>(account, "GET", "/auth/me")
+  let stats: any = {}
+  try {
+    stats = await sub2ApiRequest<any>(account, "GET", "/usage/dashboard/stats")
+  } catch {}
+  const usedCost = firstFiniteNumber(stats?.total_actual_cost, stats?.total_cost)
+  const requestCount = firstFiniteNumber(stats?.total_requests, stats?.today_requests)
+  return {
+    id: data?.id,
+    username: data?.username,
+    display_name: data?.display_name || data?.nickname || data?.username,
+    email: data?.email,
+    group: data?.role || data?.run_mode || data?.status,
+    quota: quotaFromUsd(data?.balance),
+    used_quota: quotaFromUsd(usedCost),
+    request_count: requestCount,
+    balance: data?.balance,
+    concurrency: data?.concurrency,
+    status: data?.status,
+  } as SelfInfo
+}
+
+async function fetchSub2ApiCheckinStatus(account: Account, month = localMonthString()) {
+  const [year, monthIndex] = month.split("-").map(Number)
+  const status = await sub2ApiRequest<any>(account, "GET", "/user/check-in")
+  let records: CheckinRecord[] = []
+  try {
+    const calendar = await sub2ApiRequest<any>(account, "GET", `/user/check-in/calendar?year=${year}&month=${monthIndex}`)
+    records = (calendar?.checked_in_dates ?? []).map((date: string) => ({
+      checkin_date: date,
+      quota_awarded: quotaFromUsd(status?.reward_amount),
+    }))
+  } catch {}
+  if (status?.checked_in_today && !records.some(record => record.checkin_date === localDateString())) {
+    records.push({ checkin_date: localDateString(), quota_awarded: quotaFromUsd(status?.reward_amount) })
+  }
+  return {
+    enabled: status?.enabled,
+    min_quota: quotaFromUsd(status?.reward_amount),
+    max_quota: quotaFromUsd(status?.reward_amount),
+    stats: {
+      total_quota: quotaFromUsd(status?.reward_amount) !== undefined ? records.length * (quotaFromUsd(status?.reward_amount) as number) : undefined,
+      total_checkins: status?.check_in_days ?? records.length,
+      checkin_count: status?.check_in_days ?? records.length,
+      records,
+    },
+  } as CheckinStatus
+}
+
+async function doSub2ApiCheckin(account: Account) {
+  return await sub2ApiRequest<any>(account, "POST", "/user/check-in", {})
 }
 
 async function apiRequestWithMeta<T = any>(account: Account, method: string, path: string, body?: any): Promise<ApiResult<T>> {
@@ -582,7 +932,98 @@ async function apiRequest<T = any>(account: Account, method: string, path: strin
   return (await apiRequestWithMeta<T>(account, method, path, body)).data
 }
 
+async function checkSiteStatus(account: Account): Promise<SiteStatus> {
+  const baseUrl = normalizeBaseUrl(account.baseUrl)
+  if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+    throw new Error("站点地址必须以 http:// 或 https:// 开头")
+  }
+
+  const startedAt = Date.now()
+  try {
+    const response = await fetch(baseUrl, {
+      method: "GET",
+      headers: {
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml,application/json,text/plain,*/*",
+      },
+      allowInsecureRequest: baseUrl.startsWith("http://"),
+      timeout: 12,
+    } as any)
+    const statusCode = Number(response?.status) || undefined
+    const latencyMs = Date.now() - startedAt
+    const state: SiteStatus["state"] = !statusCode || statusCode < 400 ? "online" : "warning"
+    const message = state === "online" ? "站点可访问" : `站点返回 HTTP ${statusCode}`
+    return { state, statusCode, message, checkedAt: now(), latencyMs }
+  } catch (e: any) {
+    return {
+      state: "offline",
+      message: getErrorMessage(e),
+      checkedAt: now(),
+      latencyMs: Date.now() - startedAt,
+    }
+  }
+}
+
+async function loginSub2ApiAccount(account: Account) {
+  const password = getSecret(account.passwordKey)
+  if (!account.username || !password) {
+    throw new Error("该账号没有保存邮箱/密码；第三方登录请使用“网页登录获取 Cookie/令牌”")
+  }
+
+  const baseUrl = normalizeBaseUrl(account.baseUrl)
+  if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+    throw new Error("站点地址必须以 http:// 或 https:// 开头")
+  }
+
+  const response = await fetch(`${baseUrl}/api/v1/auth/login`, {
+    method: "POST",
+    headers: {
+      "User-Agent": UA,
+      "Accept": "application/json, text/plain, */*",
+      "Accept-Language": "zh",
+      "Content-Type": "application/json",
+      "Origin": baseUrl,
+      "Referer": `${baseUrl}/`,
+    },
+    body: JSON.stringify({
+      email: account.username,
+      password,
+    }),
+    allowInsecureRequest: baseUrl.startsWith("http://"),
+    timeout: 25,
+  } as any)
+
+  const raw = await response.text()
+  let json: any
+  try {
+    json = raw ? JSON.parse(raw) : {}
+  } catch {
+    throw new Error(`响应不是 JSON：${raw.slice(0, 60)}`)
+  }
+  if (!response.ok) throw new Error(translateErrorMessage(json?.message || json?.detail || `HTTP ${response.status}`))
+
+  const data = unwrapSub2ApiJson<any>(json)
+  if (data?.requires_2fa) throw new Error("该账号需要 2FA，请使用“网页登录获取 Cookie/令牌”")
+  const token = data?.access_token
+  if (!token) throw new Error("登录成功但未返回 access_token")
+  if (account.cookieKey) setSecret(account.cookieKey, token)
+
+  const self = data?.user ? {
+    id: data.user.id,
+    username: data.user.username,
+    display_name: data.user.display_name || data.user.username || data.user.email,
+    email: data.user.email,
+    group: data.user.role || data.user.status,
+    quota: quotaFromUsd(data.user.balance),
+    balance: data.user.balance,
+    status: data.user.status,
+  } as SelfInfo : await fetchSub2ApiSelf(account)
+  patchAccount(account.id, { lastSelf: self, lastError: "", authSource: "password" })
+  return self
+}
+
 async function loginAccount(account: Account) {
+  if (isSub2ApiAccount(account)) return await loginSub2ApiAccount(account)
   const password = getSecret(account.passwordKey)
   if (!account.username || !password) {
     throw new Error("该账号没有保存用户名/密码；第三方登录请使用“网页登录获取 Cookie”")
@@ -611,10 +1052,11 @@ async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookieResult>
   const webView = new WebViewController()
   try {
     try { webView.setCustomUserAgent(UA) } catch {}
-    webView.shouldAllowRequest = async () => {
-      setTimeout(() => prepareWebLoginPage(webView), 300)
-      setTimeout(() => prepareWebLoginPage(webView), 1200)
-      return true
+    await installWebNavigationBridge(webView, normalizedBaseUrl)
+    webView.shouldAllowRequest = async request => {
+      setTimeout(() => prepareWebLoginPage(webView, request.url || normalizedBaseUrl), 300)
+      setTimeout(() => prepareWebLoginPage(webView, request.url || normalizedBaseUrl), 1200)
+      return isHttpUrl(request.url)
     }
     await presentWebViewAndLoadURL(webView, normalizedBaseUrl, {
       fullscreen: true,
@@ -623,14 +1065,16 @@ async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookieResult>
 
     const cookies = await webView.getCookies(normalizedBaseUrl)
     const cookieHeader = cookiesToHeader(cookies)
-    if (!cookieHeader) throw new Error("未获取到 Cookie，请确认已在网页登录成功后再关闭页面")
 
     const storage = await readWebLoginStorage(webView)
-    const storageSelf = extractSelfInfoFromStorage({
+    const storageItems = {
       ...(storage.localStorage ?? {}),
       ...(storage.sessionStorage ?? {}),
-    })
-    return { cookieHeader, storageSelf }
+    }
+    const storageSelf = extractSelfInfoFromStorage(storageItems)
+    const authToken = extractSub2ApiToken(storageItems)
+    if (!cookieHeader && !authToken) throw new Error("未获取到 Cookie 或登录令牌，请确认已在网页登录成功后再关闭页面")
+    return { cookieHeader, authToken, storageSelf }
   } finally {
     webView.dispose()
   }
@@ -643,18 +1087,50 @@ async function openManualCheckinWebView(account: Account) {
     throw new Error("站点地址必须以 http:// 或 https:// 开头")
   }
   if (!account.cookieKey) throw new Error("账号 Cookie 存储键不存在，请重新保存账号")
-  const cookieHeader = getSecret(account.cookieKey)
-  if (!cookieHeader) throw new Error("该账号没有保存 Cookie，请先使用“网页登录获取 Cookie”")
+  const credential = getSecret(account.cookieKey)
+  if (!credential) throw new Error(isSub2ApiAccount(account) ? "该账号没有保存登录令牌，请先使用“网页登录获取 Cookie”" : "该账号没有保存 Cookie，请先使用“网页登录获取 Cookie”")
+
+  if (isSub2ApiAccount(account)) {
+    const webView = new WebViewController()
+    try {
+      try { webView.setCustomUserAgent(UA) } catch {}
+      await installWebNavigationBridge(webView, normalizedBaseUrl)
+      webView.shouldAllowRequest = async request => {
+        setTimeout(() => prepareWebLoginPage(webView, request.url || normalizedBaseUrl), 300)
+        return isHttpUrl(request.url)
+      }
+      await webView.loadHTML(getWebViewLoadingHTML(normalizedBaseUrl, "正在打开网页..."), normalizedBaseUrl)
+      const openPage = async () => {
+        try {
+          const loaded = await loadWebUrlWithFallback(webView, normalizedBaseUrl, normalizedBaseUrl)
+          if (!loaded) throw new Error("页面加载失败，请检查站点地址或网络")
+          await webView.evaluateJavaScript(`localStorage.setItem('auth_token', ${JSON.stringify(credential)}); true;`)
+          await loadWebUrlWithFallback(webView, `${normalizedBaseUrl}/home`, normalizedBaseUrl)
+          await prepareWebLoginPage(webView, normalizedBaseUrl)
+        } catch (e: any) {
+          await webView.loadHTML(getWebViewLoadingHTML(normalizedBaseUrl, `网页打开失败：${getErrorMessage(e)}`), normalizedBaseUrl)
+        }
+      }
+      setTimeout(() => { void openPage() }, 80)
+      await webView.present({ fullscreen: true, navigationTitle: "网页签到后关闭页面" })
+    } finally {
+      webView.dispose()
+    }
+    return
+  }
+
+  const cookieHeader = credential
 
   const hostname = getUrlHostname(normalizedBaseUrl)
   const secure = normalizedBaseUrl.startsWith("https://")
   const webView = new WebViewController()
   try {
     try { webView.setCustomUserAgent(UA) } catch {}
-    webView.shouldAllowRequest = async () => {
-      setTimeout(() => prepareWebLoginPage(webView), 300)
-      setTimeout(() => prepareWebLoginPage(webView), 1200)
-      return true
+    await installWebNavigationBridge(webView, normalizedBaseUrl)
+    webView.shouldAllowRequest = async request => {
+      setTimeout(() => prepareWebLoginPage(webView, request.url || normalizedBaseUrl), 300)
+      setTimeout(() => prepareWebLoginPage(webView, request.url || normalizedBaseUrl), 1200)
+      return isHttpUrl(request.url)
     }
     for (const cookie of parseCookieHeader(cookieHeader)) {
       await webView.setCookie({
@@ -669,7 +1145,7 @@ async function openManualCheckinWebView(account: Account) {
     }
     await presentWebViewAndLoadURL(webView, normalizedBaseUrl, {
       fullscreen: true,
-      navigationTitle: "手动签到后关闭页面",
+      navigationTitle: "网页签到后关闭页面",
     })
 
     const cookies = await webView.getCookies(normalizedBaseUrl)
@@ -682,7 +1158,15 @@ async function openManualCheckinWebView(account: Account) {
 
 async function loginByWebView(account: Account) {
   if (!account.cookieKey) throw new Error("账号 Cookie 存储键不存在，请重新保存账号")
-  const { cookieHeader, storageSelf } = await getWebLoginCookie(account.baseUrl)
+  const { cookieHeader, authToken, storageSelf } = await getWebLoginCookie(account.baseUrl)
+  if (isSub2ApiAccount(account)) {
+    if (!authToken) throw new Error("未获取到 Sub2API auth_token，请确认已登录后再关闭页面")
+    setSecret(account.cookieKey, authToken)
+    const tempAccount: Account = { ...account, lastSelf: storageSelf }
+    const self = await fetchSub2ApiSelf(tempAccount)
+    patchAccount(account.id, { lastSelf: self, lastError: "", authSource: "web" })
+    return self
+  }
   setSecret(account.cookieKey, cookieHeader)
 
   const id = storageSelf?.id ?? account.lastSelf?.id
@@ -698,11 +1182,22 @@ async function loginByWebView(account: Account) {
 }
 
 async function fetchSelf(account: Account) {
+  if (isSub2ApiAccount(account)) {
+    try {
+      return await fetchSub2ApiSelf(account)
+    } catch (e: any) {
+      const message = getErrorMessage(e)
+      if (message.includes("缺少 Sub2API 登录令牌") || message.includes("登录状态已过期") || message.includes("未登录") || message.includes("权限不足")) {
+        return await loginAccount(account)
+      }
+      throw e
+    }
+  }
   try {
     return await apiRequest<SelfInfo>(account, "GET", "/api/user/self")
   } catch (e: any) {
     const message = getErrorMessage(e)
-    if (message.includes("缺少用户 ID") || message.includes("未登录") || message.includes("权限不足")) {
+    if (message.includes("缺少用户 ID") || message.includes("未登录") || message.includes("权限不足") || message.includes("登录状态已过期")) {
       await loginAccount(account)
       const latest = loadAccounts().find(a => a.id === account.id) ?? account
       return await apiRequest<SelfInfo>(latest, "GET", "/api/user/self")
@@ -712,10 +1207,12 @@ async function fetchSelf(account: Account) {
 }
 
 async function fetchCheckinStatus(account: Account, month = localMonthString()) {
+  if (isSub2ApiAccount(account)) return await fetchSub2ApiCheckinStatus(account, month)
   return await apiRequest<CheckinStatus>(account, "GET", `/api/user/checkin?month=${encodeURIComponent(month)}`)
 }
 
 async function doCheckin(account: Account) {
+  if (isSub2ApiAccount(account)) return await doSub2ApiCheckin(account)
   return await apiRequest<any>(account, "POST", "/api/user/checkin", {})
 }
 
@@ -732,6 +1229,7 @@ function upsertAccount(draft: AccountDraft) {
     id,
     name: draft.name.trim(),
     baseUrl: normalizeBaseUrl(draft.baseUrl),
+    platform: draft.platform ?? prev?.platform ?? "newapi",
     username: draft.username.trim() || undefined,
     passwordKey,
     cookieKey,
@@ -746,6 +1244,7 @@ function upsertAccount(draft: AccountDraft) {
   }
 
   if (draft.cookie.trim()) account.authSource = draft.authSource ?? "cookie"
+  if (draft.platform) account.platform = draft.platform
   if (draft.lastSelf) account.lastSelf = draft.lastSelf
 
   setSecret(passwordKey, draft.password)
@@ -802,7 +1301,7 @@ function compareMaybeNumber(a: number | undefined, b: number | undefined, direct
 }
 
 function getAccountQuotaValue(account: Account) {
-  const quota = account.lastSelf?.quota
+  const quota = getSelfQuotaValue(account.lastSelf)
   if (quota === undefined || quota === null) return undefined
   const value = Number(quota)
   return Number.isFinite(value) ? value : undefined
@@ -811,6 +1310,10 @@ function getAccountQuotaValue(account: Account) {
 function compareAccounts(a: Account, b: Account, key: AccountSortKey, direction: SortDirection) {
   if (key === "name") {
     const result = a.name.localeCompare(b.name, "zh-Hans", { numeric: true, sensitivity: "base" })
+    return direction === "asc" ? result : -result
+  }
+  if (key === "platform") {
+    const result = getPlatformText(a).localeCompare(getPlatformText(b), "zh-Hans", { numeric: true, sensitivity: "base" })
     return direction === "asc" ? result : -result
   }
   if (key === "quota") {
@@ -827,6 +1330,7 @@ function sortAccounts(accounts: Account[], key: AccountSortKey, direction: SortD
 
 function getAccountSortTitle(key: AccountSortKey) {
   if (key === "name") return "名称"
+  if (key === "platform") return "平台"
   if (key === "quota") return "金额"
   return "签到"
 }
@@ -841,6 +1345,36 @@ function getTodayCheckinPatch(status?: CheckinStatus): Partial<Account> {
     }
   }
   return {}
+}
+
+function getManualTodayCheckinPatch(account: Account, checked: boolean): Partial<Account> {
+  const today = localDateString()
+  if (checked) {
+    const record = getTodayCheckinInfo(account).record ?? { checkin_date: today }
+    return {
+      lastTodayCheckinDate: today,
+      lastTodayCheckin: { ...record, checkin_date: today },
+      lastError: "",
+    }
+  }
+
+  const records = getCheckinRecords(account.lastCheckin).filter(record => record.checkin_date !== today)
+  const lastCheckin = account.lastCheckin ? {
+    ...account.lastCheckin,
+    stats: {
+      ...(account.lastCheckin.stats ?? {}),
+      records,
+      checkin_count: records.length,
+      total_checkins: records.length,
+      total_quota: sumCheckinAwards(records),
+    },
+  } : account.lastCheckin
+  return {
+    lastCheckin,
+    lastTodayCheckinDate: undefined,
+    lastTodayCheckin: undefined,
+    lastError: "",
+  }
 }
 
 function getCheckinCount(status: CheckinStatus | undefined, records: CheckinRecord[]) {
@@ -913,7 +1447,7 @@ function CheckinCalendar({ month, status, onChangeMonth, onRefresh, busy }: { mo
           >
             {cell.day ? <Text font="caption" foregroundStyle="label">{cell.day}</Text> : <Text font="caption"> </Text>}
             {checked ? <Image systemName="checkmark.circle.fill" foregroundStyle="systemGreen" /> : <Text font="caption2" foregroundStyle="systemGray4"> </Text>}
-            {checked ? <Text font="caption2" foregroundStyle="systemGreen">{fmtCheckinAward(record?.quota_awarded)}</Text> : <Text font="caption2" foregroundStyle="systemGray4"> </Text>}
+            {checked ? <Text font="caption2" foregroundStyle="systemGreen" lineLimit={1} minScaleFactor={0.6}>{fmtQuota(record?.quota_awarded)}</Text> : <Text font="caption2" foregroundStyle="systemGray4"> </Text>}
           </VStack>
         })}
       </HStack>)}
@@ -939,7 +1473,10 @@ async function runQuickAccountAction(account: Account, label: string, task: (acc
 }
 
 async function quickSyncAccount(account: Account) {
-  const data = await fetchSelf(account)
+  const siteStatus = await checkSiteStatus(account)
+  patchAccount(account.id, { lastSiteStatus: siteStatus })
+  const latest = loadAccounts().find(item => item.id === account.id) ?? account
+  const data = await fetchSelf(latest)
   patchAccount(account.id, { lastSelf: data, lastError: "" })
   return data
 }
@@ -948,14 +1485,16 @@ async function quickCheckinAccount(account: Account) {
   const data = await doCheckin(account)
   let self: SelfInfo | undefined
   let status: CheckinStatus | undefined
+  let siteStatus: SiteStatus | undefined
   try { self = await fetchSelf(account) } catch {}
   try { status = await fetchCheckinStatus(account) } catch {}
-  patchAccount(account.id, { lastSelf: self, lastCheckin: status, lastError: "", ...getTodayCheckinPatch(status) })
+  try { siteStatus = await checkSiteStatus(account) } catch {}
+  patchAccount(account.id, { lastSelf: self, lastCheckin: status, lastSiteStatus: siteStatus, lastError: "", ...getTodayCheckinPatch(status) })
   return data
 }
 
 function AccountSummary({ accounts }: { accounts: Account[] }) {
-  const totalQuota = accounts.reduce((sum, item) => sum + (Number(item.lastSelf?.quota) || 0), 0)
+  const totalQuota = accounts.reduce((sum, item) => sum + (Number(getSelfQuotaValue(item.lastSelf)) || 0), 0)
   const checkedCount = accounts.filter(account => getTodayCheckinInfo(account).checked).length
 
   return <Section title="总览">
@@ -965,7 +1504,7 @@ function AccountSummary({ accounts }: { accounts: Account[] }) {
         <Text font="title2">{accounts.length}</Text>
       </VStack>
       <VStack alignment="leading" spacing={4} frame={{ maxWidth: "infinity", alignment: "leading" }}>
-        <Text font="caption" foregroundStyle="secondaryLabel">已签</Text>
+        <Text font="caption" foregroundStyle="secondaryLabel">已签到</Text>
         <Text font="title2">{checkedCount}</Text>
       </VStack>
       <VStack alignment="leading" spacing={4} frame={{ maxWidth: "infinity", alignment: "leading" }}>
@@ -978,8 +1517,8 @@ function AccountSummary({ accounts }: { accounts: Account[] }) {
 
 function AccountRowContent({ account }: { account: Account }) {
   const authText = getAuthSourceText(account)
-  const statusColor = account.lastError ? "systemRed" : account.lastSelf ? "systemGreen" : "systemOrange"
-  const statusText = account.lastError ? "异常" : account.lastSelf ? "已同步" : "未同步"
+  const siteStatus = getSiteStatusView(account)
+  const latencyText = getSiteStatusLatencyText(account.lastSiteStatus)
   const todayCheckin = getTodayCheckinInfo(account)
   const checkinTime = account.checkinTime
   const checkinTimeReached = checkinTime ? isCheckinTimeReached(checkinTime) : true
@@ -990,9 +1529,10 @@ function AccountRowContent({ account }: { account: Account }) {
       : "未签"
 
   return <HStack spacing={12}>
-    <VStack alignment="center" spacing={2} frame={{ width: 34 }}>
-      <Image systemName={account.lastError ? "exclamationmark.triangle.fill" : "server.rack"} foregroundStyle={statusColor as any} />
-      <Text font="caption2" foregroundStyle="secondaryLabel">{statusText}</Text>
+    <VStack alignment="center" spacing={2} frame={{ width: 52 }}>
+      <Image systemName={siteStatus.icon} foregroundStyle={siteStatus.color as any} />
+      <Text font="caption2" foregroundStyle={siteStatus.color as any}>{siteStatus.text}</Text>
+      {latencyText ? <Text font="caption2" foregroundStyle={getSiteStatusLatencyColor(account.lastSiteStatus) as any}>{latencyText}</Text> : null}
     </VStack>
     <VStack alignment="leading" spacing={5} frame={{ maxWidth: "infinity", alignment: "leading" }}>
       <HStack>
@@ -1005,17 +1545,21 @@ function AccountRowContent({ account }: { account: Account }) {
         <Spacer />
         <Text font="caption" foregroundStyle="secondaryLabel">{authText}</Text>
       </HStack>
-      <Text font="caption" foregroundStyle="secondaryLabel">{shortUrl(account.baseUrl)}</Text>
+      <HStack spacing={6}>
+        <Text font="caption" foregroundStyle="secondaryLabel">{shortUrl(account.baseUrl)} · {getPlatformText(account)}</Text>
+      </HStack>
       <HStack spacing={10}>
-        <Text font="caption">余额 {fmtQuota(account.lastSelf?.quota)}</Text>
-        <Text font="caption" foregroundStyle="secondaryLabel">已用 {fmtQuota(account.lastSelf?.used_quota)}</Text>
+        <Text font="caption">余额 {fmtQuota(getSelfQuotaValue(account.lastSelf))}</Text>
+        <Text font="caption" foregroundStyle="secondaryLabel">已用 {fmtQuota(getSelfUsedQuotaValue(account.lastSelf))}</Text>
       </HStack>
       {account.lastError ? <Text font="caption" foregroundStyle="systemRed">{getErrorMessage(account.lastError)}</Text> : null}
     </VStack>
   </HStack>
 }
 
-function AccountRowMenu({ account, onDelete, onQuickSync, onQuickCheckin, onOpenSite, onToggleExclude, disabled }: { account: Account, onDelete: (account: Account) => void, onQuickSync: (account: Account) => void, onQuickCheckin: (account: Account) => void, onOpenSite: (account: Account) => void, onToggleExclude: (account: Account) => void, disabled?: boolean }) {
+function AccountRowMenu({ account, onDelete, onQuickSync, onQuickCheckin, onOpenSite, onCheckSiteStatus, onToggleManualCheckin, onToggleExclude, disabled }: { account: Account, onDelete: (account: Account) => void, onQuickSync: (account: Account) => void, onQuickCheckin: (account: Account) => void, onOpenSite: (account: Account) => void, onCheckSiteStatus: (account: Account) => void, onToggleManualCheckin: (account: Account) => void, onToggleExclude: (account: Account) => void, disabled?: boolean }) {
+  const todayCheckin = getTodayCheckinInfo(account)
+
   function openAccountSite() {
     onOpenSite(account)
   }
@@ -1023,7 +1567,14 @@ function AccountRowMenu({ account, onDelete, onQuickSync, onQuickCheckin, onOpen
   return <Group>
     <Button title="查询余额" systemImage="arrow.clockwise" action={() => onQuickSync(account)} disabled={disabled} />
     <Button title="签到" systemImage="checkmark.seal" action={() => onQuickCheckin(account)} disabled={disabled} />
-    <Button title="手动网页签到" systemImage="globe" action={openAccountSite} disabled={disabled} />
+    <Button title="连通性检测" systemImage="network" action={() => onCheckSiteStatus(account)} disabled={disabled} />
+    <Button title="网页签到" systemImage="safari" action={openAccountSite} disabled={disabled} />
+    <Button
+      title={todayCheckin.checked ? "标注未签" : "标注已签"}
+      systemImage={todayCheckin.checked ? "xmark.seal" : "checkmark.seal.fill"}
+      action={() => onToggleManualCheckin(account)}
+      disabled={disabled}
+    />
     <Button
       title={account.excludeFromBatchCheckin ? "加入批量签到" : "排除批量签到"}
       systemImage={account.excludeFromBatchCheckin ? "plus.circle" : "minus.circle"}
@@ -1054,6 +1605,7 @@ function AccountListHeader({ sortKey, sortDirection, onSelectSort }: { sortKey: 
       <Image systemName={directionIcon} foregroundStyle="secondaryLabel" font="caption2" />
     </HStack>}>
       <SortButton itemKey="name" title="按名称" />
+      <SortButton itemKey="platform" title="按平台" />
       <SortButton itemKey="quota" title="按金额" />
       <SortButton itemKey="checkin" title="按签到状态" />
     </Menu>
@@ -1097,6 +1649,7 @@ function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: () => v
   const dismiss = Navigation.useDismiss()
   const [name, setName] = useState(initial?.name ?? "")
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "")
+  const [platform, setPlatform] = useState<AccountPlatform>(initial?.platform ?? "newapi")
   const [username, setUsername] = useState(initial?.username ?? "")
   const [password, setPassword] = useState("")
   const [cookie, setCookie] = useState("")
@@ -1121,16 +1674,18 @@ function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: () => v
     try {
       const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
       const result = await getWebLoginCookie(normalizedBaseUrl)
-      setCookie(result.cookieHeader)
+      const credential = platform === "sub2api" ? result.authToken : result.cookieHeader
+      if (!credential) throw new Error(platform === "sub2api" ? "未获取到 Sub2API auth_token" : "未获取到 Cookie")
+      setCookie(credential)
       setCookieAuthSource("web")
       if (result.storageSelf) {
         setWebSelf(result.storageSelf)
         if (!username && result.storageSelf.username) setUsername(result.storageSelf.username)
-        if (!name) setName(result.storageSelf.display_name || result.storageSelf.username || shortUrl(normalizedBaseUrl))
+        if (!name) setName(getSelfDisplayName(result.storageSelf) || shortUrl(normalizedBaseUrl))
       } else if (!name) {
         setName(shortUrl(normalizedBaseUrl))
       }
-      setToastMessage("已获取 Cookie，保存后生效")
+      setToastMessage(platform === "sub2api" ? "已获取登录令牌，保存后生效" : "已获取 Cookie，保存后生效")
       setShowToast(true)
     } catch (e: any) {
       setToastMessage(`网页登录失败：${getErrorMessage(e)}`)
@@ -1147,6 +1702,7 @@ function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: () => v
         id: initial?.id,
         name,
         baseUrl,
+        platform,
         username,
         password,
         cookie,
@@ -1189,7 +1745,11 @@ function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: () => v
   >
     <Section title="基础信息">
       <LabeledTextField title="显示名称" value={name} onChanged={setName} prompt="主站 / 小号 A" />
-      <LabeledTextField title="站点地址" value={baseUrl} onChanged={setBaseUrl} prompt="https://newapi.example.com" />
+      <LabeledTextField title="站点地址" value={baseUrl} onChanged={setBaseUrl} prompt={platform === "sub2api" ? "https://api.luka77.cc" : "https://newapi.example.com"} />
+      <Picker title="平台类型" value={platform} onChanged={(value: string) => setPlatform(value === "sub2api" ? "sub2api" : "newapi")}>
+        <Text tag="newapi">NewAPI</Text>
+        <Text tag="sub2api">Sub2API</Text>
+      </Picker>
       <HStack spacing={12}>
         <Text>签到时间</Text>
         <Spacer />
@@ -1212,25 +1772,25 @@ function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: () => v
         </HStack>
       </HStack>
     </Section>
-    <Section header={<Text>账号密码登录</Text>} footer={<Text>如果站点启用了 Turnstile 或 2FA，建议改用浏览器登录后的 Cookie。</Text>}>
-      <LabeledTextField title="用户名" value={username} onChanged={setUsername} prompt="可选" />
+    <Section header={<Text>账号密码登录</Text>} footer={<Text>{platform === "sub2api" ? "Sub2API 账号密码登录使用邮箱和密码；如果站点启用了 Turnstile 或 2FA，建议改用网页登录获取登录令牌。" : "如果站点启用了 Turnstile 或 2FA，建议改用浏览器登录后的 Cookie。"}</Text>}>
+      <LabeledTextField title={platform === "sub2api" ? "邮箱" : "用户名"} value={username} onChanged={setUsername} prompt="可选" />
       <LabeledSecureField title="密码" value={password} onChanged={setPassword} prompt={initial ? "留空则不修改" : "可选"} />
     </Section>
-    <Section header={<Text>第三方登录 Cookie</Text>} footer={<Text>适用于 GitHub / OIDC / LinuxDO / Discord / Telegram / 微信等第三方登录。粘贴浏览器请求头中的 Cookie。</Text>}>
-      <LabeledTextField title="Cookie" value={cookie} onChanged={value => { setCookie(value); setCookieAuthSource("cookie") }} axis="vertical" prompt={initial ? "留空则不修改" : "session=...; other=..."} />
+    <Section header={<Text>{platform === "sub2api" ? "网页登录令牌" : "第三方登录 Cookie"}</Text>} footer={<Text>{platform === "sub2api" ? "Sub2API 前端使用 localStorage.auth_token。推荐点“网页登录获取 Cookie/令牌”，也可以手动粘贴 auth_token。" : "适用于 GitHub / OIDC / LinuxDO / Discord / Telegram / 微信等第三方登录。粘贴浏览器请求头中的 Cookie。"}</Text>}>
+      <LabeledTextField title={platform === "sub2api" ? "令牌" : "Cookie"} value={cookie} onChanged={value => { setCookie(value); setCookieAuthSource("cookie") }} axis="vertical" prompt={initial ? "留空则不修改" : platform === "sub2api" ? "auth_token" : "session=...; other=..."} />
       <Button action={webLoginCookie} disabled={webBusy}>
         {webBusy ? <HStack spacing={8} alignment="center">
           <ProgressView />
           <Text foregroundStyle="systemGray4">网页登录中...</Text>
         </HStack> : <HStack spacing={8} alignment="center">
           <Image systemName="globe" foregroundStyle="tintColor" font="body" frame={{ width: 24, alignment: "center" }} />
-          <Text foregroundStyle="tintColor">网页登录获取 Cookie</Text>
+          <Text foregroundStyle="tintColor">网页登录获取 Cookie/令牌</Text>
         </HStack>}
       </Button>
       <Button action={pasteCookie}>
         <HStack spacing={8} alignment="center">
           <Image systemName="doc.on.clipboard" foregroundStyle="tintColor" font="body" frame={{ width: 24, alignment: "center" }} />
-          <Text foregroundStyle="tintColor">从剪贴板粘贴 Cookie</Text>
+          <Text foregroundStyle="tintColor">{platform === "sub2api" ? "从剪贴板粘贴令牌" : "从剪贴板粘贴 Cookie"}</Text>
         </HStack>
       </Button>
     </Section>
@@ -1256,8 +1816,8 @@ function AccountDetailView({ accountId, onChanged }: { accountId: string, onChan
     setAccount(next)
     setCheckinMonth(localMonthString())
     setBusy(false)
-    if (next && !getTodayCheckinRecord(next.lastCheckin)) {
-      refreshStatusSilently(localMonthString(), next)
+    if (next) {
+      refreshDetailSilently(localMonthString(), next)
     }
   }, [accountId])
 
@@ -1265,6 +1825,33 @@ function AccountDetailView({ accountId, onChanged }: { accountId: string, onChan
     const next = loadAccounts().find(a => a.id === accountId)
     if (next) setAccount(next)
     onChanged()
+  }
+
+  async function refreshDetailSilently(month = localMonthString(), target?: Account) {
+    const latest = target ?? loadAccounts().find(item => item.id === accountId) ?? account
+    if (!latest) return
+    setBusy(true)
+    const patch: Partial<Account> = {}
+    try {
+      patch.lastSelf = await fetchSelf(latest)
+      patch.lastError = ""
+    } catch (e: any) {
+      patch.lastError = getErrorMessage(e)
+    }
+    try {
+      const status = await fetchCheckinStatus(latest, month)
+      patch.lastCheckin = status
+      Object.assign(patch, getTodayCheckinPatch(status))
+      if (!patch.lastError) patch.lastError = ""
+    } catch (e: any) {
+      if (!patch.lastError) patch.lastError = getErrorMessage(e)
+      Object.assign(patch, getCheckinDisabledPatch(e?.message ?? e))
+    }
+    patchAccount(latest.id, patch)
+    const next = loadAccounts().find(a => a.id === accountId)
+    if (next) setAccount(next)
+    onChanged()
+    setBusy(false)
   }
 
   async function refreshStatusSilently(month = localMonthString(), target?: Account) {
@@ -1412,23 +1999,25 @@ function AccountDetailView({ accountId, onChanged }: { accountId: string, onChan
   >
     <Section title="状态">
       {busy ? <HStack spacing={8}><ProgressView /><Text>处理中...</Text></HStack> : null}
+      <Text>平台：{getPlatformText(account)}</Text>
       <Text>站点：{account.baseUrl}</Text>
+      <Text>站点状态：{getSiteStatusDetail(account.lastSiteStatus)}</Text>
       <Text>认证：{getAuthSourceText(account)}</Text>
       <Text>更新：{fmtTime(account.updatedAt)}</Text>
       {account.lastError ? <Text foregroundStyle="systemRed">错误：{getErrorMessage(account.lastError)}</Text> : null}
     </Section>
     
     <Section title="账号操作">
-      <Button action={login} disabled={busy}>
+      <Button action={login} disabled={busy || !account?.username || !getSecret(account?.passwordKey)}>
         <HStack spacing={8} alignment="center">
-          <Image systemName="person.crop.circle.badge.checkmark" foregroundStyle={busy ? "systemGray4" : "tintColor"} font="body" frame={{ width: 24, alignment: "center" }} />
-          <Text foregroundStyle={busy ? "systemGray4" : "tintColor"}>登录账号</Text>
+          <Image systemName="person.crop.circle.badge.checkmark" foregroundStyle={busy || !account?.username || !getSecret(account?.passwordKey) ? "systemGray4" : "tintColor"} font="body" frame={{ width: 24, alignment: "center" }} />
+          <Text foregroundStyle={busy || !account?.username || !getSecret(account?.passwordKey) ? "systemGray4" : "tintColor"}>登录账号</Text>
         </HStack>
       </Button>
       <Button action={webLogin} disabled={busy}>
         <HStack spacing={8} alignment="center">
           <Image systemName="globe" foregroundStyle={busy ? "systemGray4" : "tintColor"} font="body" frame={{ width: 24, alignment: "center" }} />
-          <Text foregroundStyle={busy ? "systemGray4" : "tintColor"}>网页登录获取 Cookie</Text>
+          <Text foregroundStyle={busy ? "systemGray4" : "tintColor"}>网页登录获取 Cookie/令牌</Text>
         </HStack>
       </Button>
       <Button action={remove} disabled={busy}>
@@ -1440,22 +2029,23 @@ function AccountDetailView({ accountId, onChanged }: { accountId: string, onChan
     </Section>
     
     <Section title="余额">
-      <Text>用户名：{account.lastSelf?.username ?? account.username ?? "-"}</Text>
+      <Text>用户名：{getSelfDisplayName(account.lastSelf) ?? account.username ?? "-"}</Text>
       <Text>分组：{account.lastSelf?.group ?? "-"}</Text>
-      <Text>剩余额度：{fmtQuota(account.lastSelf?.quota)} ({fmtRawQuota(account.lastSelf?.quota)})</Text>
-      <Text>已用额度：{fmtQuota(account.lastSelf?.used_quota)} ({fmtRawQuota(account.lastSelf?.used_quota)})</Text>
+      <Text>剩余额度：{fmtQuota(getSelfQuotaValue(account.lastSelf))} ({fmtRawQuotaForAccount(account, getSelfQuotaValue(account.lastSelf))})</Text>
+      <Text>已用额度：{fmtQuota(getSelfUsedQuotaValue(account.lastSelf))} ({fmtRawQuotaForAccount(account, getSelfUsedQuotaValue(account.lastSelf))})</Text>
+      {isSub2ApiAccount(account) ? <Text>并发：{account.lastSelf?.concurrency ?? "-"}</Text> : null}
       <Text>请求次数：{account.lastSelf?.request_count ?? "-"}</Text>
     </Section>
 
     <Section title="签到">
-      {account.excludeFromBatchCheckin ? <Text foregroundStyle="systemOrange">⚠️ 已排除批量签到（仅手动网页签到）</Text> : null}
+      {account.excludeFromBatchCheckin ? <Text foregroundStyle="systemOrange">⚠️ 已排除批量签到（仅网页签到）</Text> : null}
       <Text>今日状态：{todayCheckin.checked ? `已签到${todayCheckin.record?.quota_awarded !== undefined ? `，奖励 ${fmtCheckinAward(todayCheckin.record.quota_awarded)}` : ""}` : (() => {
         const checkinTime = account.checkinTime
         const checkinTimeReached = checkinTime ? isCheckinTimeReached(checkinTime) : true
         return checkinTime && !checkinTimeReached ? `未签到（签到时间 ${checkinTime}）` : "未签到"
       })()}</Text>
       <Text>功能启用：{account.lastCheckin?.enabled === undefined ? "未知" : account.lastCheckin.enabled ? "是" : "否"}</Text>
-      <Text>奖励范围：{fmtQuota(account.lastCheckin?.min_quota)} ~ {fmtQuota(account.lastCheckin?.max_quota)}</Text>
+      <Text>奖励范围：{isSub2ApiAccount(account) ? fmtQuota(account.lastCheckin?.min_quota) : `${fmtQuota(account.lastCheckin?.min_quota)} ~ ${fmtQuota(account.lastCheckin?.max_quota)}`}</Text>
       <CheckinCalendar
         month={checkinMonth}
         status={account.lastCheckin}
@@ -1465,6 +2055,24 @@ function AccountDetailView({ accountId, onChanged }: { accountId: string, onChan
       />
     </Section>
   </List>
+}
+
+function shouldAutoCheckSiteStatus(account: Account) {
+  const checkedAt = account.lastSiteStatus?.checkedAt
+  return !checkedAt || now() - checkedAt >= SITE_STATUS_AUTO_CHECK_INTERVAL
+}
+
+// 清除已过期的连通性缓存数据（延迟/状态等）
+function clearExpiredSiteStatuses(accounts: Account[]) {
+  let changed = false
+  for (const account of accounts) {
+    if (shouldAutoCheckSiteStatus(account) && account.lastSiteStatus) {
+      account.lastSiteStatus = undefined
+      changed = true
+    }
+  }
+  if (changed) saveAccounts(accounts)
+  return changed
 }
 
 function MainView() {
@@ -1484,7 +2092,58 @@ function MainView() {
 
   useEffect(() => {
     reload()
+    void checkSiteStatuses()
   }, [])
+
+  async function checkSiteStatuses(showResult = false) {
+    const currentAccounts = loadAccounts()
+    // 清除已过期的延迟缓存数据
+    if (clearExpiredSiteStatuses(currentAccounts)) reload()
+    const targetAccounts = showResult ? currentAccounts : currentAccounts.filter(shouldAutoCheckSiteStatus)
+    if (currentAccounts.length === 0) {
+      if (showResult) {
+        setToastMessage("请先添加账号后再检测连通性")
+        setShowToast(true)
+      }
+      return
+    }
+    if (targetAccounts.length === 0) return
+    setBusy(true)
+    setBusyLabel("检测连通性中...")
+    if (showResult) {
+      saveAccounts(currentAccounts.map(account => ({
+        ...account,
+        lastSiteStatus: undefined,
+      })))
+      reload()
+    }
+    let ok = 0
+    let fail = 0
+    const total = targetAccounts.length
+    try {
+      for (let i = 0; i < targetAccounts.length; i++) {
+        const account = targetAccounts[i]
+        setBusyLabel(`检测连通性中 (${i + 1}/${total})...`)
+        try {
+          const status = await checkSiteStatus(account)
+          patchAccount(account.id, { lastSiteStatus: status })
+          if (status.state === "offline") fail++
+          else ok++
+        } catch (e: any) {
+          patchAccount(account.id, { lastSiteStatus: getOfflineSiteStatus(e) })
+          fail++
+        }
+        reload()
+      }
+    } finally {
+      setBusy(false)
+      setBusyLabel("")
+    }
+    if (showResult) {
+      setToastMessage(`连通性检测完成：正常 ${ok}，异常 ${fail}`)
+      setShowToast(true)
+    }
+  }
 
   async function syncAll() {
     if (accounts.length === 0) {
@@ -1496,9 +2155,16 @@ function MainView() {
     setBusyLabel("批量查余额中...")
     let ok = 0
     let fail = 0
-    for (const account of loadAccounts()) {
+    const allAccounts = loadAccounts()
+    const total = allAccounts.length
+    for (let i = 0; i < allAccounts.length; i++) {
+      const account = allAccounts[i]
+      setBusyLabel(`批量查余额中 (${i + 1}/${total})...`)
       try {
-        const data = await fetchSelf(account)
+        const siteStatus = await checkSiteStatus(account)
+        patchAccount(account.id, { lastSiteStatus: siteStatus })
+        const latest = loadAccounts().find(item => item.id === account.id) ?? account
+        const data = await fetchSelf(latest)
         patchAccount(account.id, { lastSelf: data, lastError: "" })
         ok++
       } catch (e: any) {
@@ -1527,7 +2193,12 @@ function MainView() {
     let skippedExcluded = 0
     let skippedTime = 0
     let skippedSigned = 0
-    for (const account of loadAccounts()) {
+    const allAccounts = loadAccounts()
+    const total = allAccounts.length
+    let processed = 0
+    for (const account of allAccounts) {
+      processed++
+      setBusyLabel(`批量签到中 (${processed}/${total})...`)
       if (account.excludeFromBatchCheckin) {
         skipped++
         skippedExcluded++
@@ -1603,6 +2274,24 @@ function MainView() {
     }
   }
 
+  async function quickCheckSiteStatus(account: Account) {
+    setBusy(true)
+    try {
+      const status = await checkSiteStatus(account)
+      patchAccount(account.id, { lastSiteStatus: status })
+      const stateText = status.state === "online" ? "在线" : status.state === "warning" ? "异常" : "离线"
+      const latencyText = status.state === "online" && status.latencyMs !== undefined ? `，${status.latencyMs}ms` : ""
+      setToastMessage(`"${account.name}"${stateText}${latencyText}`)
+    } catch (e: any) {
+      patchAccount(account.id, { lastSiteStatus: getOfflineSiteStatus(e) })
+      setToastMessage(`连通性检测失败：${getErrorMessage(e)}`)
+    } finally {
+      reload()
+      setBusy(false)
+      setShowToast(true)
+    }
+  }
+
   async function quickOpenSite(account: Account) {
     setBusy(true)
     setToastMessage(`正在打开“${account.name}”网页签到...`)
@@ -1610,9 +2299,21 @@ function MainView() {
     try {
       await openManualCheckinWebView(account)
       const latest = loadAccounts().find(item => item.id === account.id) ?? account
-      const status = await fetchCheckinStatus(latest)
-      patchAccount(latest.id, { lastCheckin: status, lastError: "", ...getTodayCheckinPatch(status) })
-      setToastMessage(`“${account.name}”签到状态已更新`)
+      try {
+        const status = await fetchCheckinStatus(latest)
+        patchAccount(latest.id, { lastCheckin: status, lastError: "", ...getTodayCheckinPatch(status) })
+        setToastMessage(`“${account.name}”签到状态已更新`)
+      } catch (e: any) {
+        const message = getErrorMessage(e)
+        const balancePatch: Partial<Account> = { lastError: message, ...getCheckinDisabledPatch(message) }
+        try {
+          balancePatch.lastSelf = await fetchSelf(latest)
+          setToastMessage(`网页已关闭，签到接口不可用`)
+        } catch {
+          setToastMessage(`网页已关闭，签到接口不可用`)
+        }
+        patchAccount(latest.id, balancePatch)
+      }
     } catch (e: any) {
       const message = getErrorMessage(e)
       patchAccount(account.id, { lastError: message, ...getCheckinDisabledPatch(message) })
@@ -1628,6 +2329,14 @@ function MainView() {
     deleteAccount(account.id)
     reload()
     setToastMessage(`“${account.name}”已删除`)
+    setShowToast(true)
+  }
+
+  function quickToggleManualCheckin(account: Account) {
+    const nextChecked = !getTodayCheckinInfo(account).checked
+    patchAccount(account.id, getManualTodayCheckinPatch(account, nextChecked))
+    reload()
+    setToastMessage(nextChecked ? `“${account.name}”已标注为已签` : `“${account.name}”已标注为未签`)
     setShowToast(true)
   }
 
@@ -1655,7 +2364,7 @@ function MainView() {
 
   return <NavigationStack>
     <List
-      navigationTitle="NewAPI 账号管理"
+      navigationTitle="账号管理"
       navigationBarTitleDisplayMode="large"
       refreshable={async () => reload()}
       toolbar={<Toolbar>
@@ -1675,8 +2384,9 @@ function MainView() {
       <AccountSummary accounts={accounts} />
 
       <Section header={<Text>批量操作</Text>} footer={<Text>如果站点开启 Turnstile/2FA，请使用浏览器登录后的 Cookie。脚本不会绕过验证码。</Text>}>
-        <BatchActionButton title="查询余额" busyTitle="批量查余额中..." systemImage="arrow.clockwise" active={busy && busyLabel === "批量查余额中..."} disabled={busy} action={syncAll} />
-        <BatchActionButton title="签到" busyTitle="批量签到中..." systemImage="checkmark.seal.fill" active={busy && busyLabel === "批量签到中..."} disabled={busy} action={checkinAll} />
+        <BatchActionButton title="查询余额" busyTitle={busyLabel} systemImage="arrow.clockwise" active={busy && busyLabel.startsWith("批量查余额")} disabled={busy} action={syncAll} />
+        <BatchActionButton title="签到" busyTitle={busyLabel} systemImage="checkmark.seal.fill" active={busy && busyLabel.startsWith("批量签到")} disabled={busy} action={checkinAll} />
+        <BatchActionButton title="连通性检测" busyTitle={busyLabel} systemImage="network" active={busy && busyLabel.startsWith("检测连通性")} disabled={busy} action={() => checkSiteStatuses(true)} />
       </Section>
 
       <Section header={<AccountListHeader sortKey={sortKey} sortDirection={sortDirection} onSelectSort={selectSort} />}>
@@ -1684,7 +2394,7 @@ function MainView() {
         {sortedAccounts.map(account => <NavigationLink
           key={account.id}
           destination={<AccountDetailView key={`detail-${account.id}`} accountId={account.id} onChanged={reload} />}
-          contextMenu={{ menuItems: <AccountRowMenu account={account} onDelete={quickDelete} onQuickSync={quickSync} onQuickCheckin={quickCheckin} onOpenSite={quickOpenSite} onToggleExclude={quickToggleExclude} disabled={busy} /> }}
+          contextMenu={{ menuItems: <AccountRowMenu account={account} onDelete={quickDelete} onQuickSync={quickSync} onQuickCheckin={quickCheckin} onOpenSite={quickOpenSite} onCheckSiteStatus={quickCheckSiteStatus} onToggleManualCheckin={quickToggleManualCheckin} onToggleExclude={quickToggleExclude} disabled={busy} /> }}
         >
           <AccountRowContent account={account} />
         </NavigationLink>)}

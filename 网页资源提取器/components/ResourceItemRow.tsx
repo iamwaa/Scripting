@@ -4,6 +4,7 @@ import { WebURL } from "../utils/WebURL"
 import { getTypeInfo } from "../functions/resourceInfo"
 import { ResourceDetailView } from "../pages/ResourceDetailView"
 import { showToast } from "../state/appState"
+import { enqueueResourceDownload } from "../state/downloadManager"
 
 export function ResourceItemRow({ item }: { item: ResourceItem }) {
   const info = getTypeInfo(item.type)
@@ -21,6 +22,14 @@ export function ResourceItemRow({ item }: { item: ResourceItem }) {
       contextMenu={{
         menuItems: (
           <Group>
+            <Button
+              title="下载"
+              systemImage="arrow.down.circle"
+              action={() => {
+                enqueueResourceDownload(item)
+                showToast("正在下载…")
+              }}
+            />
             <Button
               title="复制链接"
               systemImage="doc.on.doc"

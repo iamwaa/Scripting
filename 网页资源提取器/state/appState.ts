@@ -7,6 +7,7 @@ export const statusText = new Observable("输入网址后点击「提取资源�
 export const resources = new Observable<ResourceItem[]>([])
 export const pageTitle = new Observable("")
 export const selectedCategory = new Observable("all")
+export const initialViewMode = new (Observable as any)("main") as Observable<"main" | "downloads">
 export const toastMessage = new Observable("")
 export const toastVisible = new Observable(false)
 export const filterInvalidResources = new Observable(false)

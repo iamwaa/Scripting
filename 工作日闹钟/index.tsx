@@ -29,10 +29,15 @@ import {
   useEffect,
   fetch,
   useColorScheme,
+  Font,
+  FontWeight,
+  ShapeStyle,
+  DynamicShapeStyle,
 } from "scripting"
 import { StopWorkdayAlarmIntent, SnoozeWorkdayAlarmIntent } from "./app_intents"
 
 declare const Dialog: any
+const TextWithLayout = Text as any
 
 interface DayEntry {
   date: string
@@ -76,6 +81,7 @@ const KEY_WORKDAY_ALARM_ID = "alarm_workday_alarm_id"
 const KEY_WORKDAY_ALARM_IDS = "alarm_workday_alarm_ids"
 const KEY_WORKDAY_NEXT_ALARM_ID = "alarm_workday_next_alarm_id"
 const KEY_REST_RULE = "alarm_rest_rule"
+const KEY_DAY_NOTES = "alarm_day_notes"
 const KEY_ALARM_TYPE = "alarm_type"
 const KEY_ALARM_SOUND = "alarm_sound"
 const KEY_ALARM_SNOOZE_MINUTES = "alarm_snooze_minutes"
@@ -88,6 +94,89 @@ const DEFAULT_NOTIFY_HOUR = 20
 const DEFAULT_NOTIFY_MINUTE = 0
 const SNOOZE_MINUTE_OPTIONS = [5, 10, 15, 20, 30]
 const SUPPORTED_SOUND_EXTENSIONS = new Set([".aiff", ".wav", ".caf", ".mp3"])
+
+function MarqueeText({
+  text,
+  font = "caption2",
+  fontWeight = "semibold",
+  foregroundStyle = "#1C1C1E",
+  maxChars = 3,
+  cycleDuration = 6,
+  frame = { maxWidth: "infinity" },
+}: {
+  text: string
+  font?: Font | number | { name: string; size: number }
+  fontWeight?: FontWeight
+  foregroundStyle?: ShapeStyle | DynamicShapeStyle
+  maxChars?: number
+  cycleDuration?: number
+  frame?: Record<string, unknown>
+}) {
+  const needsScroll = text.length > maxChars
+  const [isScrolling, setIsScrolling] = useState(false)
+  const [restartKey, setRestartKey] = useState(0)
+
+  useEffect(() => {
+    setIsScrolling(false)
+    setRestartKey((value) => value + 1)
+
+    if (!needsScroll) return
+
+    const timer = setTimeout(() => setIsScrolling(true), 200)
+    return () => clearTimeout(timer)
+  }, [needsScroll, text])
+
+  if (!text) {
+    return <Text frame={frame} foregroundStyle="clear">{" "}</Text>
+  }
+
+  if (!needsScroll) {
+    return (
+      <Text
+        font={font}
+        fontWeight={fontWeight}
+        foregroundStyle={foregroundStyle}
+        lineLimit={1}
+        frame={frame}
+      >
+        {text}
+      </Text>
+    )
+  }
+
+  const gap = 42
+  const charWidth = 14
+  const scrollDistance = text.length * charWidth + gap
+  const scrollDuration = Math.max(cycleDuration, text.length * 1.4)
+  const scrollOffset = isScrolling ? -scrollDistance : 0
+
+  return (
+    <HStack
+      key={`marquee-${restartKey}`}
+      spacing={gap}
+      frame={frame}
+      clipShape={{ type: "rect", cornerRadius: 0 }}
+    >
+      {[0, 1].map((index) => (
+        <Text
+          key={`marquee-text-${index}`}
+          font={font}
+          fontWeight={fontWeight}
+          foregroundStyle={foregroundStyle}
+          lineLimit={1}
+          fixedSize={{ horizontal: true, vertical: false }}
+          offset={{ x: scrollOffset, y: 0 }}
+          animation={{
+            animation: Animation.linear(scrollDuration).repeatForever(false),
+            value: scrollOffset,
+          }}
+        >
+          {text}
+        </Text>
+      ))}
+    </HStack>
+  )
+}
 
 function alarmLibrarySoundsDirectoryPath(): string {
   return Path.join(Path.dirname(FileManager.temporaryDirectory), "Library", "Sounds")
@@ -305,7 +394,7 @@ function getHolidayLabel(dateKey: string, subDays: DayEntry[]): string {
     .replace("假期", "")
     .replace("补班", "")
     .trim()
-  return label.length > 3 ? label.substring(0, 3) : label
+  return label
 }
 
 function isRestDay(type: "holiday" | "workday" | "weekend" | "normal"): boolean {
@@ -365,6 +454,14 @@ function saveSubCache(days: DayEntry[]) {
 
 function loadOverrides(): LocalOverride[] {
   return Storage.get<LocalOverride[]>(KEY_OVERRIDES) || []
+}
+
+function loadDayNotes(): Record<string, string> {
+  return Storage.get<Record<string, string>>(KEY_DAY_NOTES) || {}
+}
+
+function saveDayNotes(notes: Record<string, string>) {
+  Storage.set(KEY_DAY_NOTES, notes)
 }
 
 function saveOverrides(overrides: LocalOverride[]) {
@@ -522,7 +619,7 @@ function buildAlarmAttributes(title: string, targetDateStr: string) {
   })
   return AlarmManager.Attributes.create({
     alert,
-    tintColor: "#007AFF",
+    tintColor: "orange",
     metadata: { source: "holiday-alarm", date: targetDateStr, snoozeMinutes: `${snoozeMinutes}` },
   })
 }
@@ -719,8 +816,10 @@ function CalendarPage(props: {
   restRule: RestRule
   alarmTime: number
   alarmEnabled: boolean
+  dayNotes: Record<string, string>
   onSubDaysChange: (days: DayEntry[]) => void
   onOverridesChange: (overrides: LocalOverride[]) => void
+  onDayNotesChange: (notes: Record<string, string>) => void
 }) {
   const today = new Date()
   const tomorrow = new Date()
@@ -798,6 +897,34 @@ function CalendarPage(props: {
     props.onOverridesChange(updated)
     saveOverrides(updated)
     syncAlarmAndNotification(props.subDays, updated, props.restRule)
+  }
+
+  async function handleLongPressDay(day: number) {
+    const key = dateStr(year, month, day)
+    const current = props.dayNotes[key] || ""
+
+    const result = await Dialog.prompt({
+      title: "日期备注",
+      message: key,
+      defaultValue: current,
+      placeholder: "为这个日期添加备注",
+      confirmButtonTitle: "保存",
+      cancelButtonTitle: "取消",
+    })
+
+    if (result === undefined) return
+
+    const text = String(result).trim()
+    const next = { ...props.dayNotes }
+
+    if (text) {
+      next[key] = text
+    } else {
+      delete next[key]
+    }
+
+    props.onDayNotesChange(next)
+    saveDayNotes(next)
   }
 
   function handlePrevMonth() {
@@ -887,7 +1014,7 @@ function CalendarPage(props: {
           <VStack spacing={10}>
             <HStack buttonStyle="plain" frame={{ minHeight: 30 }} padding={{ horizontal: 18 }}>
               <Button action={handlePrevMonth}>
-                <Image systemName="chevron.left.circle.fill" foregroundStyle="#007AFF" font="body" />
+                <Image systemName="arrowtriangle.left.fill" foregroundStyle="#007AFF" font="caption" />
               </Button>
               <Spacer />
               <HStack spacing={8} buttonStyle="plain">
@@ -909,7 +1036,7 @@ function CalendarPage(props: {
               </HStack>
               <Spacer />
               <Button action={handleNextMonth}>
-                <Image systemName="chevron.right.circle.fill" foregroundStyle="#007AFF" font="body" />
+                <Image systemName="arrowtriangle.right.fill" foregroundStyle="#007AFF" font="caption" />
               </Button>
             </HStack>
 
@@ -940,6 +1067,7 @@ function CalendarPage(props: {
                   const type = getDayType(key, props.subDays, props.overrides, props.restRule)
                   const isToday = key === todayStr
                   const holidayLabel = getHolidayLabel(key, props.subDays)
+                  const noteLabel = props.dayNotes[key] || ""
                   const isRest = isRestDay(type)
                   const isWorkdayOverride = type === "workday"
                   const cardBackground: `#${string}` = isWorkdayOverride ? "#FF9500" : isRest ? "#34C759" : isDark ? "#2C2C2E" : "#FFFFFF"
@@ -962,6 +1090,7 @@ function CalendarPage(props: {
                       contentShape={{ type: "rect", cornerRadius: 8 }}
                       overlay={todayOutline}
                       onTapGesture={() => handleTapDay(day)}
+                      onLongPressGesture={() => handleLongPressDay(day)}
                     >
                       <Text
                         font="callout"
@@ -970,13 +1099,15 @@ function CalendarPage(props: {
                       >
                         {day.toString()}
                       </Text>
-                      <Text
+                      <MarqueeText
+                        text={noteLabel || holidayLabel}
                         font="caption2"
                         fontWeight="semibold"
                         foregroundStyle={isToday && !isRest && !isWorkdayOverride ? "#007AFF" : textColor}
-                      >
-                        {holidayLabel || " "}
-                      </Text>
+                        maxChars={3}
+                        cycleDuration={6}
+                        frame={{ maxWidth: "infinity" }}
+                      />
                     </VStack>
                   )
                 })}
@@ -998,7 +1129,7 @@ function CalendarPage(props: {
                 <Spacer />
               </HStack>
               <Text font="caption2" foregroundStyle="#8E8E93">
-                点击日期可手动标注：休息→上班→还原
+                点击日期可手动标注：休息→上班→还原；长按日期可输入备注
               </Text>
             </VStack>
           </VStack>
@@ -1853,11 +1984,11 @@ function HelpPage() {
               <Text font="subheadline">内置：使用系统闹钟能力，自动设置下一个未过的工作日闹钟</Text>
             </HStack>
             <HStack spacing={8}>
-             <Image systemName="arrow.turn.down.right" foregroundStyle="#007AFF" font="subheadline" />
+              <Image systemName="arrow.turn.down.right" foregroundStyle="#007AFF" font="subheadline" />
               <Text font="subheadline">当天闹钟时间未过且当天为工作日时，会优先保留/设置当天闹钟</Text>
             </HStack>
             <HStack spacing={8}>
-             <Image systemName="arrow.turn.down.right" foregroundStyle="#007AFF" font="subheadline" />
+              <Image systemName="arrow.turn.down.right" foregroundStyle="#007AFF" font="subheadline" />
               <Text font="subheadline">内置模式默认开启稍后提醒，可在设置页选择时长</Text>
             </HStack>
             <HStack spacing={8}>
@@ -1865,7 +1996,7 @@ function HelpPage() {
               <Text font="subheadline">快捷指令：不创建内置闹钟，由快捷指令接收脚本结果后自行处理</Text>
             </HStack>
             <HStack spacing={8}>
-             <Image systemName="arrow.turn.down.right" foregroundStyle="#007AFF" font="subheadline" />
+              <Image systemName="arrow.turn.down.right" foregroundStyle="#007AFF" font="subheadline" />
               <Text font="subheadline">切换到快捷指令模式时，会清空已记录的内置闹钟</Text>
             </HStack>
             <HStack spacing={8}>
@@ -1873,11 +2004,11 @@ function HelpPage() {
               <Text font="subheadline">内置模式可在设置页选择系统默认或指定名称的铃声</Text>
             </HStack>
             <HStack spacing={8}>
-              <Image systemName="arrow.turn.down.right" foregroundStyle="#007AFF" font="subheadline" />
+               <Image systemName="arrow.turn.down.right" foregroundStyle="#007AFF" font="subheadline" />
               <Text font="subheadline">自定义铃声可在设置页的铃声管理中从文件管理导入</Text>
             </HStack>
             <HStack spacing={8}>
-              <Image systemName="arrow.turn.down.right" foregroundStyle="#007AFF" font="subheadline" />
+               <Image systemName="arrow.turn.down.right" foregroundStyle="#007AFF" font="subheadline" />
               <Text font="subheadline">支持格式：.aiff、.wav、.caf、.mp3</Text>
             </HStack>
           </VStack>
@@ -1925,6 +2056,7 @@ function MainView() {
   const [subDays, setSubDays] = useState<DayEntry[]>(loadSubCache)
   const [overrides, setOverrides] = useState<LocalOverride[]>(loadOverrides)
   const [restRule, setRestRule] = useState<RestRule>(loadRestRule)
+  const [dayNotes, setDayNotes] = useState<Record<string, string>>(loadDayNotes)
   const [alarmEnabled, setAlarmEnabled] = useState(
     () => Storage.get<boolean>(KEY_ALARM_ENABLED) ?? true
   )
@@ -1946,8 +2078,10 @@ function MainView() {
           restRule={restRule}
           alarmTime={alarmTime}
           alarmEnabled={alarmEnabled}
+          dayNotes={dayNotes}
           onSubDaysChange={setSubDays}
           onOverridesChange={setOverrides}
+          onDayNotesChange={setDayNotes}
         />
       </Tab>
       <Tab title="设置" systemImage="gearshape">

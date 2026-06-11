@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, NavigationStack, List, Section, HStack, VStack, Text, Button, Spacer, Image, 
+import { useState, useEffect, useMemo, useCallback, NavigationStack, List, Section, HStack, VStack, Text, Button, Spacer, Image, Rectangle,
   Navigation, Script, TextField, Menu, Toggle,ToolbarItem,Toolbar,ToolbarSpacer
 } from "scripting"
 
@@ -759,7 +759,7 @@ export const SearchPage = ({ accounts, setAccounts, bookmarks, setBookmarks }: {
         searchable={{ value: searchText, onChanged: setSearchText, prompt: "搜索" }}
       >
         {!searchText.trim() ? (
-          <VStack padding={40} frame={{ maxWidth: "infinity" }} alignment="center"><Image systemName="magnifyingglass" foregroundStyle="#C7C7CC" font="largeTitle" /><Text foregroundStyle="#8E8E93" font="body" padding={{ top: 12 }}>请输入关键字搜索信息</Text></VStack>
+          <VStack frame={{ maxWidth: "infinity", maxHeight: "infinity" }} alignment="center" listRowBackground={<Rectangle fill="clear" />}><Spacer minLength={0} /><Spacer minLength={240} /><Image systemName="magnifyingglass" foregroundStyle="#C7C7CC" font="largeTitle" /><Text foregroundStyle="#8E8E93" font="body" padding={{ top: 12 }}>请输入关键字搜索信息</Text><Spacer minLength={0} /></VStack>
         ) : filteredAccounts.length === 0 && filteredBookmarks.length === 0 ? (
           <VStack padding={40} frame={{ maxWidth: "infinity" }} alignment="center"><Image systemName="doc.text.magnifyingglass" foregroundStyle="#C7C7CC" font="largeTitle" /><Text foregroundStyle="#8E8E93" font="body" padding={{ top: 12 }}>未找到匹配的账号或书签</Text></VStack>
         ) : (

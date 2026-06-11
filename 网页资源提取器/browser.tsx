@@ -1,24 +1,21 @@
 // ==UserScript==
 // @name Web Resource Extractor Runtime Sniffer
-// @name:zh-CN 网页资源提取器运行时嗅探
+// @name:zh-CN 网页资源提取器
 // @description Capture runtime images, media and network resources for Web Resource Extractor.
 // @description:zh-CN 为网页资源提取器捕获运行后的图片、视频和网络资源。
 // @match *://*/*
 // @run-at document-start
 // @grant GM.registerMenuCommand
 // @grant GM.log
-// @grant Scripting.FileManager
+// @grant GM.setValue
+// @grant GM.openInTab
 // ==/UserScript==
 
 declare const GM: {
   log: (...args: any[]) => void
   registerMenuCommand: (name: string, callback: () => void) => number
-}
-declare const Scripting: {
-  FileManager: {
-    safariBrowserStorageDirectory: string
-    writeAsString: (path: string, contents: string) => Promise<void>
-  }
+  setValue: (key: string, value: any) => Promise<void>
+  openInTab: (url: string, options?: boolean | Record<string, any>) => Promise<any>
 }
 declare const URL: any
 declare const document: any
@@ -27,6 +24,7 @@ declare const location: any
 declare const performance: any
 declare const XMLHttpRequest: any
 declare const MutationObserver: any
+declare const alert: (message: string) => void
 
 type AnyElement = any
 
@@ -47,16 +45,12 @@ type RuntimeSnapshot = {
   resources: RuntimeCandidate[]
 }
 
-const SNAPSHOT_FILE_NAME = "web-resource-extractor-runtime-snapshot.json"
+const SNAPSHOT_STORAGE_KEY = "runtimeSnapshot"
 const MAX_RESOURCES = 800
 const STORE_DELAY_MS = 900
 
 const candidates = new Map<string, RuntimeCandidate>()
 let storeTimer: any = null
-
-function snapshotPath(): string {
-  return `${Scripting.FileManager.safariBrowserStorageDirectory}/${SNAPSHOT_FILE_NAME}`
-}
 
 function absolutize(rawUrl: string | null | undefined): string {
   if (!rawUrl) return ""
@@ -247,7 +241,7 @@ async function storeSnapshot() {
   collectDomResources()
   collectPerformanceResources()
   try {
-    await Scripting.FileManager.writeAsString(snapshotPath(), JSON.stringify(makeSnapshot()))
+    await GM.setValue(SNAPSHOT_STORAGE_KEY, makeSnapshot())
     GM.log(`Web Resource Extractor captured ${candidates.size} resources`)
   } catch (err) {
     GM.log("Web Resource Extractor failed to store snapshot", String(err))
@@ -262,17 +256,32 @@ function scheduleStore() {
 hookNetwork()
 observeMutations()
 
-const collectNow = () => {
+const collectNow = async () => {
   collectDomResources()
   collectPerformanceResources()
-  storeSnapshot()
+  await storeSnapshot()
 }
 
-document.addEventListener("DOMContentLoaded", collectNow)
+document.addEventListener("DOMContentLoaded", () => {
+  collectNow()
+})
 window.addEventListener("load", () => {
   collectNow()
   setTimeout(collectNow, 1500)
   setTimeout(collectNow, 3500)
 })
 
-GM.registerMenuCommand("保存当前页资源快照", collectNow)
+try {
+  GM.registerMenuCommand("提取当前页资源", async () => {
+    GM.log("准备启动主应用...")
+    await collectNow()
+    const scriptName = "网页资源提取器"
+    const currentUrl = location.href
+    const urlScheme = `scripting://run/${encodeURIComponent(scriptName)}?url=${encodeURIComponent(currentUrl)}`
+    GM.log("启动 URL:", urlScheme)
+    await GM.openInTab(urlScheme, { active: true })
+  })
+  GM.log("Web Resource Extractor 菜单已注册")
+} catch (err) {
+  GM.log("菜单注册失败:", String(err))
+}

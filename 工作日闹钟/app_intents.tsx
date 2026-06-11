@@ -246,7 +246,7 @@ function buildAlarmAttributes(title: string, targetDateStr: string): AlarmManage
   })
   const attributes = AlarmManager.Attributes.create({
     alert,
-    tintColor: "#007AFF",
+    tintColor: "orange",
     metadata: { source: "holiday-alarm", date: targetDateStr, snoozeMinutes: `${snoozeMinutes}` },
   })
 

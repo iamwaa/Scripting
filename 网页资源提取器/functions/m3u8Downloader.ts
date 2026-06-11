@@ -24,9 +24,132 @@ export type DownloadM3u8Options = {
   onSegmentProgress?: (index: number, fraction: number, phase: "download" | "decrypt") => void
 }
 
+export type ConvertTsToMp4Options = {
+  isCancelled?: () => boolean
+  onStatus?: (message: string) => void
+  onProgress?: (progress: number) => void
+  estimatedDurationSeconds?: number
+}
+
 export type DownloadM3u8ToFileOptions = DownloadM3u8Options & {
   outputPath: string
   onOrderedSegment?: (data: Uint8Array, index: number) => Promise<void> | void
+}
+
+function quoteShellArg(value: string): string {
+  return "'" + value.replace(/'/g, "'\\''") + "'"
+}
+
+function parseFfmpegProgressPercent(text: string, totalDurationSeconds?: number): number | null {
+  if (!totalDurationSeconds || totalDurationSeconds <= 0) return null
+
+  const matches = Array.from(text.matchAll(/^out_time_ms=(\d+)/gm))
+  const lastMatch = matches[matches.length - 1]
+  if (!lastMatch) return null
+
+  const outTimeSeconds = Number.parseInt(lastMatch[1], 10) / 1000000
+  if (!Number.isFinite(outTimeSeconds)) return null
+  return Math.min(95, Math.max(0, Math.floor((outTimeSeconds / totalDurationSeconds) * 100)))
+}
+
+export async function downloadM3u8DirectlyToMp4(
+  playlistUrl: string,
+  outputPath: string,
+  options: ConvertTsToMp4Options = {}
+): Promise<void> {
+  if (options.isCancelled?.()) throw new Error("用户已取消下载")
+  try { await FileManager.remove(outputPath) } catch {}
+  const progressPath = outputPath + ".ffmpeg-progress"
+  try { await FileManager.remove(progressPath) } catch {}
+  options.onStatus?.("正在尝试使用 ffmpeg 直接下载并解密 m3u8...")
+
+  const args = [
+    "-allowed_extensions ALL",
+    "-protocol_whitelist file,http,https,tcp,tls,crypto",
+    "-i " + quoteShellArg(playlistUrl),
+    "-c copy",
+    "-movflags +faststart",
+    "-progress " + quoteShellArg(progressPath),
+  ].join(" ")
+  const command = `ffmpeg -hide_banner -y ${args} ${quoteShellArg(outputPath)}`
+  const startedAt = Date.now()
+  const estimatedMs = Math.max(15000, (options.estimatedDurationSeconds ?? 60) * 1000)
+  let progressStopped = false
+  async function updateEstimatedProgress() {
+    while (!progressStopped) {
+      await new Promise<void>(resolve => setTimeout(resolve, 1000))
+      if (progressStopped) break
+
+      let progress: number | null = null
+      try {
+        const text = await FileManager.readAsString(progressPath)
+        progress = parseFfmpegProgressPercent(text, options.estimatedDurationSeconds)
+      } catch {}
+
+      if (progress === null) {
+        const elapsed = Date.now() - startedAt
+        progress = Math.min(95, Math.floor((elapsed / estimatedMs) * 95))
+      }
+      options.onProgress?.(progress)
+    }
+  }
+
+  if (options.onProgress) {
+    options.onProgress(0)
+    updateEstimatedProgress()
+  }
+
+  const result = await Shell.run(command, { timeout: 1800 }).finally(() => {
+    progressStopped = true
+  })
+  try { await FileManager.remove(progressPath) } catch {}
+
+  if (options.isCancelled?.()) throw new Error("用户已取消下载")
+  if (!result.timedOut && result.exitCode === 0) return
+
+  const message = (result.output || "").trim().split("\n").slice(-4).join("\n")
+  throw new Error(message ? `ffmpeg 直接下载 m3u8 失败：${message}` : "ffmpeg 直接下载 m3u8 失败")
+}
+
+export async function convertTsToMp4(
+  inputPath: string,
+  outputPath: string,
+  options: ConvertTsToMp4Options = {}
+): Promise<void> {
+  try { await FileManager.remove(outputPath) } catch {}
+
+  const attempts = [
+    {
+      label: "正在无损转封装为 MP4...",
+      args: "-c copy -movflags +faststart",
+    },
+    {
+      label: "音频不兼容，正在转换音频为 AAC...",
+      args: "-c:v copy -c:a aac -b:a 160k -movflags +faststart",
+    },
+    {
+      label: "转封装失败，正在使用硬件编码转换...",
+      args: "-c:v h264_videotoolbox -c:a aac -b:a 160k -movflags +faststart",
+    },
+  ]
+
+  let lastOutput = ""
+  for (const attempt of attempts) {
+    if (options.isCancelled?.()) throw new Error("用户已取消转换")
+    options.onStatus?.(attempt.label)
+
+    try { await FileManager.remove(outputPath) } catch {}
+    const command = `ffmpeg -hide_banner -y -i ${quoteShellArg(inputPath)} ${attempt.args} ${quoteShellArg(outputPath)}`
+    const result = await Shell.run(command, { timeout: 1800 })
+    lastOutput = result.output || ""
+
+    if (!result.timedOut && result.exitCode === 0) {
+      return
+    }
+  }
+
+  const message = lastOutput.trim().split("\n").slice(-4).join("\n")
+  throw new Error(message ? `TS 转 MP4 失败：${message}` : "TS 转 MP4 失败")
 }
 
 function parseAttributeList(text: string): Record<string, string> {
@@ -231,8 +354,8 @@ export async function parseM3u8WithVariant(
   return { segments, playlistUrl: variant.url, totalDurationSeconds, variants, selectedVariant: variant }
 }
 
-const PLAIN_SEGMENT_CONCURRENCY = 12
-const ENCRYPTED_SEGMENT_CONCURRENCY = 6
+const PLAIN_SEGMENT_CONCURRENCY = 15
+const ENCRYPTED_SEGMENT_CONCURRENCY = 5
 
 async function fetchExpandedKey(keyUrl: string, cache: Map<string, Promise<Uint8Array>>): Promise<Uint8Array> {
   const cached = cache.get(keyUrl)
@@ -333,6 +456,21 @@ export async function downloadM3u8SegmentsToFile(
     })
   }
 
+  async function appendSegmentData(data: Uint8Array, index: number): Promise<void> {
+    const fileData = Data.fromUint8Array(data)
+    if (!fileData) throw new Error("分片数据转换失败")
+    await FileManager.appendData(options.outputPath, fileData)
+    await options.onOrderedSegment?.(data, index)
+  }
+
+  async function downloadEncryptedSegmentsInOrder() {
+    for (let index = 0; index < segments.length; index++) {
+      if (options.isCancelled?.()) throw new Error("用户已取消下载")
+      const data = await downloadM3u8Segment(segments[index], index, keyCache, options)
+      await appendSegmentData(data, index)
+    }
+  }
+
   async function worker() {
     while (nextIndex < segments.length) {
       if (options.isCancelled?.()) throw new Error("用户已取消下载")
@@ -345,11 +483,14 @@ export async function downloadM3u8SegmentsToFile(
     }
   }
 
+  if (concurrency === 1) {
+    await downloadEncryptedSegmentsInOrder()
+    return
+  }
+
   const workerCount = Math.min(concurrency, segments.length)
   await Promise.all(Array.from({ length: workerCount }, () => worker()))
   // 等待所有写入完成
   await appendChain
   if (writeError) throw writeError
 }
-
-

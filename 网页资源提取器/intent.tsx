@@ -2,7 +2,12 @@ import { Intent, Script, Navigation } from "scripting"
 import { pageURL, MainView } from "./index"
 
 function resolveInputURL(): string | null {
-  // 优先从 Share Sheet 传入的链接获取
+  // 优先从 queryParameters 获取（来自 Safari 浏览器脚本）
+  if (Script.queryParameters?.url && typeof Script.queryParameters.url === "string") {
+    return Script.queryParameters.url
+  }
+
+  // 其次从 Share Sheet 传入的链接获取
   if (Intent.urlsParameter?.length) {
     return Intent.urlsParameter[0]
   }

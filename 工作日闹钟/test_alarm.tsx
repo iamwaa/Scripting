@@ -119,12 +119,10 @@ function buildAlarmTime(selectedTime: number): Date {
   return alarmTime
 }
 
-// 绑定到当前脚本
 function bindToCurrentScript<T extends { script: string }>(intent: T): T {
   return { ...intent, script: "工作日闹钟" }
 }
 
-// 测试闹钟页面
 function TestAlarmPage() {
   const dismiss = Navigation.useDismiss()
   const [alarmTimeInput, setAlarmTimeInput] = useState(defaultTestTime())
