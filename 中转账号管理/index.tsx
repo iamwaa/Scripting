@@ -127,6 +127,7 @@ type WebLoginCookieResult = {
   cookieHeader: string
   authToken?: string
   storageSelf?: SelfInfo
+  pageTitle?: string
 }
 
 const STORAGE_KEY = "newapi.accounts.v1"
@@ -135,7 +136,7 @@ const SECRET_PREFIX = "newapi.secret."
 const SHARED = { shared: false }
 const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.2 Mobile/15E148 Safari/604.1"
 const QUOTA_PER_USD = 500000
-const SITE_STATUS_AUTO_CHECK_INTERVAL = 30 * 60
+const SITE_STATUS_AUTO_CHECK_INTERVAL = 60 * 60
 
 function getAccountPlatform(account: Pick<Account, "platform">): AccountPlatform {
   return account.platform ?? "newapi"
@@ -653,70 +654,75 @@ function extractSelfInfoFromStorage(items: Record<string, string>) {
 }
 
 async function prepareWebLoginPage(webView: WebViewController, baseUrl = "") {
-  const fallbackBaseUrl = JSON.stringify(baseUrl)
   const script = `
-    const fallbackBaseUrl = ${fallbackBaseUrl};
-    const resolveUrl = (url) => {
-      if (!url) return '';
-      try { return new URL(url, location.href || fallbackBaseUrl).href; }
-      catch { return String(url); }
-    };
     const patch = () => {
-      const postNavigate = (url) => {
-        try {
-          const handler = window.webkit?.messageHandlers?.newapiNavigate;
-          if (!handler) return false;
-          handler.postMessage(url);
-          return true;
-        } catch {
-          return false;
-        }
-      };
-      const navigate = (url) => {
-        const nextUrl = resolveUrl(url);
-        if (nextUrl && !postNavigate(nextUrl)) location.href = nextUrl;
-      };
       window.open = (url) => {
-        navigate(url);
+        if (url) {
+          try { location.href = new URL(url, location.href).href; }
+          catch { location.href = url; }
+        }
         return window;
       };
-      try {
-        const originalAssign = location.assign.bind(location);
-        const originalReplace = location.replace.bind(location);
-        location.assign = (url) => navigate(url || location.href);
-        location.replace = (url) => navigate(url || location.href);
-        window.__newapiOriginalLocationAssign = window.__newapiOriginalLocationAssign || originalAssign;
-        window.__newapiOriginalLocationReplace = window.__newapiOriginalLocationReplace || originalReplace;
-      } catch {}
       document.querySelectorAll('a[target="_blank"], a[target="blank"]').forEach(a => a.setAttribute('target', '_self'));
       document.querySelectorAll('form[target="_blank"], form[target="blank"]').forEach(f => f.setAttribute('target', '_self'));
-      const findClickableUrl = (element) => {
-        const clickable = element?.closest?.('a[href], button, [role="button"], [onclick]');
-        if (!clickable) return '';
-        const href = clickable.getAttribute?.('href') || clickable.href;
-        if (href) return href;
-        const onclick = clickable.getAttribute?.('onclick') || '';
-        const match = onclick.match(/https?:\/\/[^'"\s)]+|['"]((?:\/|\.\/|\.\.\/)[^'"]+)['"]/i);
-        return match?.[1] || match?.[0] || '';
-      };
-      if (!window.__newapiNavigationClickPatched) {
-        window.__newapiNavigationClickPatched = true;
-        document.addEventListener('click', (event) => {
-          const a = event.target?.closest?.('a[href]');
-          const href = a ? resolveUrl(a.getAttribute('href') || a.href) : resolveUrl(findClickableUrl(event.target));
-          if (!href) return;
-          const target = (a?.getAttribute('target') || '').toLowerCase();
-          const text = (event.target?.closest?.('button, [role="button"], a, div, span')?.innerText || '').trim();
-          if (target === '_blank' || target === 'blank' || a?.rel?.includes?.('external') || /^(https?:)?\/\//i.test(href) || /前往|访问|打开|签到|簽到/.test(text)) {
-            event.preventDefault();
-            navigate(href);
-          }
-        }, true);
-      }
+      document.addEventListener('click', (event) => {
+        const a = event.target?.closest?.('a[target="_blank"], a[target="blank"]');
+        if (!a || !a.href) return;
+        event.preventDefault();
+        location.href = a.href;
+      }, true);
       return true;
     };
     patch();
     if (!window.__newapiPopupPatchTimer) window.__newapiPopupPatchTimer = setInterval(patch, 500);
+
+    // 顶部加载进度条：显示页面加载状态
+    const setupProgress = () => {
+      if (window.__newapiProgressInit) return;
+      window.__newapiProgressInit = true;
+      const ensureBar = () => {
+        if (!document.body) return null;
+        let bar = document.getElementById('__newapiProgressBar');
+        if (!bar) {
+          bar = document.createElement('div');
+          bar.id = '__newapiProgressBar';
+          bar.style.cssText = 'position:fixed;top:0;left:0;height:3px;width:0%;z-index:2147483647;background:#0a84ff;box-shadow:0 0 8px #0a84ff;border-radius:0 2px 2px 0;transition:width .25s ease,opacity .4s ease;pointer-events:none;';
+          document.body.appendChild(bar);
+        }
+        return bar;
+      };
+      let value = 8;
+      let done = false;
+      const rendered = () => {
+        const root = document.getElementById('root') || document.querySelector('#app, main');
+        if (root && root.innerText && root.innerText.trim().length > 0) return true;
+        return (document.body && document.body.innerText && document.body.innerText.trim().length > 30) || false;
+      };
+      const finish = () => {
+        if (done) return;
+        done = true;
+        const bar = ensureBar();
+        if (!bar) return;
+        bar.style.width = '100%';
+        setTimeout(() => { bar.style.opacity = '0'; }, 200);
+        setTimeout(() => { bar.remove(); }, 700);
+      };
+      const tick = () => {
+        if (done) return;
+        const bar = ensureBar();
+        if (bar) {
+          if (value < 90) value += Math.max(0.6, (90 - value) * 0.08);
+          if (document.readyState === 'interactive' && value < 45) value = 45;
+          if (document.readyState === 'complete' && value < 80) value = 80;
+          bar.style.width = value.toFixed(1) + '%';
+        }
+        if (rendered()) { finish(); return; }
+        setTimeout(tick, 200);
+      };
+      window.addEventListener('load', () => setTimeout(finish, 300));
+      tick();
+    };
+    setupProgress();
     return true;
   `
   try { await webView.evaluateJavaScript(script) } catch {}
@@ -797,10 +803,14 @@ async function sub2ApiRequest<T = any>(account: Account, method: string, path: s
   const headers: Record<string, string> = {
     "User-Agent": UA,
     "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "zh",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
     "Authorization": token.startsWith("Bearer ") ? token : `Bearer ${token}`,
     "Origin": baseUrl,
     "Referer": `${baseUrl}/`,
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
   }
   if (body !== undefined) headers["Content-Type"] = "application/json"
 
@@ -895,8 +905,13 @@ async function apiRequestWithMeta<T = any>(account: Account, method: string, pat
   const headers: Record<string, string> = {
     "User-Agent": UA,
     "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
     "Origin": baseUrl,
     "Referer": `${baseUrl}/`,
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
   }
   if (cookie) headers.Cookie = cookie
   if (account.lastSelf?.id) headers["New-Api-User"] = String(account.lastSelf.id)
@@ -1050,15 +1065,44 @@ async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookieResult>
   }
 
   const webView = new WebViewController()
+  let capturedTitle: string | undefined
+  
   try {
     try { webView.setCustomUserAgent(UA) } catch {}
     await installWebNavigationBridge(webView, normalizedBaseUrl)
     webView.shouldAllowRequest = async request => {
-      setTimeout(() => prepareWebLoginPage(webView, request.url || normalizedBaseUrl), 300)
-      setTimeout(() => prepareWebLoginPage(webView, request.url || normalizedBaseUrl), 1200)
-      return isHttpUrl(request.url)
+      const url = request.url || normalizedBaseUrl
+      // 允许 http/https，同时允许站点内部跳转和 OAuth 回调
+      if (isHttpUrl(url)) {
+        setTimeout(() => prepareWebLoginPage(webView, url), 300)
+        setTimeout(() => prepareWebLoginPage(webView, url), 1200)
+        return true
+      }
+      // 对于非 HTTP scheme（如 about:, data:, blob:），允许通过以支持 CF 验证
+      return /^(about|data|blob):/i.test(url)
     }
-    await presentWebViewAndLoadURL(webView, normalizedBaseUrl, {
+    
+    // 加载页面并在加载完成后获取标题
+    await webView.loadHTML(getWebViewLoadingHTML(normalizedBaseUrl, "正在打开网页..."), normalizedBaseUrl)
+    const openPage = async () => {
+      try {
+        const loaded = await loadWebUrlWithFallback(webView, normalizedBaseUrl, normalizedBaseUrl)
+        if (!loaded) throw new Error("页面加载失败，请检查站点地址或网络")
+        await prepareWebLoginPage(webView, normalizedBaseUrl)
+        // 页面加载完成，等待 JavaScript 执行后获取标题
+        await new Promise<void>(resolve => setTimeout(resolve, 1500))
+        try {
+          const title = await webView.evaluateJavaScript("return document.title")
+          if (title && typeof title === "string" && title.trim()) {
+            capturedTitle = title.trim()
+          }
+        } catch {}
+      } catch (e: any) {
+        await webView.loadHTML(getWebViewLoadingHTML(normalizedBaseUrl, `网页打开失败：${getErrorMessage(e)}`), normalizedBaseUrl)
+      }
+    }
+    setTimeout(() => { void openPage() }, 80)
+    await webView.present({
       fullscreen: true,
       navigationTitle: "登录完成后关闭页面",
     })
@@ -1073,8 +1117,9 @@ async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookieResult>
     }
     const storageSelf = extractSelfInfoFromStorage(storageItems)
     const authToken = extractSub2ApiToken(storageItems)
+    
     if (!cookieHeader && !authToken) throw new Error("未获取到 Cookie 或登录令牌，请确认已在网页登录成功后再关闭页面")
-    return { cookieHeader, authToken, storageSelf }
+    return { cookieHeader, authToken, storageSelf, pageTitle: capturedTitle }
   } finally {
     webView.dispose()
   }
@@ -1096,8 +1141,12 @@ async function openManualCheckinWebView(account: Account) {
       try { webView.setCustomUserAgent(UA) } catch {}
       await installWebNavigationBridge(webView, normalizedBaseUrl)
       webView.shouldAllowRequest = async request => {
-        setTimeout(() => prepareWebLoginPage(webView, request.url || normalizedBaseUrl), 300)
-        return isHttpUrl(request.url)
+        const url = request.url || normalizedBaseUrl
+        if (isHttpUrl(url)) {
+          setTimeout(() => prepareWebLoginPage(webView, url), 300)
+          return true
+        }
+        return /^(about|data|blob):/i.test(url)
       }
       await webView.loadHTML(getWebViewLoadingHTML(normalizedBaseUrl, "正在打开网页..."), normalizedBaseUrl)
       const openPage = async () => {
@@ -1128,9 +1177,13 @@ async function openManualCheckinWebView(account: Account) {
     try { webView.setCustomUserAgent(UA) } catch {}
     await installWebNavigationBridge(webView, normalizedBaseUrl)
     webView.shouldAllowRequest = async request => {
-      setTimeout(() => prepareWebLoginPage(webView, request.url || normalizedBaseUrl), 300)
-      setTimeout(() => prepareWebLoginPage(webView, request.url || normalizedBaseUrl), 1200)
-      return isHttpUrl(request.url)
+      const url = request.url || normalizedBaseUrl
+      if (isHttpUrl(url)) {
+        setTimeout(() => prepareWebLoginPage(webView, url), 300)
+        setTimeout(() => prepareWebLoginPage(webView, url), 1200)
+        return true
+      }
+      return /^(about|data|blob):/i.test(url)
     }
     for (const cookie of parseCookieHeader(cookieHeader)) {
       await webView.setCookie({
@@ -1499,11 +1552,11 @@ function AccountSummary({ accounts }: { accounts: Account[] }) {
 
   return <Section title="总览">
     <HStack spacing={12}>
-      <VStack alignment="leading" spacing={4} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+      <VStack alignment="leading" spacing={4} frame={{ width: 90, alignment: "leading" }}>
         <Text font="caption" foregroundStyle="secondaryLabel">账号</Text>
         <Text font="title2">{accounts.length}</Text>
       </VStack>
-      <VStack alignment="leading" spacing={4} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+      <VStack alignment="leading" spacing={4} frame={{ width: 90, alignment: "leading" }}>
         <Text font="caption" foregroundStyle="secondaryLabel">已签到</Text>
         <Text font="title2">{checkedCount}</Text>
       </VStack>
@@ -1681,9 +1734,9 @@ function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: () => v
       if (result.storageSelf) {
         setWebSelf(result.storageSelf)
         if (!username && result.storageSelf.username) setUsername(result.storageSelf.username)
-        if (!name) setName(getSelfDisplayName(result.storageSelf) || shortUrl(normalizedBaseUrl))
-      } else if (!name) {
-        setName(shortUrl(normalizedBaseUrl))
+      }
+      if (!name) {
+        setName(result.pageTitle || shortUrl(normalizedBaseUrl))
       }
       setToastMessage(platform === "sub2api" ? "已获取登录令牌，保存后生效" : "已获取 Cookie，保存后生效")
       setShowToast(true)
@@ -1801,6 +1854,7 @@ function AccountDetailView({ accountId, onChanged }: { accountId: string, onChan
   const dismiss = Navigation.useDismiss()
   const initialAccount = loadAccounts().find(a => a.id === accountId)
   const [account, setAccount] = useState<Account | undefined>(initialAccount)
+  const [refreshKey, setRefreshKey] = useState(0)
   const [busy, setBusy] = useState(false)
   const [checkinMonth, setCheckinMonth] = useState(localMonthString())
   const [toastMessage, setToastMessage] = useState("")
@@ -1819,11 +1873,12 @@ function AccountDetailView({ accountId, onChanged }: { accountId: string, onChan
     if (next) {
       refreshDetailSilently(localMonthString(), next)
     }
-  }, [accountId])
+  }, [accountId, refreshKey])
 
   function refreshLocal() {
     const next = loadAccounts().find(a => a.id === accountId)
     if (next) setAccount(next)
+    setRefreshKey(prev => prev + 1)
     onChanged()
   }
 

@@ -424,7 +424,7 @@ function createProjectBackup(projectPath: string, backupRoot: string, descriptio
 }
 
 function createRestoreSafetyBackup(project: ProjectHistory, snapshot: Snapshot) {
-  const folderName = `${Path.basename(project.path)}_${safeName(snapshot.description)}_还原前备份_${timestampForName()}`
+  const folderName = `${Path.basename(project.path)}_还原到_${safeName(snapshot.description)}_前备份_${timestampForName()}`
   const destination = Path.join(project.path, folderName)
   copyDirectory(project.projectPath, destination)
   return destination

@@ -1,0 +1,45 @@
+{
+  "localizedNames" : {
+    "es" : "",
+    "ru" : "",
+    "it" : "",
+    "fr" : "",
+    "de" : "",
+    "pt" : "",
+    "zh" : "纪念日",
+    "ja" : "",
+    "en" : ""
+  },
+  "icon" : "heart.text.square.fill",
+  "remoteResource" : null,
+  "runInApp" : true,
+  "entry" : "index.tsx",
+  "description" : "纪念日提醒与人物关系记录应用，帮你安静地记住重要的人与日子。",
+  "name" : "纪念日",
+  "iconImage" : "",
+  "localizedDescriptions" : {
+    "de" : "",
+    "it" : "",
+    "ja" : "",
+    "ru" : "",
+    "en" : "",
+    "zh" : "纪念日提醒与人物关系记录应用，帮你安静地记住重要的人与日子。",
+    "es" : "",
+    "fr" : "",
+    "pt" : ""
+  },
+  "intentInputTypes" : [
+
+  ],
+  "color" : "rgba(174, 109, 216,1)",
+  "permissions" : null,
+  "author" : {
+    "name" : "Waa",
+    "email" : null,
+    "homepage" : "https:\/\/github.com\/iamwaa"
+  },
+  "contributors" : [
+
+  ],
+  "version" : "1.0.0"
+}

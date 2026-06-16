@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name 元素屏蔽器
+// @version 1.0.1
 // @author Waa
 // @homepage https://github.com/iamwaa
-// @version 1.0.0
 // @updateURL https://raw.githubusercontent.com/iamwaa/Scripting/refs/heads/main/UserScript/element-blocker.user.js
 // @downloadURL https://raw.githubusercontent.com/iamwaa/Scripting/refs/heads/main/UserScript/element-blocker.user.js
 // @match *://*/*
-// @run-at document-end
+// @run-at document-start
 // @grant GM.getValue
 // @grant GM.setValue
 // @grant GM.registerMenuCommand
@@ -18,20 +18,140 @@
   let exitButton = null
   let confirmBox = null
   let pendingTarget = null
+  let blockedItems = await GM.getValue(location.hostname, [])
+  let styleElement = null
+  let reapplyTimer = null
+  let burstTimers = []
+  let domObserver = null
+  let lastAppliedHref = location.href
+  let lastRefreshAt = 0
 
-  // 加载已屏蔽的元素（格式：{selector, label, time}）
-  const blockedItems = await GM.getValue(location.hostname, [])
-
-  // 有屏蔽规则时注入 CSS 立即隐藏
-  if (blockedItems.length > 0) {
-    const style = document.createElement('style')
-    const rules = blockedItems.map(item => {
-      const sel = typeof item === 'string' ? item : item.selector
-      return `${sel} { display: none !important; }`
-    })
-    style.textContent = rules.join('\n')
-    document.head.appendChild(style)
+  function getSelector(item) {
+    return typeof item === 'string' ? item : item.selector
   }
+
+  function ensureStyleElement() {
+    if (styleElement?.isConnected) return styleElement
+    styleElement = document.querySelector('#element-blocker-style')
+    if (!styleElement) {
+      styleElement = document.createElement('style')
+      styleElement.id = 'element-blocker-style'
+    }
+    const mountTarget = document.head || document.documentElement || document.body
+    if (mountTarget && !styleElement.isConnected) {
+      mountTarget.appendChild(styleElement)
+    }
+    return styleElement
+  }
+
+  function applyBlockedStyles() {
+    const style = ensureStyleElement()
+    if (!style) return
+    if (!blockedItems.length) {
+      style.textContent = ''
+      return
+    }
+    style.textContent = blockedItems
+      .map(item => `${getSelector(item)} { display: none !important; }`)
+      .join('\n')
+  }
+
+  function scheduleReapply(delay = 80) {
+    if (reapplyTimer) clearTimeout(reapplyTimer)
+    reapplyTimer = setTimeout(() => {
+      reapplyTimer = null
+      applyBlockedStyles()
+    }, delay)
+  }
+
+  function scheduleReapplyBurst() {
+    burstTimers.forEach(timer => clearTimeout(timer))
+    burstTimers = [0, 80, 240, 600, 1200].map(delay => setTimeout(() => {
+      applyBlockedStyles()
+    }, delay))
+  }
+
+  async function refreshBlockedItemsIfNeeded(force = false) {
+    const now = Date.now()
+    if (!force && lastAppliedHref === location.href) return
+    if (force && now - lastRefreshAt < 120) {
+      scheduleReapplyBurst()
+      return
+    }
+    lastRefreshAt = now
+    lastAppliedHref = location.href
+    blockedItems = await GM.getValue(location.hostname, [])
+    scheduleReapply()
+  }
+
+  function watchPageChanges() {
+    if (!domObserver && typeof MutationObserver !== 'undefined') {
+      domObserver = new MutationObserver(() => {
+        const styleMissing = !styleElement || !styleElement.isConnected
+        const rootChanged = !document.documentElement || !document.documentElement.contains(styleElement)
+        if (styleMissing || rootChanged || lastAppliedHref !== location.href) {
+          refreshBlockedItemsIfNeeded(styleMissing || rootChanged)
+          if (styleMissing || rootChanged) scheduleReapplyBurst()
+        }
+      })
+      domObserver.observe(document.documentElement, { childList: true, subtree: true })
+    }
+
+    const wrapHistoryMethod = (methodName) => {
+      const original = history[methodName]
+      if (typeof original !== 'function' || original.__elementBlockerWrapped) return
+      const wrapped = function (...args) {
+        const result = original.apply(this, args)
+        refreshBlockedItemsIfNeeded()
+        return result
+      }
+      wrapped.__elementBlockerWrapped = true
+      history[methodName] = wrapped
+    }
+
+    wrapHistoryMethod('pushState')
+    wrapHistoryMethod('replaceState')
+    window.addEventListener('popstate', () => {
+      refreshBlockedItemsIfNeeded(true)
+      scheduleReapplyBurst()
+    }, true)
+    window.addEventListener('hashchange', () => {
+      refreshBlockedItemsIfNeeded(true)
+      scheduleReapplyBurst()
+    }, true)
+    window.addEventListener('pageshow', () => {
+      refreshBlockedItemsIfNeeded(true)
+      scheduleReapplyBurst()
+    }, true)
+    window.addEventListener('pagehide', () => {
+      scheduleReapplyBurst()
+    }, true)
+    window.addEventListener('load', () => {
+      refreshBlockedItemsIfNeeded(true)
+      scheduleReapplyBurst()
+    }, true)
+    window.addEventListener('focus', () => {
+      refreshBlockedItemsIfNeeded(true)
+      scheduleReapplyBurst()
+    }, true)
+    document.addEventListener('readystatechange', () => {
+      if (document.readyState === 'interactive' || document.readyState === 'complete') {
+        refreshBlockedItemsIfNeeded(true)
+        scheduleReapplyBurst()
+      }
+    }, true)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        refreshBlockedItemsIfNeeded(true)
+        scheduleReapplyBurst()
+      }
+    }, true)
+  }
+
+  applyBlockedStyles()
+  refreshBlockedItemsIfNeeded(true)
+  scheduleReapplyBurst()
+  watchPageChanges()
 
   function createConfirmBox(target) {
     removeConfirmBox()
@@ -129,7 +249,9 @@
         })
       }
 
+      blockedItems = mergedItems
       await GM.setValue(location.hostname, mergedItems)
+      applyBlockedStyles()
 
       const allData = await GM.getValue('_all_sites', {})
       allData[location.hostname] = mergedItems

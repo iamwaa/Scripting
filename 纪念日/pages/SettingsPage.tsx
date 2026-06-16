@@ -1,0 +1,65 @@
+import { NavigationStack, List, Section, Button, Text, Toolbar, ToolbarItem, useObservable, Image, HStack, Toggle } from 'scripting'
+import { AppSettings } from '../types'
+
+interface SettingsPageProps {
+  settings: AppSettings
+  onClose: () => void
+  onSettingsChange: (settings: AppSettings) => void
+  onClearAllData: () => void
+}
+
+export function SettingsPage({ settings, onClose, onSettingsChange, onClearAllData }: SettingsPageProps) {
+  const showAlert = useObservable(false)
+
+  const handleToggleGroupPastEvents = (enabled: boolean) => {
+    onSettingsChange({ ...settings, groupPastEvents: enabled })
+  }
+
+  const handleClear = () => {
+    showAlert.setValue(false)
+    onClearAllData()
+  }
+
+  return (
+    <NavigationStack>
+      <List
+        listStyle="insetGroup"
+        navigationTitle="设置"
+        navigationBarTitleDisplayMode="large"
+        toolbar={
+          <Toolbar>
+            <ToolbarItem placement="topBarLeading">
+              <Button key="关闭" action={onClose}>
+                <Image systemName="xmark" foregroundStyle="red" fontWeight="semibold" />
+              </Button>
+            </ToolbarItem>
+          </Toolbar>
+        }
+        alert={{
+          title: '清除所有数据',
+          message: <Text>这将删除所有人物、纪念日与头像，且无法恢复。</Text>,
+          isPresented: showAlert,
+          actions: (
+            <>
+              <Button title="取消" role="cancel" action={() => showAlert.setValue(false)} />
+              <Button title="清除" role="destructive" action={handleClear} />
+            </>
+          )
+        }}
+      >
+        <Section title="列表">
+          <Toggle
+            title="已过的纪念日归入「纪念日」分组"
+            value={settings.groupPastEvents}
+            onChanged={handleToggleGroupPastEvents}
+          />
+        </Section>
+        <Section title="数据">
+          <HStack frame={{ maxWidth: Infinity }} alignment="center">
+            <Button title="清除所有数据" systemImage="trash" foregroundStyle="red" action={() => showAlert.setValue(true)} />
+          </HStack>
+        </Section>
+      </List>
+    </NavigationStack>
+  )
+}
