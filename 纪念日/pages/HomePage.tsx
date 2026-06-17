@@ -11,10 +11,11 @@ interface HomePageProps {
   onSelectEvent: (event: AnniversaryEvent) => void
   onDeleteEvent: (event: AnniversaryEvent) => void
   onTogglePinEvent: (event: AnniversaryEvent) => void
+  onToggleCountdownFormatEvent: (event: AnniversaryEvent) => void
   onAddEvent?: () => void
 }
 
-export function HomePage({ events, persons, settings, onClose, onSelectEvent, onDeleteEvent, onTogglePinEvent, onAddEvent }: HomePageProps) {
+export function HomePage({ events, persons, settings, onClose, onSelectEvent, onDeleteEvent, onTogglePinEvent, onToggleCountdownFormatEvent, onAddEvent }: HomePageProps) {
   const [eventToDelete, setEventToDelete] = useState<AnniversaryEvent | null>(null)
   const [showDeleteAlert, setShowDeleteAlert] = useState(false)
 
@@ -64,6 +65,7 @@ export function HomePage({ events, persons, settings, onClose, onSelectEvent, on
         listStyle="insetGroup"
         navigationTitle="纪念日"
         navigationBarTitleDisplayMode="large"
+        scrollIndicator="hidden"
         toolbar={
           <Toolbar>
             <ToolbarItem placement="topBarLeading">
@@ -100,7 +102,7 @@ export function HomePage({ events, persons, settings, onClose, onSelectEvent, on
           <EmptyState
             title="还没有纪念日"
             subtitle="去「人物」页添加重要的人与日子"
-            systemImage="calendar.badge.clock"
+            systemImage="heart.text.square"
           />
         ) : (
           <>
@@ -114,6 +116,7 @@ export function HomePage({ events, persons, settings, onClose, onSelectEvent, on
                     onSelected={() => onSelectEvent(item.event)}
                     onDelete={() => requestDeleteEvent(item.event)}
                     onTogglePin={() => onTogglePinEvent(item.event)}
+                  onToggleCountdownFormat={() => onToggleCountdownFormatEvent(item.event)}
                   />
                 ))}
               </Section>
@@ -131,6 +134,7 @@ export function HomePage({ events, persons, settings, onClose, onSelectEvent, on
                     onSelected={() => onSelectEvent(item.event)}
                     onDelete={() => requestDeleteEvent(item.event)}
                     onTogglePin={() => onTogglePinEvent(item.event)}
+                  onToggleCountdownFormat={() => onToggleCountdownFormatEvent(item.event)}
                   />
                 ))}
               </Section>
@@ -145,6 +149,7 @@ export function HomePage({ events, persons, settings, onClose, onSelectEvent, on
                     onSelected={() => onSelectEvent(item.event)}
                     onDelete={() => requestDeleteEvent(item.event)}
                     onTogglePin={() => onTogglePinEvent(item.event)}
+                  onToggleCountdownFormat={() => onToggleCountdownFormatEvent(item.event)}
                   />
                 ))}
               </Section>

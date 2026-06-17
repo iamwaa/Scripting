@@ -91,7 +91,14 @@ export function EventEditorPage({ event, person, settings, onSave, onDelete }: E
   const [lunarMonth, setLunarMonth] = useState<number>(initialLunar.month)
   const [lunarDay, setLunarDay] = useState<number>(initialLunar.day)
   const [isLeapMonth, setIsLeapMonth] = useState<boolean>(initialLunar.isLeap)
-  const [repeatYearly, setRepeatYearly] = useState(event?.repeatYearly ?? true)
+  // 重复类型：none=不重复, yearly=每年, monthly=每月
+  const getInitialRepeatType = (): 'none' | 'yearly' | 'monthly' => {
+    if (event?.repeatMonthly) return 'monthly'
+    if (event?.repeatYearly) return 'yearly'
+    if (!event) return 'yearly' // 新建默认每年重复
+    return 'none'
+  }
+  const [repeatType, setRepeatType] = useState<'none' | 'yearly' | 'monthly'>(getInitialRepeatType())
   const [remindOnDay, setRemindOnDay] = useState(event?.remindOnDay ?? settings.defaultRemindOnDay)
 
   // 提前提醒：用一个开关控制是否启用，再用步进器设置提前天数
@@ -169,7 +176,8 @@ export function EventEditorPage({ event, person, settings, onSave, onDelete }: E
       isLeapMonth: isLunar ? isLeapMonth : false,
       reminderDays,
       remindOnDay,
-      repeatYearly,
+      repeatYearly: repeatType === 'yearly',
+      repeatMonthly: repeatType === 'monthly',
       isPinned: event?.isPinned ?? false,
       createdAt: event?.createdAt ?? Date.now()
     }
@@ -183,6 +191,7 @@ export function EventEditorPage({ event, person, settings, onSave, onDelete }: E
         listStyle="insetGroup"
         navigationTitle={isNew ? '添加纪念日' : '编辑纪念日'}
         navigationBarTitleDisplayMode="inline"
+        scrollIndicator="hidden"
         toolbar={
           <Toolbar>
             <ToolbarItem placement="topBarLeading">
@@ -217,9 +226,6 @@ export function EventEditorPage({ event, person, settings, onSave, onDelete }: E
             </VStack>
             <Spacer />
           </HStack>
-        </Section>
-
-        <Section>
           <Picker
             title="纪念日类型"
             value={type}
@@ -237,7 +243,7 @@ export function EventEditorPage({ event, person, settings, onSave, onDelete }: E
             ))}
           </Picker>
           {isCustomType && (
-            <FormRow label="名称" value={title} prompt="例如：相识纪念日" onChanged={setTitle} />
+            <FormRow label="自定义" value={title} prompt="请输入" onChanged={setTitle} />
           )}
         </Section>
 
@@ -256,11 +262,13 @@ export function EventEditorPage({ event, person, settings, onSave, onDelete }: E
             />
           ) : (
             <>
-              {/* 农历行内占比：年份 3/7，月份与日期各 2/7 */}
+              {/* 农历年月日三栏横向排列，自适应宽度 */}
               <GeometryReader>
                 {({ size }) => {
                   const gap = 1
                   const total = size.width - gap * 2
+                  const yearWidth = total * 0.45
+                  const monthDayWidth = (total - yearWidth) / 2
                   return (
                     <HStack spacing={gap} frame={{ maxWidth: Infinity }}>
                       <Picker
@@ -268,10 +276,10 @@ export function EventEditorPage({ event, person, settings, onSave, onDelete }: E
                         value={lunarYear}
                         onChanged={(v: number) => setLunarYear(v)}
                         pickerStyle="menu"
-                        frame={{ width: total * 3.5 / 7.1 }}
+                        frame={{ width: yearWidth }}
                       >
                         {yearOptions.map(y => (
-                          <Text key={String(y)} tag={y}>{y} 年（{getLunarYearGanZhi(y)}）</Text>
+                          <Text key={String(y)} tag={y} lineLimit={1} minScaleFactor={0.7}>{y}（{getLunarYearGanZhi(y)}）</Text>
                         ))}
                       </Picker>
                       <Picker
@@ -279,7 +287,7 @@ export function EventEditorPage({ event, person, settings, onSave, onDelete }: E
                         value={lunarMonth}
                         onChanged={(v: number) => setLunarMonth(v)}
                         pickerStyle="menu"
-                        frame={{ width: total * 1.8 / 7.1 }}
+                        frame={{ width: monthDayWidth }}
                       >
                         {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
                           <Text key={String(m)} tag={m}>{LUNAR_MONTH_NAMES[m]}</Text>
@@ -290,7 +298,7 @@ export function EventEditorPage({ event, person, settings, onSave, onDelete }: E
                         value={lunarDay}
                         onChanged={(v: number) => setLunarDay(v)}
                         pickerStyle="menu"
-                        frame={{ width: total * 1.8 / 7.1 }}
+                        frame={{ width: monthDayWidth }}
                       >
                         {Array.from({ length: 30 }, (_, i) => i + 1).map(d => (
                           <Text key={String(d)} tag={d}>{LUNAR_DAY_NAMES[d]}</Text>
@@ -314,11 +322,16 @@ export function EventEditorPage({ event, person, settings, onSave, onDelete }: E
               </Text>
             </>
           )}
-          <Toggle
-            title="每年重复"
-            value={repeatYearly}
-            onChanged={setRepeatYearly}
-          />
+          <Picker
+            title="重复事件"
+            value={repeatType}
+            onChanged={(v: string) => setRepeatType(v as 'none' | 'yearly' | 'monthly')}
+            pickerStyle="menu"
+          >
+            <Text tag="yearly">每年</Text>
+            <Text tag="monthly">每月</Text>
+            <Text tag="none">不重复</Text>
+          </Picker>
         </Section>
 
         <Section title="提醒">

@@ -37,7 +37,9 @@ function defaultSettings(): AppSettings {
     defaultReminderDays: [1, 3],
     defaultRemindOnDay: true,
     notificationsEnabled: true,
-    groupPastEvents: true
+    groupPastEvents: true,
+    notificationHour: 9,
+    notificationMinute: 0
   }
 }
 

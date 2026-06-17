@@ -60,6 +60,7 @@ export function PeoplePage({ persons, events, onClose, onSelectPerson, onAddPers
         listStyle="insetGroup"
         navigationTitle="人物"
         navigationBarTitleDisplayMode="large"
+        scrollIndicator="hidden"
         alert={{
           title: '删除人物',
           message: <Text>确定要删除「{personToDelete?.name ?? ''}」吗？相关纪念日也会被一并删除。</Text>,

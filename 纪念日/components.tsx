@@ -1,6 +1,6 @@
 import { Image, VStack, HStack, Text, Spacer, Button, Color, TextField } from 'scripting'
 import { Person, AnniversaryEvent } from './types'
-import { formatDateCN, formatLunar, getNextOccurrence, daysBetween, getAge, getYearsPassed, getReferenceDate, getWeddingAnniversaryName, getWeddingNameColor, formatElapsedYearsAndDays } from './dateUtils'
+import { formatDateCN, formatLunar, getNextOccurrence, daysBetween, getAge, getMonthsSince, getYearsPassed, getReferenceDate, getEffectiveType, getWeddingAnniversaryName, getWeddingNameColor, formatElapsedYearsAndDays } from './dateUtils'
 
 // 把六位十六进制颜色转成 rgba 字符串，用于设置带透明度的背景
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
@@ -45,14 +45,15 @@ export function FormRow({ label, value, prompt, onChanged }: FormRowProps) {
   )
 }
 
+// 列表中显示的事件类型名称（带纪念日后缀）
 const EVENT_TYPE_LABELS: Record<AnniversaryEvent['type'], string> = {
   birthday: '生日',
-  meet: '相识',
-  love: '恋爱',
-  wedding: '结婚',
-  enrollment: '入学',
-  graduation: '毕业',
-  join: '入职',
+  meet: '相识纪念日',
+  love: '恋爱纪念日',
+  wedding: '结婚纪念日',
+  enrollment: '入学纪念日',
+  graduation: '毕业纪念日',
+  join: '入职纪念日',
   custom: '其他'
 }
 
@@ -207,13 +208,14 @@ export function PersonCard({ person, eventCount, onSelected, onDelete, onToggleP
     <Button
       action={onSelected ?? (() => {})}
       trailingSwipeActions={{
+        allowsFullSwipe: false,
         actions: [
           <SwipeActionButton key="置顶" icon={person.isPinned ? 'pin.slash' : 'pin.fill'} label={pinTitle} color="#FF9500" action={onTogglePin ?? (() => {})} />,
           <SwipeActionButton key="删除" icon="trash.fill" label="删除" color="systemRed" action={onDelete ?? (() => {})} />
         ]
       }}
     >
-      <HStack spacing={16} padding={{ vertical: 12, horizontal: 16 }} frame={{ maxWidth: Infinity }} alignment="center">
+      <HStack spacing={14} padding={{ vertical: 8, horizontal: 8 }} frame={{ maxWidth: Infinity }} alignment="center">
         <Avatar person={person} size={58} />
         <VStack alignment="leading" spacing={5}>
           <Text fontWeight="semibold" font={18}>{person.name}</Text>
@@ -221,8 +223,8 @@ export function PersonCard({ person, eventCount, onSelected, onDelete, onToggleP
         </VStack>
         <Spacer />
         <HStack spacing={4} alignment="center">
-          <Text foregroundStyle="secondaryLabel" font={15}>{countText}</Text>
-          <Image systemName="chevron.right" font={15} foregroundStyle="tertiaryLabel" />
+          <Text foregroundStyle="secondaryLabel" fontWeight="medium" font={15}>{countText}</Text>
+          <Image systemName="chevron.right" font={15} foregroundStyle="tertiaryLabel" fontWeight="medium" />
         </HStack>
       </HStack>
     </Button>
@@ -236,54 +238,104 @@ interface EventRowProps {
   onSelected?: () => void
   onDelete?: () => void
   onTogglePin?: () => void
+  onToggleCountdownFormat?: () => void
 }
 
-export function EventRow({ event, person, onSelected, onDelete, onTogglePin }: EventRowProps) {
+export function EventRow({ event, person, onSelected, onDelete, onTogglePin, onToggleCountdownFormat }: EventRowProps) {
   const today = new Date()
   const nextDate = getNextOccurrence(event, today)
   const daysLeft = nextDate ? daysBetween(today, nextDate) : null
   const age = getAge(event, today)
-  const yearsPassed = nextDate && event.repeatYearly
-    ? getYearsPassed(event, nextDate.getFullYear())
+  const months = getMonthsSince(event, today)
+  // 恋爱/结婚周年：无论是否每年重复都计算（支持 custom 类型标题识别）
+  const effectiveType = getEffectiveType(event)
+  const yearsPassed = (effectiveType === 'love' || effectiveType === 'wedding')
+    ? getYearsPassed(event, today.getFullYear())
     : undefined
   const refDate = getReferenceDate(event)
+  // 距今天数（不满 1 个月时显示）
+  const daysSince = refDate ? daysBetween(refDate, today) : undefined
+  // 从事件数据读取倒数日显示格式偏好
+  const showYearsAndDays = event.showYearsAndDays ?? false
 
-  const titleText = `${person.name} 的${event.title || EVENT_TYPE_LABELS[event.type]}`
+  const displayTitle = event.type === 'custom' 
+    ? (event.title || '其他')
+    : (EVENT_TYPE_LABELS[event.type] || '纪念日')
+  const titleText = `${person.name} 的${displayTitle}`
 
-  // 目标日相对今天的倒数/已过天数
-  let countdownText = ''
+  // 目标日相对今天的倒数/已过天数（主数字 + 后缀分开渲染，后缀用小字号）
+  let countdownMain = ''
+  let countdownSuffix = ''
   let countdownColor: 'systemRed' | 'accentColor' | 'secondaryLabel' = 'accentColor'
   if (daysLeft !== null) {
     if (daysLeft === 0) {
-      countdownText = '今天'
+      countdownMain = '今天'
       countdownColor = 'systemRed'
     } else if (daysLeft > 0) {
-      countdownText = `${daysLeft} 天后`
+      if (showYearsAndDays && nextDate) {
+        // 年+天格式（不足一年时自动显示为 X 天）
+        countdownMain = formatElapsedYearsAndDays(today, nextDate)
+        countdownSuffix = '后'
+      } else {
+        countdownMain = `${daysLeft}`
+        countdownSuffix = '天后'
+      }
       countdownColor = 'accentColor'
     } else {
-      countdownText = `${Math.abs(daysLeft)} 天前`
+      if (showYearsAndDays && nextDate) {
+        countdownMain = formatElapsedYearsAndDays(nextDate, today)
+        countdownSuffix = '前'
+      } else {
+        countdownMain = `${Math.abs(daysLeft)}`
+        countdownSuffix = '天前'
+      }
       countdownColor = 'secondaryLabel'
     }
   }
 
   // 第二行：根据事件类型生成胶囊标签（ wedding 拆为“周年”和“婚名”两个标签）
   let subtitleTags: JSX.Element | null = null
-  if (event.type === 'birthday' && age !== undefined) {
-    subtitleTags = <CapsuleTag label={`${age} 岁`} color="#007AFF" />
-  } else if (!event.repeatYearly) {
-    subtitleTags = <CapsuleTag label="纪念日" color="#8E8E93" />
-  } else if (event.type === 'love' && yearsPassed !== undefined) {
-    subtitleTags = <CapsuleTag label={`${yearsPassed} 周年`} color="#FF2D55" />
-  } else if (event.type === 'wedding' && yearsPassed !== undefined) {
-    const anniversaryName = getWeddingAnniversaryName(yearsPassed)
+  if (effectiveType === 'birthday' && age !== undefined) {
+    // 不满 1 岁显示月龄，不满 1 个月显示天数，当天显示“今天”
+    let ageLabel = `${age} 岁`
+    if (age === 0) {
+      if (months !== undefined && months > 0) {
+        ageLabel = `${months} 月龄`
+      } else if (daysSince !== undefined && daysSince >= 0) {
+        ageLabel = daysSince === 0 ? '今天' : `${daysSince} 天`
+      }
+    }
+    subtitleTags = <CapsuleTag label={ageLabel} color="#007AFF" />
+  } else if (effectiveType === 'love' && yearsPassed !== undefined) {
+    // 不满 1 周年显示月数，不满 1 个月显示天数，当天显示“今天”
+    let label = `${yearsPassed} 周年`
+    if (yearsPassed === 0) {
+      if (months !== undefined && months > 0) {
+        label = `${months} 个月`
+      } else if (daysSince !== undefined && daysSince >= 0) {
+        label = daysSince === 0 ? '今天' : `${daysSince} 天`
+      }
+    }
+    subtitleTags = <CapsuleTag label={label} color="#FF2D55" />
+  } else if (effectiveType === 'wedding' && yearsPassed !== undefined) {
+    // 不满 1 周年显示月数，不满 1 个月显示天数，当天显示“今天”
+    let label = `${yearsPassed} 周年`
+    if (yearsPassed === 0) {
+      if (months !== undefined && months > 0) {
+        label = `${months} 个月`
+      } else if (daysSince !== undefined && daysSince >= 0) {
+        label = daysSince === 0 ? '今天' : `${daysSince} 天`
+      }
+    }
+    const anniversaryName = yearsPassed > 0 ? getWeddingAnniversaryName(yearsPassed) : undefined
     subtitleTags = (
       <HStack spacing={4} alignment="center">
-        <CapsuleTag label={`${yearsPassed} 周年`} color="#FF2D55" />
+        <CapsuleTag label={label} color="#FF2D55" />
         {anniversaryName ? <CapsuleTag label={anniversaryName} color={getWeddingNameColor(yearsPassed)} /> : null}
       </HStack>
     )
-  } else if (refDate) {
-    subtitleTags = <CapsuleTag label={formatElapsedYearsAndDays(refDate, today)} color="#5AC8FA" />
+  } else {
+    subtitleTags = <CapsuleTag label="纪念日" color="#8E8E93" />
   }
 
   // 右下角日期：已过的显示设定日期，未来的显示下一个日期
@@ -309,19 +361,23 @@ export function EventRow({ event, person, onSelected, onDelete, onTogglePin }: E
     <Button
       action={onSelected ?? (() => {})}
       trailingSwipeActions={{
+        allowsFullSwipe: false,
         actions: [
           <SwipeActionButton key="置顶" icon={event.isPinned ? 'pin.slash' : 'pin.fill'} label={pinTitle} color="#FF9500" action={onTogglePin ?? (() => {})} />,
           <SwipeActionButton key="删除" icon="trash.fill" label="删除" color="systemRed" action={onDelete ?? (() => {})} />
         ]
       }}
     >
-      <HStack spacing={14} padding={{ vertical: 8, horizontal: 12 }} frame={{ maxWidth: Infinity }} alignment="center">
+      <HStack spacing={14} padding={{ vertical: 8, horizontal: 8 }} frame={{ maxWidth: Infinity }} alignment="center">
         <Avatar person={person} size={50} />
         <VStack alignment="leading" spacing={4} frame={{ maxWidth: Infinity }}>
           <HStack frame={{ maxWidth: Infinity }}>
             <Text fontWeight="semibold" font={17} lineLimit={1}>{titleText}</Text>
             <Spacer />
-            <Text fontWeight="bold" font={18} foregroundStyle={countdownColor}>{countdownText}</Text>
+            <HStack spacing={1} alignment="firstTextBaseline" onTapGesture={daysLeft !== null && Math.abs(daysLeft) >= 365 ? onToggleCountdownFormat : undefined}>
+              <Text fontWeight="bold" font={20} foregroundStyle={countdownColor}>{countdownMain}</Text>
+              {countdownSuffix ? <Text fontWeight="medium" font={14} foregroundStyle={countdownColor} opacity={0.8}>{countdownSuffix}</Text> : null}
+            </HStack>
           </HStack>
           <HStack frame={{ maxWidth: Infinity }} spacing={6} alignment="center">
             {subtitleTags}
@@ -368,12 +424,15 @@ export function CompactEventRow({ event, onSelected }: CompactEventRowProps) {
   const dateText = event.isLunar && event.lunarMonth && event.lunarDay
     ? formatLunar(event.lunarMonth, event.lunarDay, event.isLeapMonth)
     : (nextDate ? formatDateCN(nextDate) : '')
+  const displayTitle = event.type === 'custom'
+    ? (event.title || '其他')
+    : (EVENT_TYPE_LABELS[event.type] || '纪念日')
   return (
     <Button action={onSelected ?? (() => {})}>
-      <HStack spacing={12} padding={{ vertical: 8, horizontal: 12 }} frame={{ maxWidth: Infinity }} alignment="center">
+      <HStack spacing={14} padding={{ vertical: 8, horizontal: 12 }} frame={{ maxWidth: Infinity }} alignment="center">
         <EventIcon type={event.type} size={50} />
         <VStack alignment="leading" spacing={4}>
-          <Text fontWeight="semibold" font={17}>{event.title || EVENT_TYPE_LABELS[event.type]}</Text>
+          <Text fontWeight="semibold" font={17}>{displayTitle}</Text>
           <Text foregroundStyle="secondaryLabel" font={14}>{dateText}</Text>
         </VStack>
         <Spacer />

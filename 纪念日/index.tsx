@@ -18,7 +18,9 @@ function MainView() {
     defaultReminderDays: [1, 3],
     defaultRemindOnDay: true,
     notificationsEnabled: true,
-    groupPastEvents: true
+    groupPastEvents: true,
+    notificationHour: 9,
+    notificationMinute: 0
   })
   const isLoading = useObservable(true)
   const selectedTab = useObservable(0)
@@ -91,12 +93,21 @@ function MainView() {
   const handleDeleteEvent = async (event: AnniversaryEvent) => {
     const list = events.value.filter(e => e.id !== event.id)
     events.setValue(list)
+    // commit 内部会调用 refreshNotifications 清除全部通知并重建，无需单独删除
     await commit(undefined, list, undefined)
   }
 
   const handleTogglePinEvent = async (event: AnniversaryEvent) => {
     const list = events.value.map(e =>
       e.id === event.id ? { ...e, isPinned: !e.isPinned } : e
+    )
+    events.setValue(list)
+    await commit(undefined, list, undefined)
+  }
+
+  const handleToggleCountdownFormatEvent = async (event: AnniversaryEvent) => {
+    const list = events.value.map(e =>
+      e.id === event.id ? { ...e, showYearsAndDays: !e.showYearsAndDays } : e
     )
     events.setValue(list)
     await commit(undefined, list, undefined)
@@ -212,6 +223,7 @@ function MainView() {
           }}
           onDeleteEvent={handleDeleteEvent}
           onTogglePinEvent={handleTogglePinEvent}
+          onToggleCountdownFormatEvent={handleToggleCountdownFormatEvent}
           onAddEvent={presentAddEvent}
         />
       </VStack>

@@ -131,6 +131,7 @@ const WidgetBackground = ({
     )
   }
 
+  // 当本尺寸离线缓存不存在时，使用网络原图作为兜底展示。
   return <Image imageUrl={imageUrl} resizable={true} scaleToFill={true} />
 }
 

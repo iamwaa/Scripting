@@ -1,23 +1,27 @@
 {
-  "description" : "ONE 每日图片小组件，支持最新和手动显示模式。修改于@Link's Channel 的Bing 壁纸小组件",
+  "name" : "ONE 每日图片",
   "remoteResource" : null,
   "localizedNames" : {
-    "it" : "",
+    "de" : "",
+    "es" : "",
     "zh" : "ONE 每日图片",
-    "en" : "",
-    "ru" : "",
     "pt" : "",
     "ja" : "",
+    "it" : "",
     "fr" : "",
-    "de" : "",
-    "es" : ""
+    "ru" : "",
+    "en" : ""
   },
-  "iconImage" : "",
-  "color" : "rgba(43, 190, 81,1)",
-  "name" : "ONE 每日图片",
   "intentInputTypes" : [
 
   ],
+  "runInApp" : false,
+  "color" : "rgba(43, 190, 81,1)",
+  "version" : "1.0.0",
+  "description" : "ONE 每日图片小组件，支持最新和手动显示模式。修改于@Link's Channel 的Bing 壁纸小组件",
+  "iconImage" : "",
+  "icon" : "photo.on.rectangle",
+  "entry" : "index.tsx",
   "author" : {
     "name" : "Waa",
     "email" : null,
@@ -26,19 +30,16 @@
   "contributors" : [
 
   ],
-  "version" : "1.0.0",
+  "permissions" : null,
   "localizedDescriptions" : {
-    "ru" : "",
-    "ja" : "",
-    "pt" : "",
     "en" : "",
+    "de" : "",
     "it" : "",
-    "zh" : "ONE 每日图片小组件，支持最新和手动显示模式。",
-    "es" : "",
     "fr" : "",
-    "de" : ""
-  },
-  "runInApp" : false,
-  "entry" : "index.tsx",
-  "icon" : "photo.on.rectangle"
+    "zh" : "ONE 每日图片小组件，支持最新和手动显示模式。",
+    "pt" : "",
+    "es" : "",
+    "ru" : "",
+    "ja" : ""
+  }
 }

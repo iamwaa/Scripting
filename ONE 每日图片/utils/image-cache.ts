@@ -1,4 +1,4 @@
-import { fetch } from 'scripting'
+import { fetch, Path } from 'scripting'
 import { createStorageManager } from './storage'
 
 const CACHE_STORAGE_NAME = 'ScriptPie.ImageCache'
@@ -10,7 +10,7 @@ const CACHE_STORAGE_KEYS = {
 const CACHE_VERSION = 2
 
 const CACHE_CONFIG = {
-  cacheDirectory: FileManager.appGroupDocumentsDirectory + '/ImageCache',
+  cacheDirectory: Path.join(FileManager.appGroupDocumentsDirectory, 'ImageCache'),
   maxCacheSize: 50 * 1024 * 1024,
   cleanupThreshold: 0.8,
   maxImageEdge: 1600,
@@ -30,9 +30,11 @@ interface ImageCacheMetadata {
 }
 
 export class ImageCacheManager {
-  private static async initCacheDirectory(): Promise<void> {
+  private static initCacheDirectory(): void {
     try {
-      await FileManager.createDirectory(CACHE_CONFIG.cacheDirectory, true)
+      if (!FileManager.existsSync(CACHE_CONFIG.cacheDirectory)) {
+        FileManager.createDirectorySync(CACHE_CONFIG.cacheDirectory, true)
+      }
     } catch {
     }
   }
@@ -161,7 +163,13 @@ export class ImageCacheManager {
 
       const imageData = await response.arrayBuffer()
       const bytesToWrite = this.downscaleImageBytes(new Uint8Array(imageData))
-      await FileManager.writeAsBytes(localPath, bytesToWrite)
+
+      // 确保父目录存在后用同步 API 写入，避免异步目录创建未完成导致写入失败
+      const parentDir = localPath.substring(0, localPath.lastIndexOf('/'))
+      if (!FileManager.existsSync(parentDir)) {
+        FileManager.createDirectorySync(parentDir, true)
+      }
+      FileManager.writeAsBytesSync(localPath, bytesToWrite)
 
       const stat = await FileManager.stat(localPath)
       const mimeType = FileManager.mimeType(localPath)
@@ -187,7 +195,7 @@ export class ImageCacheManager {
     }
 
     try {
-      await this.initCacheDirectory()
+      this.initCacheDirectory()
       await this.cleanupInvalidCache()
 
       const metadata = this.getImageMetadata()
@@ -216,7 +224,7 @@ export class ImageCacheManager {
       }
 
       const fileName = this.generateCacheFileName(url)
-      const localPath = `${CACHE_CONFIG.cacheDirectory}/${fileName}`
+      const localPath = Path.join(CACHE_CONFIG.cacheDirectory, fileName)
       const newMetadata = await this.downloadAndCacheImage(url, localPath)
 
       if (!newMetadata) {

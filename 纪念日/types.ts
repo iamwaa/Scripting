@@ -38,7 +38,9 @@ export interface AnniversaryEvent {
   reminderDays: number[]
   remindOnDay: boolean
   repeatYearly: boolean
+  repeatMonthly: boolean // 每月重复
   isPinned?: boolean // 是否置顶
+  showYearsAndDays?: boolean // 倒数日是否显示年+天格式
   createdAt: number
 }
 
@@ -48,6 +50,8 @@ export interface AppSettings {
   defaultRemindOnDay: boolean
   notificationsEnabled: boolean
   groupPastEvents: boolean // 是否将已过的纪念日归入「纪念日」分组
+  notificationHour: number // 通知时间（小时，0-23），默认9
+  notificationMinute: number // 通知时间（分钟，0-59），默认0
 }
 
 // 完整持久化数据

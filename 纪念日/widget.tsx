@@ -2,7 +2,7 @@ import { VStack, HStack, Text, Image, Widget, Spacer, Color, Divider, ZStack } f
 import { AppData, AnniversaryEvent, Person } from './types'
 import { loadAppData } from './storage'
 import { resolveWidgetAvatarPath } from './widgetAvatar'
-import { buildOccurrenceList, getReferenceDate, getWeddingAnniversaryName, getWeddingNameColor, formatElapsedYearsAndDays } from './dateUtils'
+import { buildOccurrenceList, getReferenceDate, getEffectiveType, getWeddingAnniversaryName, getWeddingNameColor, formatElapsedYearsAndDays } from './dateUtils'
 import { CapsuleTag, RELATIONSHIP_STYLES, DEFAULT_RELATIONSHIP_STYLE } from './components'
 
 // 每种尺寸默认显示的纪念日数量
@@ -13,7 +13,7 @@ const FAMILY_LIMITS: Record<string, number> = {
   systemExtraLarge: 6
 }
 
-// 纪念日类型标签（用于无自定义标题时显示）
+// 纪念日类型短标签（widget 空间有限，使用短名称避免截断；App 列表已用长后缀）
 const EVENT_TYPE_LABELS: Record<AnniversaryEvent['type'], string> = {
   birthday: '生日',
   meet: '相识',
@@ -32,6 +32,8 @@ interface Occurrence {
   nextDate: Date
   daysLeft: number
   age?: number
+  months?: number
+  daysSince?: number
   yearsPassed?: number
 }
 
@@ -77,9 +79,12 @@ function formatDateShortWithWeekday(date: Date): string {
   return `${date.getMonth() + 1}月${date.getDate()}日 · ${weekday}`
 }
 
-// 事件标题
+// 事件标题（widget 专用，使用短名称以适应有限空间）
 function formatEventTitle(event: AnniversaryEvent, person: Person): string {
-  return `${person.name}的${event.title || EVENT_TYPE_LABELS[event.type]}`
+  const displayTitle = event.type === 'custom'
+    ? (event.title || '其他')
+    : (EVENT_TYPE_LABELS[event.type] || '纪念日')
+  return `${person.name}的${displayTitle}`
 }
 
 // 倒计天数显示：0 天显示为“今天”
@@ -132,35 +137,54 @@ function PersonAvatar({ person, size }: { person: Person; size: number }) {
 // 副标题胶囊标签：生日显示年龄、恋爱/结婚显示周年、一次性事件显示“纪念日”等
 function EventSubtitleTags({ item }: { item: Occurrence }) {
   const event = item.event
+  const effectiveType = getEffectiveType(event)
 
-  if (event.type === 'birthday' && item.age !== undefined) {
-    return <CapsuleTag label={`${item.age} 岁`} color="#007AFF" />
+  if (effectiveType === 'birthday' && item.age !== undefined) {
+    // 不满 1 岁显示月龄，不满 1 个月显示天数，当天显示“今天”
+    let ageLabel = `${item.age} 岁`
+    if (item.age === 0) {
+      if (item.months !== undefined && item.months > 0) {
+        ageLabel = `${item.months} 月龄`
+      } else if (item.daysSince !== undefined && item.daysSince >= 0) {
+        ageLabel = item.daysSince === 0 ? '今天' : `${item.daysSince} 天`
+      }
+    }
+    return <CapsuleTag label={ageLabel} color="#007AFF" />
   }
 
-  if (!event.repeatYearly) {
-    return <CapsuleTag label="纪念日" color="#8E8E93" />
+  if (effectiveType === 'love' && item.yearsPassed !== undefined) {
+    // 不满 1 周年显示月数，不满 1 个月显示天数，当天显示“今天”
+    let label = `${item.yearsPassed} 周年`
+    if (item.yearsPassed === 0) {
+      if (item.months !== undefined && item.months > 0) {
+        label = `${item.months} 个月`
+      } else if (item.daysSince !== undefined && item.daysSince >= 0) {
+        label = item.daysSince === 0 ? '今天' : `${item.daysSince} 天`
+      }
+    }
+    return <CapsuleTag label={label} color="#FF2D55" />
   }
 
-  if (event.type === 'love' && item.yearsPassed !== undefined) {
-    return <CapsuleTag label={`${item.yearsPassed} 周年`} color="#FF2D55" />
-  }
-
-  if (event.type === 'wedding' && item.yearsPassed !== undefined) {
-    const anniversaryName = getWeddingAnniversaryName(item.yearsPassed)
+  if (effectiveType === 'wedding' && item.yearsPassed !== undefined) {
+    // 不满 1 周年显示月数，不满 1 个月显示天数，当天显示“今天”
+    let label = `${item.yearsPassed} 周年`
+    if (item.yearsPassed === 0) {
+      if (item.months !== undefined && item.months > 0) {
+        label = `${item.months} 个月`
+      } else if (item.daysSince !== undefined && item.daysSince >= 0) {
+        label = item.daysSince === 0 ? '今天' : `${item.daysSince} 天`
+      }
+    }
+    const anniversaryName = item.yearsPassed > 0 ? getWeddingAnniversaryName(item.yearsPassed) : undefined
     return (
       <HStack spacing={4} alignment="center">
-        <CapsuleTag label={`${item.yearsPassed} 周年`} color="#FF2D55" />
+        <CapsuleTag label={label} color="#FF2D55" />
         {anniversaryName ? <CapsuleTag label={anniversaryName} color={getWeddingNameColor(item.yearsPassed)} /> : null}
       </HStack>
     )
   }
 
-  const ref = getReferenceDate(event)
-  if (ref) {
-    return <CapsuleTag label={formatElapsedYearsAndDays(ref, new Date())} color="#5AC8FA" />
-  }
-
-  return null
+  return <CapsuleTag label="纪念日" color="#8E8E93" />
 }
 
 // 中号/大号共用的单行纪念日视图
@@ -224,7 +248,7 @@ function SmallWidgetView({ item }: { item: Occurrence }) {
 function EmptyWidgetView() {
   return (
     <VStack spacing={8} alignment="center" frame={{ maxWidth: Infinity, maxHeight: Infinity }}>
-      <Image systemName="calendar.badge.clock" font={36} foregroundStyle="quaternaryLabel" />
+      <Image systemName="heart.text.square" font={36} foregroundStyle="quaternaryLabel" />
       <Text fontWeight="semibold" font={14} foregroundStyle="secondaryLabel">还没有纪念日</Text>
       <Text font={11} foregroundStyle="tertiaryLabel">打开应用添加重要日子</Text>
     </VStack>

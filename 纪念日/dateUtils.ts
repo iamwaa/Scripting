@@ -1,4 +1,14 @@
-import { AnniversaryEvent } from './types'
+import { AnniversaryEvent, EventType } from './types'
+
+// 根据事件类型和标题识别有效类型：custom 类型会根据标题关键词识别为生日/恋爱/结婚
+export function getEffectiveType(event: AnniversaryEvent): EventType {
+  if (event.type !== 'custom') return event.type
+  const title = event.title?.trim() || ''
+  if (title.includes('生日')) return 'birthday'
+  if (title.includes('恋爱')) return 'love'
+  if (title.includes('结婚') || title.includes('婚礼')) return 'wedding'
+  return 'custom'
+}
 
 // 农历月份显示名称
 export const LUNAR_MONTH_NAMES = [
@@ -114,6 +124,8 @@ export function formatLunar(lunarMonth: number, lunarDay: number, isLeapMonth: b
 }
 
 // 在指定公历年份中查找对应农历月日的日期
+// 农历日期可能在一个公历年内出现两次（年初是上一轮农历年的延续，年末是当年），
+// 因此遍历整年取最后一个匹配项，确保返回的是当年农历周期内的日期
 export function findGregorianDateForLunar(
   lunarMonth: number,
   lunarDay: number,
@@ -122,12 +134,14 @@ export function findGregorianDateForLunar(
 ): Date | null {
   const start = localDate(gregorianYear, 1, 1)
   const end = localDate(gregorianYear + 1, 1, 1)
+  let lastMatch: Date | null = null
   for (let date = new Date(start); date < end; date.setDate(date.getDate() + 1)) {
     const parts = getLunarParts(date)
     if (parts.month === lunarMonth && parts.day === lunarDay && parts.isLeapMonth === isLeapMonth) {
-      return new Date(date)
+      lastMatch = new Date(date)
     }
   }
+  if (lastMatch) return lastMatch
   // 若查无闰月日期，退回到非闰月同名日期
   if (isLeapMonth) {
     return findGregorianDateForLunar(lunarMonth, lunarDay, false, gregorianYear)
@@ -164,12 +178,48 @@ export function getNextOccurrence(event: AnniversaryEvent, from: Date = new Date
   if (!ref) return null
   const today = localDate(from.getFullYear(), from.getMonth() + 1, from.getDate())
   const refLocal = localDate(ref.getFullYear(), ref.getMonth() + 1, ref.getDate())
-  if (!event.repeatYearly) {
-    if (refLocal >= today) {
-      return refLocal
+  
+  // 每月重复：从事件基准月份开始查找下一个同一天
+  // 确保不返回早于事件设定日期的重复
+  if (event.repeatMonthly) {
+    const day = ref.getDate()
+    // 从事件基准月份或当前月份中较晚的开始查找
+    const refMonth = refLocal.getMonth()
+    const refYear = refLocal.getFullYear()
+    const fromMonth = from.getMonth()
+    const fromYear = from.getFullYear()
+    // 计算起始月份：取事件基准月份和当前月份中较晚的
+    let startMonth: number
+    let startYear: number
+    if (fromYear > refYear || (fromYear === refYear && fromMonth >= refMonth)) {
+      startMonth = fromMonth
+      startYear = fromYear
+    } else {
+      startMonth = refMonth
+      startYear = refYear
     }
-    // 一次性事件已过期时，取次年同月同日作为下一个虚拟目标日，统一展示倒数
-    return localDate(ref.getFullYear() + 1, ref.getMonth() + 1, ref.getDate())
+    // 从起始月份开始往后查找12个月
+    for (let offset = 0; offset < 12; offset++) {
+      let month = startMonth + offset
+      let year = startYear
+      if (month >= 12) {
+        year += Math.floor(month / 12)
+        month = month % 12
+      }
+      // 处理月末日期（如31号在小月）
+      const maxDay = new Date(year, month + 1, 0).getDate()
+      const actualDay = Math.min(day, maxDay)
+      const candidate = localDate(year, month + 1, actualDay)
+      if (candidate >= today && candidate >= refLocal) {
+        return candidate
+      }
+    }
+    return null
+  }
+  
+  // 不重复事件（既不每年也不每月）：返回原始日期
+  if (!event.repeatYearly && !event.repeatMonthly) {
+    return refLocal
   }
   // 重复事件：从设定年份（或今年）开始查找，不返回早于设定日期的目标
   const startYear = Math.max(from.getFullYear(), refLocal.getFullYear())
@@ -196,27 +246,93 @@ export function daysBetween(from: Date, to: Date): number {
 export function getYearsPassed(event: AnniversaryEvent, targetYear: number): number | undefined {
   const ref = getReferenceDate(event)
   if (!ref) return undefined
-  if (event.isLunar) {
-    // 以农历转换后的目標年作为参考，近似计算
-    return Math.max(0, targetYear - ref.getFullYear())
+  
+  const baseYear = ref.getFullYear()
+  const yearsDiff = targetYear - baseYear
+  
+  // 如果是农历事件，需要检查今年农历日期是否已过
+  if (event.isLunar && event.lunarMonth && event.lunarDay) {
+    const today = new Date()
+    // 查找今年农历对应的公历日期
+    const lunarDateThisYear = findGregorianDateForLunar(
+      event.lunarMonth,
+      event.lunarDay,
+      event.isLeapMonth,
+      targetYear
+    )
+    if (lunarDateThisYear) {
+      // 今年农历日期还没到，减 1 年
+      const isPast = today >= lunarDateThisYear
+      return Math.max(0, isPast ? yearsDiff : yearsDiff - 1)
+    }
   }
-  return Math.max(0, targetYear - ref.getFullYear())
+  
+  // 公历事件：检查今年纪念日是否已到
+  const today = new Date()
+  const anniversaryThisYear = localDate(targetYear, ref.getMonth() + 1, ref.getDate())
+  const isPast = today >= anniversaryThisYear
+  return Math.max(0, isPast ? yearsDiff : yearsDiff - 1)
 }
 
-// 计算周岁（生日用）
+// 计算周岁（生日用），不依赖 getNextOccurrence，适用于重复与非重复事件
 export function getAge(event: AnniversaryEvent, today: Date = new Date()): number | undefined {
-  if (event.type !== 'birthday') return undefined
+  if (getEffectiveType(event) !== 'birthday') return undefined
   const ref = getReferenceDate(event)
   if (!ref) return undefined
-  let age = today.getFullYear() - ref.getFullYear()
-  const next = getNextOccurrence(event, today)
-  if (next) {
-    const nextYear = next.getFullYear()
-    age = nextYear - ref.getFullYear()
-    // 若今年生日已过，nextYear 等于 today.getFullYear()，否则为 today.getFullYear() + 1
-    // 这里直接用 nextYear 减参考年即得到当前周岁
+  
+  // 获取出生时的公历日期
+  const birthYear = ref.getFullYear()
+  
+  // 计算今年生日对应的公历日期
+  let birthdayThisYear: Date | null = null
+  if (event.isLunar && event.lunarMonth && event.lunarDay) {
+    // 农历生日：查找今年农历对应的公历日期
+    birthdayThisYear = findGregorianDateForLunar(
+      event.lunarMonth,
+      event.lunarDay,
+      event.isLeapMonth,
+      today.getFullYear()
+    )
+  } else {
+    // 公历生日：直接使用公历月日
+    birthdayThisYear = localDate(today.getFullYear(), ref.getMonth() + 1, ref.getDate())
+  }
+  
+  // 计算年龄
+  let age = today.getFullYear() - birthYear
+  // 今年生日还没到，减 1 岁
+  if (birthdayThisYear && today < birthdayThisYear) {
+    age -= 1
   }
   return Math.max(0, age)
+}
+
+// 计算事件距今的整月数（生日月龄、恋爱/结婚不满 1 周年时使用）
+export function getMonthsSince(event: AnniversaryEvent, today: Date = new Date()): number | undefined {
+  const ref = getReferenceDate(event)
+  if (!ref) return undefined
+  
+  // 对于农历事件，需要使用当前农历周期内的公历日期
+  let referenceDate = ref
+  if (event.isLunar && event.lunarMonth && event.lunarDay) {
+    // 查找今年农历对应的公历日期
+    const lunarDateThisYear = findGregorianDateForLunar(
+      event.lunarMonth,
+      event.lunarDay,
+      event.isLeapMonth,
+      today.getFullYear()
+    )
+    if (lunarDateThisYear) {
+      referenceDate = lunarDateThisYear
+    }
+  }
+  
+  let months = (today.getFullYear() - referenceDate.getFullYear()) * 12 + (today.getMonth() - referenceDate.getMonth())
+  // 还没到当月的生日日，减 1 个月
+  if (today.getDate() < referenceDate.getDate()) {
+    months -= 1
+  }
+  return Math.max(0, months)
 }
 
 // 判断两个日期是否同年同月同日
@@ -318,20 +434,30 @@ export function buildOccurrenceList(
   for (const event of events) {
     const person = getPerson(event.personId)
     if (!person) continue
-    // 重复事件展示下一次未来日期；非重复事件始终展示原始参考日期，确保分组与列表行右侧日期一致
-    let displayDate = event.repeatYearly
+    // 重复事件（每年或每月）展示下一次未来日期；非重复事件始终展示原始参考日期
+    let displayDate = (event.repeatYearly || event.repeatMonthly)
       ? (getNextOccurrence(event, from) ?? getReferenceDate(event))
       : getReferenceDate(event)
     if (!displayDate) continue
+    const age = getAge(event, from)
+    const effectiveType = getEffectiveType(event)
+    const isLoveOrWedding = effectiveType === 'love' || effectiveType === 'wedding'
+    const yearsPassed = isLoveOrWedding ? getYearsPassed(event, from.getFullYear()) : undefined
+    // 月数：生日 0 岁或恋爱/结婚不满 1 周年时计算
+    const needsMonths = (age === 0) || (isLoveOrWedding && yearsPassed === 0)
+    const months = needsMonths ? getMonthsSince(event, from) : undefined
+    // 天数：不满 1 个月时显示
+    const refDate = getReferenceDate(event)
+    const daysSince = (months === 0 && refDate) ? daysBetween(refDate, from) : undefined
     result.push({
       event,
       person,
       nextDate: displayDate,
       daysLeft: daysBetween(from, displayDate),
-      age: getAge(event, from),
-      yearsPassed: event.repeatYearly
-        ? getYearsPassed(event, displayDate.getFullYear())
-        : undefined
+      age,
+      months,
+      daysSince,
+      yearsPassed
     })
   }
   result.sort((a, b) => a.daysLeft - b.daysLeft)

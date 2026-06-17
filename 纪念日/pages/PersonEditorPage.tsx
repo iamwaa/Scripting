@@ -75,6 +75,7 @@ export function PersonEditorPage({ person, onSave }: PersonEditorPageProps) {
       avatarPath,
       relationship: finalRelationship,
       notes: notes.trim(),
+      isPinned: person?.isPinned, // 保留置顶状态
       createdAt: person?.createdAt ?? Date.now()
     }
     await onSave(updated)
@@ -101,6 +102,7 @@ export function PersonEditorPage({ person, onSave }: PersonEditorPageProps) {
         listStyle="insetGroup"
         navigationTitle={person ? '编辑人物' : '新人物'}
         navigationBarTitleDisplayMode="inline"
+        scrollIndicator="hidden"
         toolbar={
           <Toolbar>
             <ToolbarItem placement="topBarLeading">
@@ -149,7 +151,7 @@ export function PersonEditorPage({ person, onSave }: PersonEditorPageProps) {
             <Spacer />
           </HStack>
           {isCustomRelationship && (
-            <FormRow label="自定义" value={relationshipCustom} prompt="例如：导师、邻居" onChanged={setRelationshipCustom} />
+            <FormRow label="自定义" value={relationshipCustom} prompt="请输入" onChanged={setRelationshipCustom} />
           )}
           <FormRow label="备注" value={notes} prompt="写下关于 TA 的点滴" onChanged={setNotes} />
         </Section>

@@ -50,6 +50,7 @@ export function PersonDetailPage({
         listStyle="insetGroup"
         navigationTitle={livePerson.name}
         navigationBarTitleDisplayMode="inline"
+        scrollIndicator="hidden"
         alert={{
           title: '删除人物',
           message: <Text>确定要删除「{livePerson.name}」吗？相关纪念日也会被一并删除。</Text>,
@@ -106,7 +107,7 @@ export function PersonDetailPage({
             <EmptyState
               title="还没有纪念日"
               subtitle="点击下方按钮添加"
-              systemImage="gift"
+              systemImage="heart.text.square"
             />
           ) : (
             personEvents.map(event => (

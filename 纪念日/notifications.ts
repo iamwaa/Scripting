@@ -1,30 +1,112 @@
 import { AnniversaryEvent, Person, AppSettings } from './types'
-import { localDate, getDateForYear, getReferenceDate } from './dateUtils'
+import { localDate, getDateForYear, getReferenceDate, getYearsPassed, getNextOccurrence } from './dateUtils'
 import { Notification } from 'scripting'
 
-const SCHEDULE_YEARS_AHEAD = 2
+// 通知范围：未来365天内（一个完整年度周期）
+const NOTIFICATION_RANGE_DAYS = 365
 
-// 计算提醒触发时间：目标日零点 9:00
-function reminderDateFor(baseDate: Date, daysBefore: number): Date {
+// 计算提醒触发时间：目标日指定时间
+function reminderDateFor(baseDate: Date, daysBefore: number, hour: number = 9, minute: number = 0): Date {
   const date = localDate(baseDate.getFullYear(), baseDate.getMonth() + 1, baseDate.getDate())
   date.setDate(date.getDate() - daysBefore)
-  date.setHours(9, 0, 0, 0)
+  date.setHours(hour, minute, 0, 0)
   return date
 }
 
-// 从事件与人物生成通知文案
-function buildNotificationContent(event: AnniversaryEvent, person: Person, daysBefore: number): { title: string; body: string } {
-  if (daysBefore === 0) {
-    const verb = event.type === 'birthday' ? '生日' : '重要日子'
-    return {
-      title: `今天 ${person.name} 的${verb}`,
-      body: event.title || `${person.name} 的${verb}就是今天，别忘了送上祝福。`
-    }
+// 获取人物显示名称
+function displayName(person: Person): string {
+  return person.name
+}
+
+// 根据事件类型生成标签
+function eventLabel(event: AnniversaryEvent): string {
+  switch (event.type) {
+    case 'birthday': return '生日'
+    case 'meet': return '相识纪念日'
+    case 'love': return '恋爱纪念日'
+    case 'wedding': return '结婚纪念日'
+    case 'enrollment': return '入学纪念日'
+    case 'graduation': return '毕业纪念日'
+    case 'join': return '入职纪念日'
+    default: return event.title || '纪念日'
   }
-  const unit = daysBefore === 1 ? '明天' : `${daysBefore} 天后`
-  return {
-    title: `${unit} ${person.name} 的 ${event.title}`,
-    body: `还有 ${daysBefore} 天就是 ${person.name} 的${event.type === 'birthday' ? '生日' : '重要日子'}。`
+}
+
+// 生成周年描述（如「第3年」），首年返回空
+function yearsSuffix(event: AnniversaryEvent, targetYear: number): string {
+  const years = getYearsPassed(event, targetYear)
+  if (!years || years <= 0) return ''
+  if (event.type === 'birthday') return `${years}岁`
+  return `第${years}年`
+}
+
+// 从事件与人物生成通知文案
+function buildNotificationContent(
+  event: AnniversaryEvent,
+  person: Person,
+  daysBefore: number,
+  targetYear: number
+): { title: string; body: string } {
+  const name = displayName(person)
+  const label = eventLabel(event)
+  const suffix = yearsSuffix(event, targetYear)
+
+  if (daysBefore === 0) {
+    const titleText = `今天是 ${name} 的${label}`
+    const body = buildTodayBody(event, name, label, suffix)
+    return { title: titleText, body }
+  }
+
+  const timeHint = daysBefore === 1 ? '明天' : `${daysBefore}天后`
+  const titleText = `${timeHint}是 ${name} 的${label}`
+  const body = buildAheadBody(event, name, label, daysBefore)
+  return { title: titleText, body }
+}
+
+// 当天 body 文案
+function buildTodayBody(event: AnniversaryEvent, name: string, label: string, suffix: string): string {
+  switch (event.type) {
+    case 'birthday':
+      return suffix
+        ? `${name}今天${suffix}了，去说声生日快乐吧`
+        : `今天是${name}的生日，去说声生日快乐吧`
+    case 'love':
+    case 'wedding': {
+      const num = suffix.replace('第', '').replace('年', '')
+      return suffix
+        ? `不知不觉已经一起走过${num}年了，今天好好庆祝一下`
+        : `和${name}的特别日子，今天好好庆祝一下`
+    }
+    case 'meet': {
+      const num = suffix.replace('第', '').replace('年', '')
+      return suffix
+        ? `认识${name}已经${num}年了，真快`
+        : `还记得和${name}第一次见面的那天吗`
+    }
+    case 'graduation':
+      return `从校园到如今，值得记住的一天`
+    default:
+      return event.title
+        ? `今天是${name}「${event.title}」的日子`
+        : `今天是${name}的${label}`
+  }
+}
+
+// 提前提醒 body 文案
+function buildAheadBody(event: AnniversaryEvent, name: string, label: string, daysBefore: number): string {
+  switch (event.type) {
+    case 'birthday':
+      if (daysBefore === 1) return `明天就是${name}的生日了`
+      if (daysBefore <= 3) return `${name}的生日快到了，可以提前准备一下`
+      return `距离${name}的生日还有${daysBefore}天`
+    case 'love':
+    case 'wedding':
+      if (daysBefore === 1) return `明天是和${name}的${label}了`
+      if (daysBefore <= 3) return `和${name}的${label}快到了`
+      return `距离和${name}的${label}还有${daysBefore}天`
+    default:
+      if (daysBefore === 1) return `明天是${name}的${label}`
+      return `距离${name}的${label}还有${daysBefore}天`
   }
 }
 
@@ -34,14 +116,16 @@ async function scheduleOne(
   person: Person,
   targetDate: Date,
   year: number,
-  daysBefore: number
+  daysBefore: number,
+  notificationHour: number = 9,
+  notificationMinute: number = 0
 ): Promise<boolean> {
-  const triggerDate = reminderDateFor(targetDate, daysBefore)
+  const triggerDate = reminderDateFor(targetDate, daysBefore, notificationHour, notificationMinute)
   const now = new Date()
   // 不调度已经过期的时间点
   if (triggerDate <= now) return true
 
-  const { title, body } = buildNotificationContent(event, person, daysBefore)
+  const { title, body } = buildNotificationContent(event, person, daysBefore, year)
   const dateComponents = new DateComponents({
     year: triggerDate.getFullYear(),
     month: triggerDate.getMonth() + 1,
@@ -57,7 +141,7 @@ async function scheduleOne(
   })
 }
 
-// 为某个事件调度未来若干年的通知
+// 为某个事件调度通知（基于事件的周年周期，而非自然年）
 async function scheduleForEvent(
   event: AnniversaryEvent,
   person: Person,
@@ -66,24 +150,34 @@ async function scheduleForEvent(
   if (!settings.notificationsEnabled) return
   if (event.reminderDays.length === 0 && !event.remindOnDay) return
 
-  const currentYear = new Date().getFullYear()
-  const ref = getReferenceDate(event)
-  const refYear = ref ? ref.getFullYear() : currentYear
-  // 对未来的重复/一次性事件，从设定年份开始调度，避免在设定日期前产生通知
-  const startYear = Math.max(currentYear, refYear)
-  for (let offset = 0; offset < SCHEDULE_YEARS_AHEAD; offset++) {
-    const year = startYear + offset
-    const date = getDateForYear(event, year)
-    if (!date) continue
-    if (event.repeatYearly && ref && date < ref) continue
+  const now = new Date()
+  // 获取事件的下一个发生日期
+  const nextDate = getNextOccurrence(event, now)
+  if (!nextDate) return
 
-    if (event.remindOnDay) {
-      await scheduleOne(event, person, date, year, 0)
-    }
-    for (const days of event.reminderDays) {
-      if (days > 0) {
-        await scheduleOne(event, person, date, year, days)
-      }
+  // 对于不重复事件，如果事件日期早于今天（不含今天），不创建通知
+  // 今天的通知由 scheduleOne 判断触发时间是否已过
+  if (!event.repeatYearly && !event.repeatMonthly) {
+    const today = localDate(now.getFullYear(), now.getMonth() + 1, now.getDate())
+    const eventDay = localDate(nextDate.getFullYear(), nextDate.getMonth() + 1, nextDate.getDate())
+    if (eventDay < today) return
+  }
+
+  // 计算事件日期到今天的天数差
+  const daysUntilEvent = Math.ceil((nextDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+  // 如果事件超过通知范围，跳过
+  if (daysUntilEvent > NOTIFICATION_RANGE_DAYS) return
+
+  const year = nextDate.getFullYear()
+  const notificationHour = settings.notificationHour ?? 9
+  const notificationMinute = settings.notificationMinute ?? 0
+  
+  if (event.remindOnDay) {
+    await scheduleOne(event, person, nextDate, year, 0, notificationHour, notificationMinute)
+  }
+  for (const days of event.reminderDays) {
+    if (days > 0) {
+      await scheduleOne(event, person, nextDate, year, days, notificationHour, notificationMinute)
     }
   }
 }

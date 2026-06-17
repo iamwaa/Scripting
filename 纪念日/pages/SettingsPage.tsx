@@ -1,4 +1,4 @@
-import { NavigationStack, List, Section, Button, Text, Toolbar, ToolbarItem, useObservable, Image, HStack, Toggle } from 'scripting'
+import { NavigationStack, List, Section, Button, Text, Toolbar, ToolbarItem, useObservable, Image, HStack, Toggle, DatePicker } from 'scripting'
 import { AppSettings } from '../types'
 
 interface SettingsPageProps {
@@ -15,6 +15,11 @@ export function SettingsPage({ settings, onClose, onSettingsChange, onClearAllDa
     onSettingsChange({ ...settings, groupPastEvents: enabled })
   }
 
+  const handleNotificationTimeChange = (value: number) => {
+    const date = new Date(value)
+    onSettingsChange({ ...settings, notificationHour: date.getHours(), notificationMinute: date.getMinutes() })
+  }
+
   const handleClear = () => {
     showAlert.setValue(false)
     onClearAllData()
@@ -26,6 +31,7 @@ export function SettingsPage({ settings, onClose, onSettingsChange, onClearAllDa
         listStyle="insetGroup"
         navigationTitle="设置"
         navigationBarTitleDisplayMode="large"
+        scrollIndicator="hidden"
         toolbar={
           <Toolbar>
             <ToolbarItem placement="topBarLeading">
@@ -47,6 +53,14 @@ export function SettingsPage({ settings, onClose, onSettingsChange, onClearAllDa
           )
         }}
       >
+        <Section title="通知">
+          <DatePicker
+            title="提醒时间"
+            value={new Date(2000, 0, 1, settings.notificationHour ?? 9, settings.notificationMinute ?? 0).getTime()}
+            onChanged={handleNotificationTimeChange}
+            displayedComponents={['hourAndMinute']}
+          />
+        </Section>
         <Section title="列表">
           <Toggle
             title="已过的纪念日归入「纪念日」分组"
