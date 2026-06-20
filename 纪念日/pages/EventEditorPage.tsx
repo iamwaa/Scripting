@@ -267,7 +267,7 @@ export function EventEditorPage({ event, person, settings, onSave, onDelete }: E
                 {({ size }) => {
                   const gap = 1
                   const total = size.width - gap * 2
-                  const yearWidth = total * 0.45
+                  const yearWidth = total * 0.47
                   const monthDayWidth = (total - yearWidth) / 2
                   return (
                     <HStack spacing={gap} frame={{ maxWidth: Infinity }}>

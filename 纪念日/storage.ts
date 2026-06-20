@@ -1,4 +1,4 @@
-import { Script } from 'scripting'
+import { Script, Path } from 'scripting'
 import { AppData, AppSettings, Person, AnniversaryEvent } from './types'
 import { deleteWidgetAvatar } from './widgetAvatar'
 
@@ -6,9 +6,9 @@ const DATA_VERSION = 1
 const APP_FOLDER = '纪念日数据'
 const DATA_FILE = 'data.json'
 
-// 获取应用私有数据目录（位于当前脚本项目目录下）
+// 获取应用私有数据目录（位于 configs 目录下）
 function appDir(): string {
-  return `${Script.directory}/${APP_FOLDER}`
+  return Path.join(Path.dirname(Path.dirname(Script.directory)), 'configs', APP_FOLDER)
 }
 
 // 获取头像存储目录

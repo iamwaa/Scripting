@@ -1,4 +1,5 @@
 import { AppIntentManager, AppIntentProtocol, Path, Script } from "scripting"
+import { WorkdayStorage } from "./storage"
 
 const KEY_WORKDAY_ALARM_IDS = "alarm_workday_alarm_ids"
 const KEY_WORKDAY_ALARM_ID = "alarm_workday_alarm_id"
@@ -53,23 +54,23 @@ type SnoozeWorkdayAlarmIntentParams = {
 }
 
 function rememberWorkdayAlarmId(id: string, asNextAlarm = false) {
-  const ids = Storage.get<string[]>(KEY_WORKDAY_ALARM_IDS) || []
-  Storage.set(KEY_WORKDAY_ALARM_ID, id)
-  Storage.set(KEY_WORKDAY_ALARM_IDS, Array.from(new Set([...ids, id])))
+  const ids = WorkdayStorage.get<string[]>(KEY_WORKDAY_ALARM_IDS) || []
+  WorkdayStorage.set(KEY_WORKDAY_ALARM_ID, id)
+  WorkdayStorage.set(KEY_WORKDAY_ALARM_IDS, Array.from(new Set([...ids, id])))
   if (asNextAlarm) {
-    Storage.set(KEY_WORKDAY_NEXT_ALARM_ID, id)
+    WorkdayStorage.set(KEY_WORKDAY_NEXT_ALARM_ID, id)
   }
 }
 
 function forgetWorkdayAlarmId(id: string) {
-  const ids = Storage.get<string[]>(KEY_WORKDAY_ALARM_IDS) || []
+  const ids = WorkdayStorage.get<string[]>(KEY_WORKDAY_ALARM_IDS) || []
   const nextIds = ids.filter((item) => item !== id)
-  Storage.set(KEY_WORKDAY_ALARM_IDS, nextIds)
-  if (Storage.get<string>(KEY_WORKDAY_ALARM_ID) === id) {
-    Storage.set(KEY_WORKDAY_ALARM_ID, nextIds[0] || "")
+  WorkdayStorage.set(KEY_WORKDAY_ALARM_IDS, nextIds)
+  if (WorkdayStorage.get<string>(KEY_WORKDAY_ALARM_ID) === id) {
+    WorkdayStorage.set(KEY_WORKDAY_ALARM_ID, nextIds[0] || "")
   }
-  if (Storage.get<string>(KEY_WORKDAY_NEXT_ALARM_ID) === id) {
-    Storage.set(KEY_WORKDAY_NEXT_ALARM_ID, "")
+  if (WorkdayStorage.get<string>(KEY_WORKDAY_NEXT_ALARM_ID) === id) {
+    WorkdayStorage.set(KEY_WORKDAY_NEXT_ALARM_ID, "")
   }
 }
 
@@ -110,7 +111,7 @@ function getDefaultRestRule(): RestRule {
 }
 
 function loadRestRule(): RestRule {
-  return Storage.get<RestRule>(KEY_REST_RULE) || getDefaultRestRule()
+  return WorkdayStorage.get<RestRule>(KEY_REST_RULE) || getDefaultRestRule()
 }
 
 function getRuleDayType(dateKey: string, rule: RestRule): "holiday" | "normal" {
@@ -227,11 +228,11 @@ function bindToCurrentScript<T extends { script: string }>(intent: T): T {
 }
 
 function getSnoozeMinutes(): number {
-  return Storage.get<number>(KEY_ALARM_SNOOZE_MINUTES) ?? DEFAULT_SNOOZE_MINUTES
+  return WorkdayStorage.get<number>(KEY_ALARM_SNOOZE_MINUTES) ?? DEFAULT_SNOOZE_MINUTES
 }
 
 function getAlarmSoundSetting(): string {
-  return Storage.get<string>(KEY_ALARM_SOUND) || DEFAULT_ALARM_SOUND
+  return WorkdayStorage.get<string>(KEY_ALARM_SOUND) || DEFAULT_ALARM_SOUND
 }
 
 function buildAlarmAttributes(title: string, targetDateStr: string): AlarmManager.Attributes {
@@ -255,10 +256,10 @@ function buildAlarmAttributes(title: string, targetDateStr: string): AlarmManage
 }
 
 async function cancelStoredNextWorkdayAlarm() {
-  const nextAlarmId = Storage.get<string>(KEY_WORKDAY_NEXT_ALARM_ID) || ""
+  const nextAlarmId = WorkdayStorage.get<string>(KEY_WORKDAY_NEXT_ALARM_ID) || ""
   if (!nextAlarmId) return
 
-  Storage.set(KEY_WORKDAY_NEXT_ALARM_ID, "")
+  WorkdayStorage.set(KEY_WORKDAY_NEXT_ALARM_ID, "")
   try {
     await AlarmManager.cancel(nextAlarmId)
   } catch {}
@@ -266,16 +267,16 @@ async function cancelStoredNextWorkdayAlarm() {
 }
 
 async function scheduleNextWorkdayAlarm() {
-  const alarmEnabled = Storage.get<boolean>(KEY_ALARM_ENABLED) ?? true
-  const alarmType = Storage.get<AlarmType>(KEY_ALARM_TYPE) ?? "builtin"
+  const alarmEnabled = WorkdayStorage.get<boolean>(KEY_ALARM_ENABLED) ?? true
+  const alarmType = WorkdayStorage.get<AlarmType>(KEY_ALARM_TYPE) ?? "builtin"
   if (!alarmEnabled || alarmType !== "builtin" || !AlarmManager.isAvailable) return
 
   await cancelStoredNextWorkdayAlarm()
 
-  const alarmHour = Storage.get<number>(KEY_ALARM_HOUR) ?? 7
-  const alarmMinute = Storage.get<number>(KEY_ALARM_MINUTE) ?? 30
-  const subDays = Storage.get<DayEntry[]>(KEY_SUB_CACHE) || []
-  const overrides = Storage.get<LocalOverride[]>(KEY_OVERRIDES) || []
+  const alarmHour = WorkdayStorage.get<number>(KEY_ALARM_HOUR) ?? 7
+  const alarmMinute = WorkdayStorage.get<number>(KEY_ALARM_MINUTE) ?? 30
+  const subDays = WorkdayStorage.get<DayEntry[]>(KEY_SUB_CACHE) || []
+  const overrides = WorkdayStorage.get<LocalOverride[]>(KEY_OVERRIDES) || []
   const restRule = loadRestRule()
   const alarmTarget = getNextAlarmTarget(new Date(), alarmHour, alarmMinute, subDays, overrides, restRule)
   if (!alarmTarget) return

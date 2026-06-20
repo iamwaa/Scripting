@@ -35,6 +35,7 @@ import {
   DynamicShapeStyle,
 } from "scripting"
 import { StopWorkdayAlarmIntent, SnoozeWorkdayAlarmIntent } from "./app_intents"
+import { WorkdayStorage } from "./storage"
 
 declare const Dialog: any
 const TextWithLayout = Text as any
@@ -332,11 +333,11 @@ function getDefaultRestRule(): RestRule {
 }
 
 function loadRestRule(): RestRule {
-  return Storage.get<RestRule>(KEY_REST_RULE) || getDefaultRestRule()
+  return WorkdayStorage.get<RestRule>(KEY_REST_RULE) || getDefaultRestRule()
 }
 
 function saveRestRule(rule: RestRule) {
-  Storage.set(KEY_REST_RULE, rule)
+  WorkdayStorage.set(KEY_REST_RULE, rule)
 }
 
 function dayDiff(from: Date, to: Date): number {
@@ -437,35 +438,35 @@ function parseICS(icsText: string): DayEntry[] {
 }
 
 function loadSubUrl(): string {
-  return Storage.get<string>(KEY_SUB_URL) || ""
+  return WorkdayStorage.get<string>(KEY_SUB_URL) || ""
 }
 
 function saveSubUrl(url: string) {
-  Storage.set(KEY_SUB_URL, url)
+  WorkdayStorage.set(KEY_SUB_URL, url)
 }
 
 function loadSubCache(): DayEntry[] {
-  return Storage.get<DayEntry[]>(KEY_SUB_CACHE) || []
+  return WorkdayStorage.get<DayEntry[]>(KEY_SUB_CACHE) || []
 }
 
 function saveSubCache(days: DayEntry[]) {
-  Storage.set(KEY_SUB_CACHE, days)
+  WorkdayStorage.set(KEY_SUB_CACHE, days)
 }
 
 function loadOverrides(): LocalOverride[] {
-  return Storage.get<LocalOverride[]>(KEY_OVERRIDES) || []
+  return WorkdayStorage.get<LocalOverride[]>(KEY_OVERRIDES) || []
 }
 
 function loadDayNotes(): Record<string, string> {
-  return Storage.get<Record<string, string>>(KEY_DAY_NOTES) || {}
+  return WorkdayStorage.get<Record<string, string>>(KEY_DAY_NOTES) || {}
 }
 
 function saveDayNotes(notes: Record<string, string>) {
-  Storage.set(KEY_DAY_NOTES, notes)
+  WorkdayStorage.set(KEY_DAY_NOTES, notes)
 }
 
 function saveOverrides(overrides: LocalOverride[]) {
-  Storage.set(KEY_OVERRIDES, overrides)
+  WorkdayStorage.set(KEY_OVERRIDES, overrides)
 }
 
 function getOverrideYearStats(overrides: LocalOverride[]): OverrideYearStat[] {
@@ -530,11 +531,11 @@ async function scheduleNotification(
 
     await Notification.removeAllPendingsOfCurrentScript()
 
-    const notifyEnabled = Storage.get<boolean>(KEY_NOTIFY_ENABLED) ?? DEFAULT_NOTIFY_ENABLED
+    const notifyEnabled = WorkdayStorage.get<boolean>(KEY_NOTIFY_ENABLED) ?? DEFAULT_NOTIFY_ENABLED
     if (!notifyEnabled) return
 
-    const notifyHour = Storage.get<number>(KEY_NOTIFY_HOUR) ?? DEFAULT_NOTIFY_HOUR
-    const notifyMinute = Storage.get<number>(KEY_NOTIFY_MINUTE) ?? DEFAULT_NOTIFY_MINUTE
+    const notifyHour = WorkdayStorage.get<number>(KEY_NOTIFY_HOUR) ?? DEFAULT_NOTIFY_HOUR
+    const notifyMinute = WorkdayStorage.get<number>(KEY_NOTIFY_MINUTE) ?? DEFAULT_NOTIFY_MINUTE
     const tomorrow = new Date()
     tomorrow.setDate(tomorrow.getDate() + 1)
     const tomorrowStr = formatDateObj(tomorrow)
@@ -569,11 +570,11 @@ async function scheduleNotification(
 let alarmScheduleGeneration = 0
 
 function rememberWorkdayAlarmId(id: string, asNextAlarm = false) {
-  const ids = Storage.get<string[]>(KEY_WORKDAY_ALARM_IDS) || []
-  Storage.set(KEY_WORKDAY_ALARM_ID, id)
-  Storage.set(KEY_WORKDAY_ALARM_IDS, Array.from(new Set([...ids, id])))
+  const ids = WorkdayStorage.get<string[]>(KEY_WORKDAY_ALARM_IDS) || []
+  WorkdayStorage.set(KEY_WORKDAY_ALARM_ID, id)
+  WorkdayStorage.set(KEY_WORKDAY_ALARM_IDS, Array.from(new Set([...ids, id])))
   if (asNextAlarm) {
-    Storage.set(KEY_WORKDAY_NEXT_ALARM_ID, id)
+    WorkdayStorage.set(KEY_WORKDAY_NEXT_ALARM_ID, id)
   }
 }
 
@@ -590,12 +591,12 @@ async function cancelAlarmIds(ids: string[]) {
 }
 
 async function cancelWorkdayAlarm() {
-  const storedId = Storage.get<string>(KEY_WORKDAY_ALARM_ID) || WORKDAY_ALARM_ID_FALLBACK
-  const storedIds = Storage.get<string[]>(KEY_WORKDAY_ALARM_IDS) || []
-  const storedNextId = Storage.get<string>(KEY_WORKDAY_NEXT_ALARM_ID) || ""
-  Storage.set(KEY_WORKDAY_ALARM_ID, "")
-  Storage.set(KEY_WORKDAY_ALARM_IDS, [])
-  Storage.set(KEY_WORKDAY_NEXT_ALARM_ID, "")
+  const storedId = WorkdayStorage.get<string>(KEY_WORKDAY_ALARM_ID) || WORKDAY_ALARM_ID_FALLBACK
+  const storedIds = WorkdayStorage.get<string[]>(KEY_WORKDAY_ALARM_IDS) || []
+  const storedNextId = WorkdayStorage.get<string>(KEY_WORKDAY_NEXT_ALARM_ID) || ""
+  WorkdayStorage.set(KEY_WORKDAY_ALARM_ID, "")
+  WorkdayStorage.set(KEY_WORKDAY_ALARM_IDS, [])
+  WorkdayStorage.set(KEY_WORKDAY_NEXT_ALARM_ID, "")
 
   if (!AlarmManager.isAvailable) return "闹钟 API 不可用"
 
@@ -604,7 +605,7 @@ async function cancelWorkdayAlarm() {
 }
 
 function getSnoozeMinutes(): number {
-  return Storage.get<number>(KEY_ALARM_SNOOZE_MINUTES) ?? DEFAULT_SNOOZE_MINUTES
+  return WorkdayStorage.get<number>(KEY_ALARM_SNOOZE_MINUTES) ?? DEFAULT_SNOOZE_MINUTES
 }
 
 function buildAlarmAttributes(title: string, targetDateStr: string) {
@@ -625,7 +626,7 @@ function buildAlarmAttributes(title: string, targetDateStr: string) {
 }
 
 function getAlarmSoundSetting(): string {
-  return Storage.get<string>(KEY_ALARM_SOUND) || DEFAULT_ALARM_SOUND
+  return WorkdayStorage.get<string>(KEY_ALARM_SOUND) || DEFAULT_ALARM_SOUND
 }
 
 function getAlarmSoundName(soundSetting: string = getAlarmSoundSetting()): string {
@@ -697,9 +698,9 @@ async function scheduleWorkdayAlarm(
   restRule: RestRule = loadRestRule()
 ) {
   const runGeneration = ++alarmScheduleGeneration
-  const alarmEnabled = Storage.get<boolean>(KEY_ALARM_ENABLED) ?? true
-  const alarmHour = Storage.get<number>(KEY_ALARM_HOUR) ?? 7
-  const alarmMinute = Storage.get<number>(KEY_ALARM_MINUTE) ?? 30
+  const alarmEnabled = WorkdayStorage.get<boolean>(KEY_ALARM_ENABLED) ?? true
+  const alarmHour = WorkdayStorage.get<number>(KEY_ALARM_HOUR) ?? 7
+  const alarmMinute = WorkdayStorage.get<number>(KEY_ALARM_MINUTE) ?? 30
   const now = new Date()
   const alarmTarget = getNextAlarmTarget(now, alarmHour, alarmMinute, subDays, overrides, restRule)
 
@@ -759,7 +760,7 @@ async function syncAlarmAndNotification(
   overrides: LocalOverride[],
   restRule: RestRule = loadRestRule()
 ) {
-  const alarmType = Storage.get<AlarmType>(KEY_ALARM_TYPE) ?? "builtin"
+  const alarmType = WorkdayStorage.get<AlarmType>(KEY_ALARM_TYPE) ?? "builtin"
   let alarmStatus: string
   if (alarmType === "shortcut") {
     alarmStatus = "已委托快捷指令管理闹钟"
@@ -1381,11 +1382,11 @@ function SettingsPage(props: {
   const [alarmSound, setAlarmSound] = useState(getAlarmSoundSetting)
   const [snoozeMinutes, setSnoozeMinutes] = useState(getSnoozeMinutes)
   const [notifyEnabled, setNotifyEnabled] = useState(
-    () => Storage.get<boolean>(KEY_NOTIFY_ENABLED) ?? DEFAULT_NOTIFY_ENABLED
+    () => WorkdayStorage.get<boolean>(KEY_NOTIFY_ENABLED) ?? DEFAULT_NOTIFY_ENABLED
   )
   const [notifyTime, setNotifyTime] = useState(() => {
-    const h = Storage.get<number>(KEY_NOTIFY_HOUR) ?? DEFAULT_NOTIFY_HOUR
-    const m = Storage.get<number>(KEY_NOTIFY_MINUTE) ?? DEFAULT_NOTIFY_MINUTE
+    const h = WorkdayStorage.get<number>(KEY_NOTIFY_HOUR) ?? DEFAULT_NOTIFY_HOUR
+    const m = WorkdayStorage.get<number>(KEY_NOTIFY_MINUTE) ?? DEFAULT_NOTIFY_MINUTE
     return new Date(2026, 0, 1, h, m, 0).getTime()
   })
   const [selectedOverrideYear, setSelectedOverrideYear] = useState(() => new Date().getFullYear())
@@ -1407,7 +1408,7 @@ function SettingsPage(props: {
     setAvailableSounds(sounds)
     const current = getAlarmSoundSetting()
     if (!sounds.includes(current)) {
-      Storage.set(KEY_ALARM_SOUND, DEFAULT_ALARM_SOUND)
+      WorkdayStorage.set(KEY_ALARM_SOUND, DEFAULT_ALARM_SOUND)
       setAlarmSound(DEFAULT_ALARM_SOUND)
     }
     return sounds
@@ -1416,14 +1417,14 @@ function SettingsPage(props: {
   useEffect(() => {
     refreshAvailableSounds().catch(() => {
       setAvailableSounds([DEFAULT_ALARM_SOUND])
-      Storage.set(KEY_ALARM_SOUND, DEFAULT_ALARM_SOUND)
+      WorkdayStorage.set(KEY_ALARM_SOUND, DEFAULT_ALARM_SOUND)
       setAlarmSound(DEFAULT_ALARM_SOUND)
     })
   }, [])
 
   async function handleToggleAlarm(enabled: boolean) {
     props.onAlarmEnabledChange(enabled)
-    Storage.set(KEY_ALARM_ENABLED, enabled)
+    WorkdayStorage.set(KEY_ALARM_ENABLED, enabled)
     setAlarmStatus(enabled ? "正在开启闹钟..." : "正在关闭闹钟...")
     setAlarmStatus(await syncAlarmAndNotification(props.subDays, props.overrides, props.restRule))
   }
@@ -1431,8 +1432,8 @@ function SettingsPage(props: {
   async function handleAlarmTimeChange(timestamp: number) {
     props.onAlarmTimeChange(timestamp)
     const d = new Date(timestamp)
-    Storage.set(KEY_ALARM_HOUR, d.getHours())
-    Storage.set(KEY_ALARM_MINUTE, d.getMinutes())
+    WorkdayStorage.set(KEY_ALARM_HOUR, d.getHours())
+    WorkdayStorage.set(KEY_ALARM_MINUTE, d.getMinutes())
     setAlarmStatus(await syncAlarmAndNotification(props.subDays, props.overrides, props.restRule))
   }
 
@@ -1444,7 +1445,7 @@ function SettingsPage(props: {
       return
     }
     setAlarmSound(sound)
-    Storage.set(KEY_ALARM_SOUND, sound)
+    WorkdayStorage.set(KEY_ALARM_SOUND, sound)
     await refreshAvailableSounds()
     setAlarmStatus(await syncAlarmAndNotification(props.subDays, props.overrides, props.restRule))
   }
@@ -1466,13 +1467,13 @@ function SettingsPage(props: {
 
   async function handleSnoozeMinutesChange(minutes: number) {
     setSnoozeMinutes(minutes)
-    Storage.set(KEY_ALARM_SNOOZE_MINUTES, minutes)
+    WorkdayStorage.set(KEY_ALARM_SNOOZE_MINUTES, minutes)
     setAlarmStatus(await syncAlarmAndNotification(props.subDays, props.overrides, props.restRule))
   }
 
   async function handleAlarmTypeChange(type: AlarmType) {
     props.onAlarmTypeChange(type)
-    Storage.set(KEY_ALARM_TYPE, type)
+    WorkdayStorage.set(KEY_ALARM_TYPE, type)
     if (type === "shortcut") {
       await cancelWorkdayAlarm()
     }
@@ -1481,15 +1482,15 @@ function SettingsPage(props: {
 
   async function handleToggleNotify(enabled: boolean) {
     setNotifyEnabled(enabled)
-    Storage.set(KEY_NOTIFY_ENABLED, enabled)
+    WorkdayStorage.set(KEY_NOTIFY_ENABLED, enabled)
     setAlarmStatus(await syncAlarmAndNotification(props.subDays, props.overrides, props.restRule))
   }
 
   async function handleNotifyTimeChange(timestamp: number) {
     setNotifyTime(timestamp)
     const d = new Date(timestamp)
-    Storage.set(KEY_NOTIFY_HOUR, d.getHours())
-    Storage.set(KEY_NOTIFY_MINUTE, d.getMinutes())
+    WorkdayStorage.set(KEY_NOTIFY_HOUR, d.getHours())
+    WorkdayStorage.set(KEY_NOTIFY_MINUTE, d.getMinutes())
     setAlarmStatus(await syncAlarmAndNotification(props.subDays, props.overrides, props.restRule))
   }
 
@@ -2058,14 +2059,14 @@ function MainView() {
   const [restRule, setRestRule] = useState<RestRule>(loadRestRule)
   const [dayNotes, setDayNotes] = useState<Record<string, string>>(loadDayNotes)
   const [alarmEnabled, setAlarmEnabled] = useState(
-    () => Storage.get<boolean>(KEY_ALARM_ENABLED) ?? true
+    () => WorkdayStorage.get<boolean>(KEY_ALARM_ENABLED) ?? true
   )
   const [alarmType, setAlarmType] = useState<AlarmType>(
-    () => Storage.get<AlarmType>(KEY_ALARM_TYPE) ?? "builtin"
+    () => WorkdayStorage.get<AlarmType>(KEY_ALARM_TYPE) ?? "builtin"
   )
   const [alarmTime, setAlarmTime] = useState(() => {
-    const h = Storage.get<number>(KEY_ALARM_HOUR) ?? 7
-    const m = Storage.get<number>(KEY_ALARM_MINUTE) ?? 30
+    const h = WorkdayStorage.get<number>(KEY_ALARM_HOUR) ?? 7
+    const m = WorkdayStorage.get<number>(KEY_ALARM_MINUTE) ?? 30
     return new Date(2026, 0, 1, h, m, 0).getTime()
   })
 

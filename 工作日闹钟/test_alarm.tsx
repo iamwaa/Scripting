@@ -15,6 +15,7 @@ import {
   useState,
 } from "scripting"
 import { StopWorkdayAlarmIntent, SnoozeWorkdayAlarmIntent } from "./app_intents"
+import { WorkdayStorage } from "./storage"
 
 const KEY_ALARM_SOUND = "alarm_sound"
 const DEFAULT_ALARM_SOUND = "Default"
@@ -28,7 +29,7 @@ function defaultTestTime(): number {
 }
 
 function getAlarmSoundSetting(): string {
-  return Storage.get<string>(KEY_ALARM_SOUND) || DEFAULT_ALARM_SOUND
+  return WorkdayStorage.get<string>(KEY_ALARM_SOUND) || DEFAULT_ALARM_SOUND
 }
 
 function getAlarmSoundName(soundSetting: string): string {

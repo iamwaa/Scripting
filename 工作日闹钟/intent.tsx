@@ -1,4 +1,5 @@
 import { Script, Intent } from "scripting"
+import { WorkdayStorage } from "./storage"
 
 const KEY_SUB_CACHE = "alarm_sub_cache"
 const KEY_OVERRIDES = "alarm_overrides"
@@ -62,7 +63,7 @@ function getDefaultRestRule(): RestRule {
 }
 
 function loadRestRule(): RestRule {
-  return Storage.get<RestRule>(KEY_REST_RULE) || getDefaultRestRule()
+  return WorkdayStorage.get<RestRule>(KEY_REST_RULE) || getDefaultRestRule()
 }
 
 function getRuleDayType(dateKey: string, rule: RestRule): "holiday" | "normal" {
@@ -147,8 +148,8 @@ function getShortcutQuery(): string {
 
 const query = getShortcutQuery()
 
-const subDays = Storage.get<DayEntry[]>(KEY_SUB_CACHE) || []
-const overrides = Storage.get<LocalOverride[]>(KEY_OVERRIDES) || []
+const subDays = WorkdayStorage.get<DayEntry[]>(KEY_SUB_CACHE) || []
+const overrides = WorkdayStorage.get<LocalOverride[]>(KEY_OVERRIDES) || []
 const restRule = loadRestRule()
 
 function findNextDate(isTargetRest: boolean, startDate: Date): string {

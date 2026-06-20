@@ -1,6 +1,6 @@
 import { useState, useEffect, useObservable, TabView, Tab, Navigation, Script } from "scripting"
 
-import { AccountItem, BookmarkItem, WebDAVConfig, loadAccounts, loadBookmarks, loadWebDAVConfig, saveAccounts, saveBookmarks, syncAccountsToICloud, getICloudFilePassword, ICLOUD_SYNC_ENABLED_KEY, getCurrentICloudConfig } from "./utils"
+import { AccountItem, BookmarkItem, WebDAVConfig, loadAccounts, loadBookmarks, loadWebDAVConfig, saveAccounts, saveBookmarks } from "./utils"
 
 import { ApiListPage, BookmarkListPage, SearchPage, SettingsPage } from "./pages"
 
@@ -8,26 +8,27 @@ const App = () => {
   const [accounts, setAccounts] = useState<AccountItem[]>([])
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([])
   const [webdavConfig, setWebdavConfig] = useState<WebDAVConfig | null>(null)
-  
+  const [loaded, setLoaded] = useState<boolean>(false)
+
   const selection = useObservable<string>("api")
   const [selectionModeTab, setSelectionModeTab] = useState<"api" | "bookmark" | null>(null)
 
-  useEffect(() => { 
-    setAccounts(loadAccounts()); 
-    setBookmarks(loadBookmarks()); 
-    setWebdavConfig(loadWebDAVConfig()) 
+  useEffect(() => {
+    Promise.all([loadAccounts(), loadBookmarks(), loadWebDAVConfig()]).then(([acc, bk, wdc]) => {
+      setAccounts(acc)
+      setBookmarks(bk)
+      setWebdavConfig(wdc)
+      setLoaded(true)
+    }).catch(console.error)
   }, [])
 
   useEffect(() => {
-    saveAccounts(accounts)
-    if (Storage.get(ICLOUD_SYNC_ENABLED_KEY) === true) {
-      const currentConfig = getCurrentICloudConfig()
-      const savedPwd = getICloudFilePassword(currentConfig.id)
-      if (savedPwd) syncAccountsToICloud({ accounts, bookmarks }, savedPwd, currentConfig).catch(e => console.error("iCloud 同步失败", e))
-    }
-  }, [accounts])
+    if (loaded) saveAccounts(accounts).catch(console.error)
+  }, [accounts, loaded])
 
-  useEffect(() => { saveBookmarks(bookmarks) }, [bookmarks])
+  useEffect(() => {
+    if (loaded) saveBookmarks(bookmarks).catch(console.error)
+  }, [bookmarks, loaded])
 
   if (selectionModeTab === "api") return <ApiListPage accounts={accounts} setAccounts={setAccounts} isSelecting={true} setIsSelecting={(value: boolean) => setSelectionModeTab(value ? "api" : null)} />
   if (selectionModeTab === "bookmark") return <BookmarkListPage bookmarks={bookmarks} setBookmarks={setBookmarks} isSelecting={true} setIsSelecting={(value: boolean) => setSelectionModeTab(value ? "bookmark" : null)} />
@@ -51,7 +52,7 @@ const App = () => {
 }
 
 const run = async () => {
-  await Navigation.present({ element: <App />, modalPresentationStyle: "fullScreen" }) 
+  await Navigation.present({ element: <App />, modalPresentationStyle: "fullScreen" })
   Script.exit()
 }
 

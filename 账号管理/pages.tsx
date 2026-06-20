@@ -1,9 +1,12 @@
-import { useState, useEffect, useMemo, useCallback, NavigationStack, List, Section, HStack, VStack, Text, Button, Spacer, Image, Rectangle,
-  Navigation, Script, TextField, Menu, Toggle,ToolbarItem,Toolbar,ToolbarSpacer
+import { useState, useEffect, useMemo, useCallback, useRef, NavigationStack, List, Section, HStack, VStack, Text, Button, Spacer, Image, Rectangle,
+  Navigation, Script, TextField, Menu, ToolbarItem, Toolbar, ToolbarSpacer
 } from "scripting"
 
 import {
-  AccountItem, BookmarkItem, WebDAVConfig, CustomField, ICloudConfigMeta, ensureICloudConfigIndex, loadICloudConfigIndex, createICloudConfig, renameICloudConfig, deleteICloudConfig, switchICloudConfig, generateId, getGroupLetter, processUrl, getICloudFilePassword, saveICloudFilePassword, encryptPayload, decryptPayload, normalizeSyncPayload, uploadToWebDAV, downloadFromWebDAV, testWebDAVConnection, saveWebDAVConfig, isEncryptedFormat, syncAccountsToICloud, restoreAccountsFromICloud, checkICloudConfigFileExists, ICLOUD_SYNC_ENABLED_KEY, ICLOUD_LAST_SYNC_TIME_KEY, WEBDAV_CONFIG_KEY, maskPassword, maskApiKey, sortByDisplayTitle, getCurrentICloudConfig
+  AccountItem, BookmarkItem, WebDAVConfig, CustomField,
+  generateId, getGroupLetter, processUrl, fetchSiteInfo, loadFilePassword, saveFilePassword, clearWebDAVConfigFile,
+  encryptPayload, decryptPayload, normalizeSyncPayload, uploadToWebDAV, downloadFromWebDAV, testWebDAVConnection, saveWebDAVConfig, isEncryptedFormat,
+  maskPassword, maskApiKey, sortByDisplayTitle
 } from "./utils"
 
 import { AvatarIcon, FormRow, AccountRow, BookmarkRow } from "./components"
@@ -30,17 +33,6 @@ export type SettingsPageProps = {
   setWebdavConfig: (cfg: WebDAVConfig | null) => void;
 }
 
-type ActionResponse<T> = { success: boolean; data?: T; error?: string; canceled?: boolean; toast?: { message: string; isError?: boolean } }
-
-type ICloudConfigManagerPageProps = {
-  initialConfigs: ICloudConfigMeta[]
-  initialCurrentId: string
-  onCreate: () => Promise<ActionResponse<ICloudConfigMeta>>
-  onRename: (config: ICloudConfigMeta) => Promise<ActionResponse<ICloudConfigMeta[]>>
-  onDelete: (config: ICloudConfigMeta) => Promise<ActionResponse<ICloudConfigMeta[]>>
-  onSwitch: (config: ICloudConfigMeta) => Promise<ActionResponse<void>>
-}
-
 // 全局变量，用于跨页面维持 toast 状态
 let pendingActionToast: { msg: string; isError: boolean } | null = null;
 
@@ -60,6 +52,35 @@ export const AccountEditorPage = ({ initialAccount, onSave }: AccountEditorPageP
   const [toast, setToast] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false })
   const showToast = (msg: string, isError = false) => setToast({ msg, isError })
   const dismiss = Navigation.useDismiss()
+  const fetchVersionRef = useRef(0)
+  const debounceRef = useRef<number>()
+
+  // 防抖 + 版本号：停止输入 800ms 后拓取，仅采纳最新结果
+  const autoFillFromUrl = (inputUrl: string) => {
+    if (name.trim() && avatarUrl.trim()) return
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      const version = ++fetchVersionRef.current
+      const info = await fetchSiteInfo(inputUrl)
+      if (version !== fetchVersionRef.current) return
+      if (!name.trim() && info.title) setName(info.title)
+      if (!avatarUrl.trim() && info.iconUrl) setAvatarUrl(info.iconUrl)
+    }, 800) as unknown as number
+  }
+
+  // 手动获取头像（覆盖当前值）
+  const handleFetchAvatar = async () => {
+    const info = await fetchSiteInfo(url)
+    if (info.iconUrl) { setAvatarUrl(info.iconUrl); showToast("头像已更新") }
+    else showToast("无法从网址获取头像", true)
+  }
+
+  // 手动获取名称（覆盖当前值）
+  const handleFetchName = async () => {
+    const info = await fetchSiteInfo(url)
+    if (info.title) { setName(info.title); showToast("名称已更新") }
+    else showToast("无法从网址获取名称", true)
+  }
 
   const handleAddCustomField = async () => {
     const key = await Dialog.prompt({ title: "新增附加信息", message: "请输入信息标题" })
@@ -103,9 +124,15 @@ export const AccountEditorPage = ({ initialAccount, onSave }: AccountEditorPageP
         }}
       >
         <Section header={<Text>基础信息</Text>}>
-          <FormRow label="账号名称" value={name} onChanged={setName} prompt="例如：GitHub, OpenAI" autofocus={!initialAccount} />
+          <HStack alignment="center" spacing={8}>
+            <FormRow label="账号名称" value={name} onChanged={setName} prompt="填写网址后自动获取" autofocus={!initialAccount} />
+            <Button buttonStyle="plain" action={handleFetchName}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="title3" /></Button>
+          </HStack>
           <FormRow label="分类标签" value={tagsStr} onChanged={setTagsStr} prompt="多个标签用逗号分隔（可选）" />
-          <FormRow label="头像链接" value={avatarUrl} onChanged={setAvatarUrl} prompt="自定义 Logo 地址（可选）" />
+          <HStack alignment="center" spacing={8}>
+            <FormRow label="头像链接" value={avatarUrl} onChanged={setAvatarUrl} prompt="填写网址后自动获取（可选）" />
+            <Button buttonStyle="plain" action={handleFetchAvatar}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="title3" /></Button>
+          </HStack>
         </Section>
         <Section header={<Text>账号凭据</Text>} footer={<Text foregroundStyle="#8E8E93" font="footnote">请至少填写一种登录凭据或密钥</Text>}>
           <FormRow label="用户名" value={username} onChanged={setUsername} prompt="登录账号（可选）" />
@@ -114,7 +141,7 @@ export const AccountEditorPage = ({ initialAccount, onSave }: AccountEditorPageP
           <FormRow label="API Key" value={apiKey} onChanged={setApiKey} prompt="授权密钥 Token（可选）" />
         </Section>
         <Section header={<Text>附加信息</Text>}>
-          <FormRow label="网址" value={url} onChanged={setUrl} prompt="https://example.com（可选）" />
+          <FormRow label="网址" value={url} onChanged={(v: string) => { setUrl(v); autoFillFromUrl(v) }} prompt="https://example.com（可选）" />
           <FormRow label="备注" value={notes} onChanged={setNotes} prompt="其他备忘信息（可选）" />
           {customFields.map(field => (
             <HStack key={field.id} alignment="center" spacing={8} padding={{ vertical: 4 }}>
@@ -413,6 +440,35 @@ export const BookmarkEditorPage = ({ initialBookmark, onSave }: BookmarkEditorPa
   const [toast, setToast] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false })
   const dismiss = Navigation.useDismiss()
   const showToast = (msg: string, isError = false) => setToast({ msg, isError })
+  const fetchVersionRef = useRef(0)
+  const debounceRef = useRef<number>()
+
+  // 防抖 + 版本号：停止输入 800ms 后拓取，仅采纳最新结果
+  const autoFillFromUrl = (inputUrl: string) => {
+    if (title.trim() && iconUrl.trim()) return
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      const version = ++fetchVersionRef.current
+      const info = await fetchSiteInfo(inputUrl)
+      if (version !== fetchVersionRef.current) return
+      if (!title.trim() && info.title) setTitle(info.title)
+      if (!iconUrl.trim() && info.iconUrl) setIconUrl(info.iconUrl)
+    }, 800) as unknown as number
+  }
+
+  // 手动获取图标（覆盖当前值）
+  const handleFetchIcon = async () => {
+    const info = await fetchSiteInfo(url)
+    if (info.iconUrl) { setIconUrl(info.iconUrl); showToast("图标已更新") }
+    else showToast("无法从链接获取图标", true)
+  }
+
+  // 手动获取名称（覆盖当前值）
+  const handleFetchTitle = async () => {
+    const info = await fetchSiteInfo(url)
+    if (info.title) { setTitle(info.title); showToast("名称已更新") }
+    else showToast("无法从链接获取名称", true)
+  }
 
   const handleAddCustomField = async () => {
     const key = await Dialog.prompt({ title: "新增附加信息", message: "请输入信息标题" })
@@ -453,10 +509,16 @@ export const BookmarkEditorPage = ({ initialBookmark, onSave }: BookmarkEditorPa
         }}
       >
         <Section header={<Text>链接信息</Text>}>
-          <FormRow label="书签名称" value={title} onChanged={setTitle} prompt="例如：GitHub 首页" autofocus={!initialBookmark} />
-          <FormRow label="书签链接" value={url} onChanged={setUrl} prompt="https://example.com" />
+          <HStack alignment="center" spacing={8}>
+            <FormRow label="书签名称" value={title} onChanged={setTitle} prompt="填写链接后自动获取" autofocus={!initialBookmark} />
+            <Button buttonStyle="plain" action={handleFetchTitle}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="title3" /></Button>
+          </HStack>
+          <FormRow label="书签链接" value={url} onChanged={(v: string) => { setUrl(v); autoFillFromUrl(v) }} prompt="https://example.com" />
           <FormRow label="分类标签" value={tagsStr} onChanged={setTagsStr} prompt="多个标签用逗号分隔（可选）" />
-          <FormRow label="图标链接" value={iconUrl} onChanged={setIconUrl} prompt="站点图标地址（可选）" />
+          <HStack alignment="center" spacing={8}>
+            <FormRow label="图标链接" value={iconUrl} onChanged={setIconUrl} prompt="填写链接后自动获取（可选）" />
+            <Button buttonStyle="plain" action={handleFetchIcon}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="title3" /></Button>
+          </HStack>
         </Section>
         <Section header={<Text>附加信息</Text>}>
           <FormRow label="备注" value={notes} onChanged={setNotes} prompt="其他备忘信息（可选）" />
@@ -781,233 +843,41 @@ export const SearchPage = ({ accounts, setAccounts, bookmarks, setBookmarks }: {
   )
 }
 
-export const ICloudConfigManagerPage = ({ 
-  initialConfigs, 
-  initialCurrentId, 
-  onCreate, 
-  onRename, 
-  onDelete, 
-  onSwitch 
-}: ICloudConfigManagerPageProps) => {
-  const dismiss = Navigation.useDismiss()
-  
-  const [configs, setConfigs] = useState<ICloudConfigMeta[]>(initialConfigs)
-  const [currentId, setCurrentId] = useState<string>(initialCurrentId)
-  
-  const [toast, setToast] = useState({ msg: "", isError: false, isPresented: false })
-  const showToast = useCallback((msg: string, isError = false) => {
-    setToast(prev => ({ ...prev, isPresented: false }))
-    setTimeout(() => setToast({ msg, isError, isPresented: true }), 150)
-  }, [])
-
-  const handleCreate = async () => {
-    const result = await onCreate()
-    if (result.success && result.data) {
-      const updated = loadICloudConfigIndex()
-      setConfigs([...updated.configs])
-      dismiss()
-    } else if (result.toast) {
-      showToast(result.toast.message, result.toast.isError)
-    } else if (result.error) {
-      showToast(result.error, true)
-    }
-  }
-
-  const handleRename = async (config: ICloudConfigMeta) => {
-    const result = await onRename(config)
-    if (result.success && result.data) {
-      setConfigs([...result.data])
-      showToast("重命名成功")
-    } else if (result.error) {
-      showToast(result.error, true)
-    }
-  }
-
-  const handleDelete = async (config: ICloudConfigMeta) => {
-    const result = await onDelete(config)
-    if (result.success && result.data) {
-      setConfigs([...result.data])
-      const index = loadICloudConfigIndex()
-      setCurrentId(index.currentConfigId)
-      showToast(`已删除配置「${config.name}」`, true)
-    } else if (result.error) {
-      showToast(result.error, true)
-    }
-  }
-
-  const handleSwitch = async (config: ICloudConfigMeta) => {
-    const result = await onSwitch(config)
-    if (result.success) {
-      dismiss()
-    } else if (result.toast) {
-      showToast(result.toast.message, result.toast.isError)
-    } else if (result.error) {
-      showToast(result.error, true)
-    }
-  }
-
-  return (
-    <NavigationStack>
-      <List
-        navigationTitle="iCloud 配置列表"
-        navigationBarTitleDisplayMode="inline"
-        toast={{ 
-          isPresented: toast.isPresented, 
-          onChanged: (v) => { if (!v) setToast(prev => ({ ...prev, isPresented: false })) }, 
-          message: toast.msg || " ", 
-          position: "top", 
-          textColor: toast.isError ? "#FF3B30" : undefined 
-        }}
-        toolbar={{
-          topBarLeading: <Button action={() => dismiss()}><HStack spacing={5}><Image systemName="chevron.left" fontWeight="semibold" foregroundStyle="#007AFF"/></HStack></Button>,
-          topBarTrailing: <Button action={handleCreate}><Text foregroundStyle="#007AFF" fontWeight="semibold">新增</Text></Button>,
-        }}
-      >
-        <Section footer={<Text font="footnote" foregroundStyle="#8E8E93">每个配置对应一个独立的 iCloud 加密文件；切换配置时会校验目标文件密码并加载对应数据。</Text>}>
-          {configs.map(config => {
-            const isCurrent = config.id === currentId
-            return (
-              <HStack key={`${config.id}-${currentId}`} padding={{ vertical: 6 }} alignment="center">
-                <Button action={() => handleSwitch(config)} buttonStyle="plain">
-                  <VStack alignment="leading" spacing={2}>
-                    <HStack spacing={6} alignment="center">
-                      <Text fontWeight={isCurrent ? "semibold" : undefined} foregroundStyle={isCurrent ? "#007AFF" : undefined}>{config.name}</Text>
-                      {isCurrent ? <Text font="caption2" foregroundStyle="#007AFF">当前</Text> : undefined}
-                    </HStack>
-                    <Text font="caption" foregroundStyle="#8E8E93">{config.lastSyncAt ? `最后同步：${new Date(config.lastSyncAt).toLocaleString()}` : "尚未同步"}</Text>
-                  </VStack>
-                </Button>
-                <Spacer />
-<Menu label={<Image systemName="ellipsis.circle" foregroundStyle="#007AFF" />}>
-  {!isCurrent && (
-    <Button action={() => handleSwitch(config)}>
-      <HStack>
-        <Text>切换到此配置</Text>
-        <Image systemName="arrow.right.circle" />
-      </HStack>
-    </Button>
-  )}
-  
-  <Button action={() => handleRename(config)}>
-    <HStack>
-      <Text>重命名</Text>
-      <Image systemName="pencil" />
-    </HStack>
-  </Button>
-
-  {!isCurrent && configs.length > 1 ? (
-    <Button action={() => handleDelete(config)} role="destructive">
-      <HStack>
-        <Text foregroundStyle="#FF3B30">删除</Text>
-        <Image systemName="trash" foregroundStyle="#FF3B30" />
-      </HStack>
-    </Button>
-  ) : undefined}
-</Menu>
-              </HStack>
-            )
-          })}
-        </Section>
-      </List>
-    </NavigationStack>
-  )
-}
-
 export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, webdavConfig, setWebdavConfig }: SettingsPageProps) => {
   const [toast, setToast] = useState({ msg: "", isError: false, isPresented: false })
   const showToast = useCallback((msg: string, isError = false) => { setToast(prev => ({ ...prev, isPresented: false })); setTimeout(() => setToast({ msg, isError, isPresented: true }), 150) }, [])
 
-  const [icloudEnabled, setIcloudEnabled] = useState<boolean>(() => Storage.get(ICLOUD_SYNC_ENABLED_KEY) ?? false)
-  const [lastSyncTime, setLastSyncTime] = useState<number | null>(() => Storage.get(ICLOUD_LAST_SYNC_TIME_KEY) ?? null)
-  const [icloudConfigs, setIcloudConfigs] = useState<ICloudConfigMeta[]>(() => ensureICloudConfigIndex().configs)
-  const [currentIcloudConfigId, setCurrentIcloudConfigId] = useState<string>(() => ensureICloudConfigIndex().currentConfigId)
-
-  useEffect(() => {
-    let isMounted = true
-    const poll = () => {
-      if (!isMounted) return
-      const index = loadICloudConfigIndex()
-      setIcloudConfigs(index.configs)
-      setCurrentIcloudConfigId(index.currentConfigId)
-      const currentConfig = index.configs.find(item => item.id === index.currentConfigId)
-      setLastSyncTime(currentConfig?.lastSyncAt ?? (Storage.get(ICLOUD_LAST_SYNC_TIME_KEY) ?? null))
-      setTimeout(poll, 2000)
-    }
-    poll()
-    return () => { isMounted = false }
-  }, [])
-
-  const currentIcloudConfig = useMemo(() => icloudConfigs.find(item => item.id === currentIcloudConfigId) || getCurrentICloudConfig(), [icloudConfigs, currentIcloudConfigId])
-
-  const promptForPassword = async (title: string, message: string, defaultValue?: string, onToast?: (msg: string, isError?: boolean) => void): Promise<string | null> => {
-    const reportToast = onToast || showToast
+  // 文件密码输入
+  const promptForPassword = async (title: string, message: string, defaultValue?: string): Promise<string | null> => {
     const pwd = await Dialog.prompt({ title, message, placeholder: "请输入密码", defaultValue: defaultValue || "" })
-    if (!pwd || !pwd.trim()) { reportToast("已取消操作：请输入密码", true); return null }
+    if (!pwd || !pwd.trim()) { showToast("已取消操作：请输入密码", true); return null }
     return pwd.trim()
   }
 
-  const promptToCreatePassword = async (subject: string, onToast?: (msg: string, isError?: boolean) => void): Promise<string | null> => {
-    const reportToast = onToast || showToast
-    const newPwd = await promptForPassword(`创建${subject}密码`, `${subject}尚未设置文件密码，请先创建一个文件绑定密码。`, undefined, reportToast)
+  // 创建文件密码（需确认）
+  const promptToCreatePassword = async (subject: string): Promise<string | null> => {
+    const newPwd = await promptForPassword(`创建${subject}密码`, `${subject}尚未设置文件密码，请先创建一个文件绑定密码。`)
     if (!newPwd) return null
-    const confirmPwd = await promptForPassword(`确认${subject}密码`, "请再次输入刚刚设置的文件密码。", undefined, reportToast)
+    const confirmPwd = await promptForPassword(`确认${subject}密码`, "请再次输入刚才设置的文件密码。")
     if (!confirmPwd) return null
-    if (newPwd !== confirmPwd) {
-      reportToast("两次输入的密码不一致", true)
-      return null
-    }
+    if (newPwd !== confirmPwd) { showToast("两次输入的密码不一致", true); return null }
     return newPwd
   }
 
-  const ensureICloudConfigPassword = async (config: ICloudConfigMeta, mode: "open" | "create" | "switch" | "upload" | "export", onToast?: (msg: string, isError?: boolean) => void): Promise<string | null> => {
-    const reportToast = onToast || showToast
-    const existingPwd = getICloudFilePassword(config.id)
+  // 验证或创建文件密码（用于 WebDAV 上传、导出等敏感操作）
+  const ensureFilePassword = async (mode: "upload" | "export"): Promise<string | null> => {
+    const existingPwd = await loadFilePassword()
     if (existingPwd) {
-      const title = mode === "switch" ? "验证配置密码" : "验证文件密码"
-      const message = mode === "switch"
-        ? `切换到配置「${config.name}」前，请输入该配置文件绑定的密码。`
-        : mode === "upload"
-          ? `上传到 WebDAV 前，请输入当前配置「${config.name}」的文件绑定密码。`
-          : mode === "export"
-            ? `导出本地备份前，请先验证当前配置「${config.name}」的文件绑定密码。`
-            : mode === "create"
-              ? `请为配置「${config.name}」创建文件绑定密码。`
-              : `打开配置「${config.name}」前，请输入该配置文件绑定的密码。`
-      const verifyPwd = await promptForPassword(title, message, undefined, reportToast)
+      const message = mode === "upload" ? "上传到 WebDAV 前，请输入文件绑定密码。" : "导出本地备份前，请先验证文件绑定密码。"
+      const verifyPwd = await promptForPassword("验证文件密码", message)
       if (!verifyPwd) return null
-      if (verifyPwd !== existingPwd) {
-        reportToast("文件密码错误", true)
-        return null
-      }
+      if (verifyPwd !== existingPwd) { showToast("文件密码错误", true); return null }
       return existingPwd
     }
-
-    // 没有本地保存的密码，检查 iCloud 文件是否已存在
-    const fileExists = await checkICloudConfigFileExists(config)
-    if (fileExists) {
-      // 文件已存在但无本地密码 → 需要验证已有密码
-      const title = mode === "switch" ? "验证配置密码" : "验证文件密码"
-      const message = mode === "switch"
-        ? `切换到配置「${config.name}」前，请输入该配置文件绑定的密码。`
-        : mode === "open"
-          ? `配置「${config.name}」的 iCloud 文件已存在，请输入该文件绑定的密码以启用同步。`
-          : `配置「${config.name}」的 iCloud 文件已存在，请输入该文件绑定的密码。`
-      const verifyPwd = await promptForPassword(title, message, undefined, reportToast)
-      if (!verifyPwd) return null
-      try {
-        await restoreAccountsFromICloud(verifyPwd, config)
-        saveICloudFilePassword(config.id, verifyPwd)
-        return verifyPwd
-      } catch {
-        reportToast("文件密码错误或文件损坏", true)
-        return null
-      }
-    }
-
-    // 文件不存在 → 创建新密码
-    const createdPwd = await promptToCreatePassword(`配置「${config.name}」`, reportToast)
+    // 首次使用，创建文件密码
+    const createdPwd = await promptToCreatePassword("文件")
     if (!createdPwd) return null
-    saveICloudFilePassword(config.id, createdPwd)
+    await saveFilePassword(createdPwd)
     return createdPwd
   }
 
@@ -1021,13 +891,16 @@ export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, w
     const config: WebDAVConfig = { url: url.trim().replace(/\/$/, ""), username: username.trim(), password: password.trim() }
     const isValid = await testWebDAVConnection(config)
     if (!isValid) return showToast("WebDAV 连接失败，请检查地址、用户名或密码", true)
-    saveWebDAVConfig(config); setWebdavConfig(config); showToast("WebDAV 配置已保存，连接测试通过") 
+    await saveWebDAVConfig(config)
+    setWebdavConfig(config)
+    showToast("WebDAV 配置已保存，连接测试通过")
   }
 
-  const clearWebDAVConfig = async () => {
+  const clearWebDAV = async () => {
     if (await Dialog.confirm({ title: "断开连接", message: "确定要清除 WebDAV 配置吗？这不会删除云端已有的数据。" })) {
-      try { Storage.remove(WEBDAV_CONFIG_KEY) } catch { Storage.set(WEBDAV_CONFIG_KEY, "") }
-      setWebdavConfig(null); showToast("WebDAV 配置已清除")
+      await clearWebDAVConfigFile()
+      setWebdavConfig(null)
+      showToast("WebDAV 配置已清除")
     }
   }
 
@@ -1035,7 +908,7 @@ export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, w
     if (!webdavConfig) return showToast("请先配置 WebDAV", true)
     try {
       if (isUpload) {
-        const filePwd = await ensureICloudConfigPassword(currentIcloudConfig, "upload")
+        const filePwd = await ensureFilePassword("upload")
         if (!filePwd) return
         const encryptedData = encryptPayload({ accounts, bookmarks }, filePwd)
         await uploadToWebDAV(webdavConfig, encryptedData)
@@ -1046,105 +919,12 @@ export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, w
         if (!filePwd) return
         const payload = normalizeSyncPayload(decryptPayload<unknown>(rawData, filePwd))
         if (await Dialog.confirm({ title: "确认覆盖本地数据", message: `已成功读取 WebDAV 备份，包含 ${payload.accounts.length} 个账号、${payload.bookmarks.length} 个书签。是否覆盖当前本地数据？` })) {
-          setAccounts(payload.accounts); setBookmarks(payload.bookmarks); showToast(`已从 WebDAV 导入 ${payload.accounts.length} 个账号和 ${payload.bookmarks.length} 个书签`)
+          setAccounts(payload.accounts)
+          setBookmarks(payload.bookmarks)
+          showToast(`已从 WebDAV 导入 ${payload.accounts.length} 个账号和 ${payload.bookmarks.length} 个书签`)
         }
       }
-    } catch (error) { showToast("同步失败：可能是连接异常、密码错误或文件损坏", true) }
-  }
-
-  const handleIcloudToggle = async (value: boolean) => {
-    if (value) {
-      const pwd = await ensureICloudConfigPassword(currentIcloudConfig, "open")
-      if (!pwd) return showToast("未完成文件密码验证，无法开启 iCloud 同步", true)
-      try {
-        const cloudPayload = await restoreAccountsFromICloud(pwd.trim(), currentIcloudConfig)
-        if (cloudPayload && (cloudPayload.accounts.length > 0 || cloudPayload.bookmarks.length > 0)) {
-          if (await Dialog.confirm({ title: "发现 iCloud 备份", message: `配置「${currentIcloudConfig.name}」已有 iCloud 备份，包含 ${cloudPayload.accounts.length} 个账号、${cloudPayload.bookmarks.length} 个书签。是否使用该备份覆盖当前本地数据？` })) {
-            setAccounts(cloudPayload.accounts); setBookmarks(cloudPayload.bookmarks)
-          } else await syncAccountsToICloud({ accounts, bookmarks }, pwd.trim(), currentIcloudConfig)
-        } else await syncAccountsToICloud({ accounts, bookmarks }, pwd.trim(), currentIcloudConfig)
-        Storage.set(ICLOUD_SYNC_ENABLED_KEY, true); setIcloudEnabled(true); setLastSyncTime(loadICloudConfigIndex().configs.find(item => item.id === currentIcloudConfig.id)?.lastSyncAt ?? null); showToast("iCloud 自动同步已开启")
-      } catch (error) { showToast("iCloud 文件读取失败：密码错误或文件损坏", true) }
-    } else { Storage.set(ICLOUD_SYNC_ENABLED_KEY, false); setIcloudEnabled(false); showToast("iCloud 自动同步已关闭") }
-  }
-
-  // --- 返回 ActionResponse，交由子页面自己处理 Toast ---
-const handleCreateICloudConfig = async (): Promise<ActionResponse<ICloudConfigMeta>> => {
-  const name = await Dialog.prompt({ title: "新增配置", message: "请输入新的 iCloud 配置名称" })
-  if (!name?.trim()) return { success: false, canceled: true }
-
-  let created: ICloudConfigMeta | null = null
-  let capturedToast: { message: string; isError?: boolean } | undefined
-  const toastCollector = (msg: string, isError = false) => { capturedToast = { message: msg, isError } }
-
-  try {
-    const currentPwd = getICloudFilePassword(currentIcloudConfigId)
-    if (currentPwd && icloudEnabled) {
-      await syncAccountsToICloud({ accounts, bookmarks }, currentPwd, currentIcloudConfig)
-    }
-
-    created = await createICloudConfig(name)
-   
-    const pwd = await ensureICloudConfigPassword(created, "create", toastCollector)
-    if (!pwd) {
-      await deleteICloudConfig(created.id)
-      return { success: false, canceled: true, toast: capturedToast }
-    }
-
-    await syncAccountsToICloud({ accounts: [], bookmarks: [] }, pwd, created) 
-
-    const index = await switchICloudConfig(created.id)
-    
-    setAccounts([]) 
-    setBookmarks([])
-    setCurrentIcloudConfigId(index.currentConfigId)
-    setIcloudConfigs([...index.configs])
-
-    showToast(`已新增配置「${created.name}」`)
-    return { success: true, data: created }
-  } catch (error) {
-    return { success: false, error: String(error), toast: capturedToast }
-  }
-}
-
-  const handleRenameICloudConfig = async (config: ICloudConfigMeta): Promise<ActionResponse<ICloudConfigMeta[]>> => {
-    const nextName = await Dialog.prompt({ title: "重命名配置", message: `请输入「${config.name}」的新名称`, defaultValue: config.name })
-    if (!nextName?.trim() || nextName.trim() === config.name) return { success: false, canceled: true }
-    try {
-      const index = await renameICloudConfig(config.id, nextName)
-      setIcloudConfigs([...index.configs])
-      return { success: true, data: index.configs }
-    } catch (error) { return { success: false, error: String(error).replace(/^Error: /, "") } }
-  }
-
-  const handleDeleteICloudConfig = async (config: ICloudConfigMeta): Promise<ActionResponse<ICloudConfigMeta[]>> => {
-    if (!(await Dialog.confirm({ title: "删除配置", message: `确定删除配置「${config.name}」吗？仅删除该配置对应的 iCloud 文件，不影响本地当前数据。` }))) return { success: false, canceled: true }
-    try {
-      const index = await deleteICloudConfig(config.id)
-      setIcloudConfigs([...index.configs])
-      setCurrentIcloudConfigId(index.currentConfigId)
-      return { success: true, data: index.configs }
-    } catch (error) { return { success: false, error: String(error).replace(/^Error: /, "") } }
-  }
-
-  const handleSwitchICloudConfig = async (config: ICloudConfigMeta): Promise<ActionResponse<void>> => {
-    if (config.id === currentIcloudConfigId) return { success: false, error: "当前已在使用该配置" }
-    let capturedToast: { message: string; isError?: boolean } | undefined
-    const toastCollector = (msg: string, isError = false) => { capturedToast = { message: msg, isError } }
-    const pwd = await ensureICloudConfigPassword(config, "switch", toastCollector)
-    if (!pwd) return { success: false, error: "未完成配置密码验证", toast: capturedToast }
-    try {
-      const cloudPayload = await restoreAccountsFromICloud(pwd.trim(), config)
-      const index = await switchICloudConfig(config.id)
-      const nextCurrent = index.configs.find(item => item.id === index.currentConfigId)
-      setIcloudConfigs([...index.configs])
-      setCurrentIcloudConfigId(index.currentConfigId)
-      setLastSyncTime(nextCurrent?.lastSyncAt ?? null)
-      if (cloudPayload) { setAccounts(cloudPayload.accounts); setBookmarks(cloudPayload.bookmarks) } 
-      else { setAccounts([]); setBookmarks([]) }
-      showToast(`已切换到配置「${config.name}」`)
-      return { success: true }
-    } catch (error) { return { success: false, error: "配置读取失败：密码错误或文件损坏，无法切换", toast: capturedToast } }
+    } catch { showToast("同步失败：可能是连接异常、密码错误或文件损坏", true) }
   }
 
   const importFile = async () => {
@@ -1155,67 +935,46 @@ const handleCreateICloudConfig = async (): Promise<ActionResponse<ICloudConfigMe
       let importedData: unknown
       if (isEncryptedFormat(rawStr)) {
         const pwd = await Dialog.prompt({ title: "验证备份文件密码", message: "该导入文件已加密，请输入文件绑定密码。" })
-        if (!pwd) return 
-        importedData = decryptPayload<unknown>(rawStr, pwd) 
+        if (!pwd) return
+        importedData = decryptPayload<unknown>(rawStr, pwd)
       } else importedData = JSON.parse(rawStr)
       const payload = normalizeSyncPayload(importedData)
       if (payload.accounts.length + payload.bookmarks.length > 0) {
-        const mode = await Dialog.actionSheet({ title: "选择导入方式", actions: [ { label: "追加到当前列表" }, { label: "覆盖当前列表", destructive: true } ] })
+        const mode = await Dialog.actionSheet({ title: "选择导入方式", actions: [{ label: "追加到当前列表" }, { label: "覆盖当前列表", destructive: true }] })
         if (mode === 0) {
           setAccounts([...accounts, ...payload.accounts.map((acc: AccountItem) => ({ ...acc, id: generateId() }))])
           setBookmarks([...bookmarks, ...payload.bookmarks.map((bookmark: BookmarkItem) => ({ ...bookmark, id: generateId() }))])
           showToast(`已追加导入 ${payload.accounts.length} 个账号和 ${payload.bookmarks.length} 个书签`)
         } else if (mode === 1) {
-          setAccounts(payload.accounts); setBookmarks(payload.bookmarks); showToast(`已覆盖导入 ${payload.accounts.length} 个账号和 ${payload.bookmarks.length} 个书签`)
+          setAccounts(payload.accounts)
+          setBookmarks(payload.bookmarks)
+          showToast(`已覆盖导入 ${payload.accounts.length} 个账号和 ${payload.bookmarks.length} 个书签`)
         }
       } else throw new Error("格式错误")
-    } catch (error) { showToast("导入失败：密码错误、文件损坏或格式不正确", true) } 
+    } catch { showToast("导入失败：密码错误、文件损坏或格式不正确", true) }
   }
 
   const exportFile = async () => {
-    const verifiedPwd = await ensureICloudConfigPassword(currentIcloudConfig, "export")
-    if (!verifiedPwd) return
+    const verified = await ensureFilePassword("export")
+    if (!verified) return
     const exportPwd = await promptForPassword("设置导出文件密码", "请为本次导出的备份文件设置一个独立密码。")
     if (!exportPwd) return
     try {
       const encryptedData = encryptPayload({ accounts, bookmarks }, exportPwd)
-      await DocumentPicker.exportFiles({ files: [ { data: Data.fromRawString(encryptedData)!, name: `Accounts_Backup_${Date.now()}.txt` } ] })
+      await DocumentPicker.exportFiles({ files: [{ data: Data.fromRawString(encryptedData)!, name: `Accounts_Backup_${Date.now()}.txt` }] })
       showToast("本地加密备份已导出")
-    } catch (error) { showToast(`导出失败：${error}`, true) } 
+    } catch (error) { showToast(`导出失败：${error}`, true) }
   }
 
   return (
     <NavigationStack>
-      <List 
+      <List
         navigationTitle="设置"
         navigationBarTitleDisplayMode="inline"
         toast={{ isPresented: toast.isPresented, onChanged: (v) => { if (!v) setToast(prev => ({ ...prev, isPresented: false })) }, message: toast.msg || " ", position: "top", textColor: toast.isError ? "#FF3B30" : undefined }}
         toolbar={{ topBarLeading: <Button action={() => Script.exit()}><Image systemName="xmark" foregroundStyle="#FF3B30" fontWeight="semibold" /></Button> }}
       >
-        <Section header={<Text>云端备份</Text>}>
-          <VStack alignment="leading" spacing={2} padding={{ vertical: 4 }}>
-            <Toggle title="开启 iCloud 自动同步" value={icloudEnabled} onChanged={handleIcloudToggle} />
-            {icloudEnabled && lastSyncTime ? <Text font="caption" foregroundStyle="#8E8E93">最新同步: {new Date(lastSyncTime).toLocaleString()}</Text> : undefined}
-          </VStack>
-          <Button action={() => Navigation.present(
-            <ICloudConfigManagerPage 
-              initialConfigs={icloudConfigs} 
-              initialCurrentId={currentIcloudConfigId} 
-              onCreate={handleCreateICloudConfig} 
-              onRename={handleRenameICloudConfig} 
-              onDelete={handleDeleteICloudConfig} 
-              onSwitch={handleSwitchICloudConfig} 
-            />
-          )}>
-            <HStack alignment="center">
-              <Text foregroundStyle="label">iCloud 配置列表</Text>
-              <Spacer />
-              <Text lineLimit={1} foregroundStyle="secondaryLabel">{currentIcloudConfig.name}</Text>
-              <Image systemName="chevron.right" foregroundStyle="#C7C7CC" font="footnote" />
-            </HStack>
-          </Button>
-        </Section>
-        <Section footer={<Text font="footnote" foregroundStyle="#8E8E93">配置您的云端服务以确保数据安全不丢失，所有数据均经过严格端到端加密。</Text>}>
+        <Section header={<Text>WebDAV 云端同步</Text>} footer={<Text font="footnote" foregroundStyle="#8E8E93">配置您的云端服务以确保数据安全不丢失，所有数据均经过严格端到端加密。</Text>}>
           <HStack padding={{ vertical: 8 }} alignment="center">
             <VStack alignment="leading" spacing={4}>
               <Text>WebDAV 服务器</Text>
@@ -1223,7 +982,7 @@ const handleCreateICloudConfig = async (): Promise<ActionResponse<ICloudConfigMe
             </VStack>
             <Spacer />
             <HStack spacing={12} alignment="center">
-              {webdavConfig && <Button action={clearWebDAVConfig}><Text foregroundStyle="#FF3B30" font="subheadline">断开</Text></Button>}
+              {webdavConfig && <Button action={clearWebDAV}><Text foregroundStyle="#FF3B30" font="subheadline">断开</Text></Button>}
               <Button action={configureWebDAV} buttonStyle="borderedProminent" controlSize="small"><Text>{webdavConfig ? "修改" : "配置"}</Text></Button>
             </HStack>
           </HStack>

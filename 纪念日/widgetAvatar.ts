@@ -1,4 +1,4 @@
-import { Script } from 'scripting'
+import { Script, Path } from 'scripting'
 
 const APP_FOLDER = '纪念日数据'
 const WIDGET_AVATARS_DIR = 'widget-avatars'
@@ -8,7 +8,7 @@ const WIDGET_MAX_PIXELS = 120
 const WIDGET_JPEG_QUALITY = 0.85
 
 function appDir(): string {
-  return `${Script.directory}/${APP_FOLDER}`
+  return Path.join(Path.dirname(Path.dirname(Script.directory)), 'configs', APP_FOLDER)
 }
 
 function widgetAvatarsDir(): string {

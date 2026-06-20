@@ -80,8 +80,8 @@ export type BingSettings = {
 export const bingApiConfigs: BingApiConfig[] = [
   {
     name: 'ONE · 一个',
-    url: 'https://m.wufazhuce.com/index',
-    description: '从 ONE · 一个移动站获取最近每日图片、标题、VOL 和日期',
+    url: 'http://v3.wufazhuce.com:8000/api/channel/one/0/0',
+    description: '优先从 ONE 官方 APP 接口获取当天图片，网页作为备用',
   },
 ]
 
@@ -95,8 +95,11 @@ export const displayModeOptions: { label: string; value: WallpaperDisplayMode }[
   { label: '手动指定日期', value: 'manual' },
 ]
 
-const ONE_HOME_URL = 'https://m.wufazhuce.com/'
-const ONE_INDEX_URL = 'https://m.wufazhuce.com/index'
+const ONE_HOME_URL = 'http://m.wufazhuce.com/'
+const ONE_INDEX_URL = 'http://m.wufazhuce.com/index'
+const ONE_INDEX_HTTPS_URL = 'https://m.wufazhuce.com/index'
+const ONE_HOME_HTTPS_URL = 'https://m.wufazhuce.com/'
+const ONE_APP_API_URL = 'http://v3.wufazhuce.com:8000/api/channel/one/0/0'
 
 const STORAGE_NAME = 'OneDailyImage.Settings'
 
@@ -140,6 +143,40 @@ const MONTH_MAP: Record<string, string> = {
   Oct: '10',
   Nov: '11',
   Dec: '12',
+}
+
+type OneAppContentItem = {
+  category?: string
+  display_category?: number
+  item_id?: string
+  title?: string
+  forward?: string
+  img_url?: string
+  pic_ipX?: string
+  post_date?: string
+  volume?: string
+}
+
+type OneAppApiResponse = {
+  res?: number
+  data?: {
+    date?: string
+    content_list?: OneAppContentItem[]
+  }
+}
+
+const formatRequestError = (error: unknown): string => {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message
+  }
+
+  return String(error)
+}
+
+const uniqueValues = (values: string[]): string[] => {
+  return values.filter((value: string, index: number) => {
+    return !!value && values.indexOf(value) === index
+  })
 }
 
 const clampRefreshHour = (value: unknown): number => {
@@ -291,6 +328,65 @@ const buildOneImage = ({
     bot: 1,
     hs: [{ vol, date: displayDate, month: monthText }],
   }
+}
+
+const parseAppApiDate = (
+  dateText: string,
+): { rawDate: string; displayDate: string; monthText: string } | null => {
+  const match: RegExpMatchArray | null = dateText.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!match) return null
+
+  return {
+    rawDate: `${match[1]}${match[2]}${match[3]}`,
+    displayDate: `${match[1]}年${match[2]}月${match[3]}日`,
+    monthText: `${match[2]}. ${match[1]}`,
+  }
+}
+
+const parseAppApi = (jsonText: string): BingImage[] => {
+  let response: OneAppApiResponse
+
+  try {
+    response = JSON.parse(jsonText) as OneAppApiResponse
+  } catch {
+    return []
+  }
+
+  const contentList: OneAppContentItem[] = response.data?.content_list || []
+  const pictureItem: OneAppContentItem | undefined = contentList.find(
+    (item: OneAppContentItem) => item.category === '0' || item.display_category === 6,
+  )
+
+  if (!pictureItem) return []
+
+  const parsedDate = parseAppApiDate(pictureItem.post_date || response.data?.date || '')
+  const imageUrl: string = pictureItem.img_url || pictureItem.pic_ipX || ''
+  const title: string = stripHtml(pictureItem.forward || pictureItem.title || '')
+  const vol: string = pictureItem.volume || ''
+
+  if (!parsedDate || !imageUrl || !title || !vol) return []
+
+  return [
+    buildOneImage({
+      ...parsedDate,
+      vol,
+      imageUrl,
+      title,
+      link: `${ONE_HOME_URL}one/${pictureItem.item_id || ''}`,
+    }),
+  ]
+}
+
+const parseSourceContent = (url: string, content: string): BingImage[] => {
+  if (url.includes('/api/channel/one/')) {
+    return parseAppApi(content)
+  }
+
+  if (url === ONE_HOME_URL || url === ONE_HOME_HTTPS_URL) {
+    return parseHomePage(content)
+  }
+
+  return parseIndexPage(content)
 }
 
 const parseIndexPage = (html: string): BingImage[] => {
@@ -481,7 +577,9 @@ const requestText = async (url: string): Promise<string> => {
     headers: {
       'User-Agent':
         'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      Accept: url.includes('/api/channel/one/')
+        ? 'application/json,text/plain,*/*'
+        : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     },
   })
 
@@ -490,6 +588,61 @@ const requestText = async (url: string): Promise<string> => {
   }
 
   return response.text()
+}
+
+const getSourceUrls = (primaryUrl: string): string[] => {
+  return uniqueValues([
+    primaryUrl,
+    ONE_APP_API_URL,
+    ONE_INDEX_HTTPS_URL,
+    ONE_INDEX_URL,
+    ONE_HOME_HTTPS_URL,
+    ONE_HOME_URL,
+  ])
+}
+
+const mergeImagesByDate = (imageGroups: BingImage[][]): BingImage[] => {
+  const imageMap: Record<string, BingImage> = {}
+
+  for (const images of imageGroups) {
+    for (const image of images) {
+      if (!imageMap[image.startdate]) {
+        imageMap[image.startdate] = image
+      }
+    }
+  }
+
+  return Object.values(imageMap).sort((left: BingImage, right: BingImage) => {
+    return right.startdate.localeCompare(left.startdate)
+  })
+}
+
+const fetchImagesFromSources = async (primaryUrl: string): Promise<BingImage[]> => {
+  const errors: string[] = []
+  const imageGroups: BingImage[][] = []
+
+  for (const url of getSourceUrls(primaryUrl)) {
+    try {
+      const content: string = await requestText(url)
+      const images: BingImage[] = parseSourceContent(url, content)
+
+      if (images.length > 0) {
+        imageGroups.push(images)
+        continue
+      }
+
+      errors.push(`${url}: 解析结果为空`)
+    } catch (error: unknown) {
+      errors.push(`${url}: ${formatRequestError(error)}`)
+    }
+  }
+
+  const mergedImages: BingImage[] = mergeImagesByDate(imageGroups)
+  if (mergedImages.length > 0) {
+    return mergedImages
+  }
+
+  throw new Error(`所有 ONE 数据源均不可用：${errors.join('；')}`)
 }
 
 export const fetchBingWallpaper = async (
@@ -505,17 +658,7 @@ export const fetchBingWallpaper = async (
   const apiConfig: BingApiConfig = getCurrentApiConfig()
 
   try {
-    const indexHtml: string = await requestText(apiConfig.url || ONE_INDEX_URL)
-    let images: BingImage[] = parseIndexPage(indexHtml)
-
-    if (images.length === 0) {
-      const homeHtml: string = await requestText(ONE_HOME_URL)
-      images = parseHomePage(homeHtml)
-    }
-
-    if (images.length === 0) {
-      throw new Error('ONE 页面解析结果为空')
-    }
+    const images: BingImage[] = await fetchImagesFromSources(apiConfig.url || ONE_APP_API_URL)
 
     const data: BingApiResponse = {
       images,
@@ -532,13 +675,13 @@ export const fetchBingWallpaper = async (
     storageManager.storage.set(STORAGE_KEYS.LAST_UPDATE, Date.now())
 
     return data
-  } catch {
+  } catch (error: unknown) {
     const cachedData: BingApiResponse | null = getCachedData() || getCachedData(true)
     if (cachedData) {
       return cachedData
     }
 
-    throw new Error('无法获取 ONE 每日内容，请检查网络连接')
+    throw new Error(`无法获取 ONE 每日内容：${formatRequestError(error)}`)
   }
 }
 
