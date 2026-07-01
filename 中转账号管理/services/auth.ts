@@ -267,7 +267,7 @@ export async function checkSiteStatus(account: Account): Promise<SiteStatus> {
 export async function loginSub2ApiAccount(account: Account) {
   const password = getSecret(account.passwordKey)
   if (!account.username || !password) {
-    throw new Error("该账号没有保存邮箱/密码；第三方登录请使用\u201c网页登录获取 Cookie/令牌\u201d")
+    throw new Error("该账号未保存用户名/密码，请编辑账号补充，或使用“网页登录获取 Cookie/令牌”")
   }
 
   const baseUrl = normalizeBaseUrl(account.baseUrl)
@@ -325,7 +325,7 @@ export async function loginSub2ApiAccount(account: Account) {
 // 统一登录入口
 export async function loginAccount(account: Account) {
   if (isSub2ApiAccount(account)) return await loginSub2ApiAccount(account)
-  // 使用访问令牌认证时，直接用令牌获取用户信息
+  // 优先尝试访问令牌认证（需要用户 ID 才能发起请求）
   const accessToken = getSecret(account.accessTokenKey)
   if (accessToken && account.lastSelf?.id) {
     const self = await apiRequest<SelfInfo>(account, "GET", "/api/user/self")
@@ -334,7 +334,10 @@ export async function loginAccount(account: Account) {
   }
   const password = getSecret(account.passwordKey)
   if (!account.username || !password) {
-    throw new Error("该账号没有保存用户名/密码；访问令牌请使用个人设置页面的 Access Token，第三方登录请使用网页登录获取 Cookie")
+    if (accessToken && !account.lastSelf?.id) {
+      throw new Error("访问令牌登录需要先记录用户 ID，请编辑账号填写用户 ID")
+    }
+    throw new Error("该账号未保存用户名/密码或访问令牌，请编辑账号补充，或使用“网页登录获取 Cookie/令牌”")
   }
   const result = await apiRequestWithMeta<any>(account, "POST", "/api/user/login", {
     username: account.username,
@@ -457,6 +460,18 @@ export async function openManualCheckinWebView(account: Account) {
       }
       setTimeout(() => { void openPage() }, 80)
       await webView.present({ fullscreen: true, navigationTitle: "网页签到后关闭页面" })
+      // 综合读取 localStorage/sessionStorage 中的最新令牌并保存
+      try {
+        const storage = await readWebLoginStorage(webView)
+        const storageItems = {
+          ...(storage.localStorage ?? {}),
+          ...(storage.sessionStorage ?? {}),
+        }
+        const latestToken = extractSub2ApiToken(storageItems)
+        if (latestToken && latestToken !== credential) {
+          setSecret(account.cookieKey, latestToken)
+        }
+      } catch {}
     } finally {
       webView.dispose()
     }
@@ -498,7 +513,8 @@ export async function openManualCheckinWebView(account: Account) {
 
     const cookies = await webView.getCookies(normalizedBaseUrl)
     const nextCookieHeader = cookiesToHeader(cookies)
-    if (nextCookieHeader) setSecret(account.cookieKey, mergeCookies(cookieHeader, undefined, cookies))
+    // 直接使用 WebView 最新 cookie 替换旧值，避免 mergeCookies 保留已失效的旧 cookie
+    if (nextCookieHeader) setSecret(account.cookieKey, nextCookieHeader)
   } finally {
     webView.dispose()
   }
@@ -530,14 +546,37 @@ export async function loginByWebView(account: Account) {
   return self
 }
 
+// 检测错误是否为登录状态失效（需要重登）
+function isAuthExpiredError(message: string): boolean {
+  return (
+    // 本地校验类
+    message.includes("缺少用户 ID") ||
+    message.includes("缺少 Sub2API 登录令牌") ||
+    // NewAPI 常见中文失效提示
+    message.includes("未登录") ||
+    message.includes("权限不足") ||
+    message.includes("无权进行此操作") ||
+    message.includes("登录状态已过期") ||
+    message.includes("访问令牌") ||
+    message.includes("令牌无效") ||
+    message.includes("令牌已过期") ||
+    // session / token 失效
+    /session\s*(not\s+found|expired|invalid)|no\s+session|session\s+失效/i.test(message) ||
+    /access.?token/i.test(message) ||
+    // HTTP 状态码 401/403
+    /\bHTTP\s*40[13]\b/i.test(message) ||
+    // 非 JSON 响应（通常是触发了验证或登录失效）
+    /响应不是 JSON/.test(message)
+  )
+}
+
 // 获取用户信息（含自动重登录）
 export async function fetchSelf(account: Account) {
   if (isSub2ApiAccount(account)) {
     try {
       return await fetchSub2ApiSelf(account)
     } catch (e: any) {
-      const message = getErrorMessage(e)
-      if (message.includes("缺少 Sub2API 登录令牌") || message.includes("登录状态已过期") || message.includes("未登录") || message.includes("权限不足")) {
+      if (isAuthExpiredError(getErrorMessage(e))) {
         return await loginAccount(account)
       }
       throw e
@@ -546,8 +585,7 @@ export async function fetchSelf(account: Account) {
   try {
     return await apiRequest<SelfInfo>(account, "GET", "/api/user/self")
   } catch (e: any) {
-    const message = getErrorMessage(e)
-    if (message.includes("缺少用户 ID") || message.includes("未登录") || message.includes("权限不足") || message.includes("登录状态已过期") || message.includes("访问令牌") || message.includes("access.?token")) {
+    if (isAuthExpiredError(getErrorMessage(e))) {
       await loginAccount(account)
       const latest = loadAccounts().find(a => a.id === account.id) ?? account
       return await apiRequest<SelfInfo>(latest, "GET", "/api/user/self")
@@ -556,14 +594,34 @@ export async function fetchSelf(account: Account) {
   }
 }
 
-// 获取签到状态（根据平台分发）
+// 获取签到状态（根据平台分发，含自动重登录）
 export async function fetchCheckinStatus(account: Account, month = localMonthString()) {
-  if (isSub2ApiAccount(account)) return await fetchSub2ApiCheckinStatus(account, month)
-  return await apiRequest<CheckinStatus>(account, "GET", `/api/user/checkin?month=${encodeURIComponent(month)}`)
+  try {
+    if (isSub2ApiAccount(account)) return await fetchSub2ApiCheckinStatus(account, month)
+    return await apiRequest<CheckinStatus>(account, "GET", `/api/user/checkin?month=${encodeURIComponent(month)}`)
+  } catch (e: any) {
+    if (isAuthExpiredError(getErrorMessage(e))) {
+      await loginAccount(account)
+      const latest = loadAccounts().find(a => a.id === account.id) ?? account
+      if (isSub2ApiAccount(latest)) return await fetchSub2ApiCheckinStatus(latest, month)
+      return await apiRequest<CheckinStatus>(latest, "GET", `/api/user/checkin?month=${encodeURIComponent(month)}`)
+    }
+    throw e
+  }
 }
 
-// 执行签到（根据平台分发）
+// 执行签到（根据平台分发，含自动重登录）
 export async function doCheckin(account: Account) {
-  if (isSub2ApiAccount(account)) return await doSub2ApiCheckin(account)
-  return await apiRequest<any>(account, "POST", "/api/user/checkin", {})
+  try {
+    if (isSub2ApiAccount(account)) return await doSub2ApiCheckin(account)
+    return await apiRequest<any>(account, "POST", "/api/user/checkin", {})
+  } catch (e: any) {
+    if (isAuthExpiredError(getErrorMessage(e))) {
+      await loginAccount(account)
+      const latest = loadAccounts().find(a => a.id === account.id) ?? account
+      if (isSub2ApiAccount(latest)) return await doSub2ApiCheckin(latest)
+      return await apiRequest<any>(latest, "POST", "/api/user/checkin", {})
+    }
+    throw e
+  }
 }

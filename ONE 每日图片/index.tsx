@@ -1,5 +1,6 @@
 import {
   Button,
+  DatePicker,
   HStack,
   Image,
   List,
@@ -16,6 +17,7 @@ import {
   VStack,
   Widget,
   ZStack,
+  gradient,
 } from 'scripting'
 import { useEffect, useState } from 'scripting'
 import {
@@ -29,6 +31,14 @@ import {
   clearLastUpdateTime,
   clearRefreshLogs,
   getRefreshLogs,
+  getNotifyEnabled,
+  setNotifyEnabled,
+  getNotifyTimeParts,
+  setNotifyTime,
+  formatNotifyTime,
+  buildNotifyTimeDateValue,
+  scheduleDailyRefreshNotification,
+  cancelDailyRefreshNotification,
   type RefreshLogEntry,
   type WallpaperData,
   type WallpaperDisplayMode,
@@ -52,6 +62,15 @@ const MONTH_LABELS: string[] = [
 
 const PREVIEW_IMAGE_HEIGHT = 220
 const PREVIEW_CORNER_RADIUS = 12
+const PREVIEW_TEXT_MASK = gradient('linear', {
+  stops: [
+    { color: 'rgba(0,0,0,0)', location: 0 },
+    { color: 'rgba(0,0,0,0.18)', location: 0.42 },
+    { color: 'rgba(0,0,0,0.58)', location: 1 },
+  ],
+  startPoint: 'top',
+  endPoint: 'bottom',
+})
 
 type CacheStats = {
   totalFiles: number
@@ -155,6 +174,14 @@ const getOneDateParts = (copyright: string): OneDateParts => {
   }
 }
 
+// 预览区保留轻量阴影，主要可读性由图片渐变遮罩承担
+const PREVIEW_SHADOW = {
+  color: 'rgba(0,0,0,0.55)' as const,
+  radius: 1,
+  x: 0,
+  y: 1,
+}
+
 const CurrentWallpaperPreview = ({
   imageUrl,
   cachedImagePath,
@@ -187,39 +214,43 @@ const CurrentWallpaperPreview = ({
             frame={{ height: PREVIEW_IMAGE_HEIGHT }}
           />
         )}
+        {shouldShowText && (
+          <Rectangle
+            fill={PREVIEW_TEXT_MASK}
+            frame={{ maxWidth: 'infinity', maxHeight: 'infinity' }}
+          />
+        )}
 
-        <Rectangle fill="#000000" opacity={0.2} />
-
-        <VStack spacing={0}>
-          <Spacer />
+        <VStack
+          spacing={0}
+          frame={{ maxWidth: 'infinity', maxHeight: 'infinity', alignment: 'bottom' }}
+        >
           {shouldShowText && (
-            <HStack spacing={0}>
-              <VStack
-                alignment="leading"
-                spacing={4}
-                padding={{ top: 0, bottom: 10, leading: 10, trailing: 10 }}
-              >
-                {showCopyright && (
-                  <VStack alignment="leading" spacing={4}>
-                    {!!dateParts.day && (
-                      <Text font={36} foregroundStyle="#ffffff" lineLimit={1}>
-                        {dateParts.day}
-                      </Text>
-                    )}
-                    <Text font={18} foregroundStyle="#ffffff" lineLimit={1}>
-                      {dateParts.metadata}
+            <VStack
+              alignment="leading"
+              spacing={4}
+              padding={{ top: 8, bottom: 10, leading: 10, trailing: 10 }}
+              frame={{ maxWidth: 'infinity', alignment: 'leading' }}
+            >
+              {showCopyright && (
+                <VStack alignment="leading" spacing={4}>
+                  {!!dateParts.day && (
+                    <Text font={36} foregroundStyle="#ffffff" shadow={PREVIEW_SHADOW} lineLimit={1}>
+                      {dateParts.day}
                     </Text>
-                  </VStack>
-                )}
-
-                {showTitle && (
-                  <Text font={15} foregroundStyle="#ffffff" lineLimit={2}>
-                    {buildFallbackTitle(title)}
+                  )}
+                  <Text font={18} foregroundStyle="#ffffff" shadow={PREVIEW_SHADOW} lineLimit={1}>
+                    {dateParts.metadata}
                   </Text>
-                )}
-              </VStack>
-              <Spacer />
-            </HStack>
+                </VStack>
+              )}
+
+              {showTitle && (
+                <Text font={15} foregroundStyle="#ffffff" shadow={PREVIEW_SHADOW} lineLimit={2}>
+                  {buildFallbackTitle(title)}
+                </Text>
+              )}
+            </VStack>
           )}
         </VStack>
       </ZStack>
@@ -308,6 +339,8 @@ const OneWallpaperDetail = () => {
     oldestCache: 0,
     newestCache: 0,
   })
+  const [notifyEnabled, setNotifyEnabledState] = useState<boolean>(() => getNotifyEnabled())
+  const [notifyTimeValue, setNotifyTimeValue] = useState<number>(() => buildNotifyTimeDateValue())
 
   const refreshLogItems = (): void => {
     setRefreshLogs(buildRefreshLogViewItems())
@@ -397,6 +430,28 @@ const OneWallpaperDetail = () => {
     Widget.reloadAll()
   }
 
+  const handleNotifyEnabledChange = async (value: boolean): Promise<void> => {
+    setNotifyEnabledState(value)
+    setNotifyEnabled(value)
+    if (value) {
+      await scheduleDailyRefreshNotification()
+    } else {
+      await cancelDailyRefreshNotification()
+    }
+    refreshLogItems()
+  }
+
+  const handleNotifyTimeChange = async (timestamp: number): Promise<void> => {
+    const date = new Date(timestamp)
+    setNotifyTime(date.getHours(), date.getMinutes())
+    setNotifyTimeValue(timestamp)
+    // 通知时间变更后重新调度
+    if (notifyEnabled) {
+      await scheduleDailyRefreshNotification()
+      refreshLogItems()
+    }
+  }
+
   const clearImageCache = async (): Promise<void> => {
     await ImageCacheManager.clearAllCache()
     setCachedImagePath('')
@@ -405,7 +460,13 @@ const OneWallpaperDetail = () => {
   }
 
   useEffect(() => {
-    loadData(true).then(() => Widget.reloadAll())
+    loadData(true).then(async () => {
+      Widget.reloadAll()
+      // 启动时同步通知调度状态
+      if (getNotifyEnabled()) {
+        await scheduleDailyRefreshNotification()
+      }
+    })
   }, [])
 
   if (loading || !wallpaperData) {
@@ -473,6 +534,28 @@ const OneWallpaperDetail = () => {
             value={showCopyright}
             onChanged={handleShowCopyrightChange}
           />
+
+            <Toggle
+            title="刷新通知"
+            value={notifyEnabled}
+            onChanged={handleNotifyEnabledChange}
+          />
+          {notifyEnabled && (
+            <DatePicker
+              title="通知时间"
+              value={notifyTimeValue}
+              onChanged={handleNotifyTimeChange}
+              displayedComponents={["hourAndMinute"]}
+            />
+          )}
+          <VStack alignment="leading" spacing={4}>
+            <Text font="caption" foregroundStyle="secondaryLabel">
+              通知提醒需点击才能刷新；如需后台自动刷新，请在「快捷指令」App 中添加自动化：
+            </Text>
+            <Text font="caption" foregroundStyle="secondaryLabel">
+              在「快捷指令」App → 自动化 → 每天定时 → 运行「ONE 每日图片」intent，即可后台自动刷新，无需手动点击
+            </Text>
+          </VStack>
         </Section>
 
         <Section header={<Text font="headline">当前显示内容</Text>}>

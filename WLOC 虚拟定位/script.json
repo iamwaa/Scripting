@@ -1,0 +1,45 @@
+{
+  "entry" : "index.tsx",
+  "permissions" : null,
+  "localizedNames" : {
+    "fr" : "",
+    "ja" : "",
+    "it" : "",
+    "pt" : "",
+    "es" : "",
+    "de" : "",
+    "ru" : "",
+    "zh" : "WLOC 虚拟定位",
+    "en" : ""
+  },
+  "version" : "1.0.0",
+  "icon" : "location.fill",
+  "runInApp" : true,
+  "remoteResource" : null,
+  "color" : "rgba(0, 122, 255, 1)",
+  "description" : "WLOC 虚拟定位控制面板，在地图上选取坐标并通过代理模块写入设备。",
+  "contributors" : [
+
+  ],
+  "iconImage" : "",
+  "name" : "WLOC 虚拟定位",
+  "author" : {
+    "email" : null,
+    "homepage" : "https:\/\/github.com\/iamwaa",
+    "name" : "Waa"
+  },
+  "localizedDescriptions" : {
+    "en" : "",
+    "pt" : "",
+    "fr" : "",
+    "it" : "",
+    "es" : "",
+    "ru" : "",
+    "zh" : "WLOC 虚拟定位控制面板，在地图上选取坐标并通过代理模块写入设备。",
+    "ja" : "",
+    "de" : ""
+  },
+  "intentInputTypes" : [
+
+  ]
+}

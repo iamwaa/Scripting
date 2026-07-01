@@ -46,20 +46,28 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     if (!latest) return
     setBusy(true)
     const patch: Partial<Account> = {}
-    try {
-      patch.lastSelf = await fetchSelf(latest)
+    // 并行刷新余额、签到状态、站点状态
+    const [selfResult, statusResult, siteResult] = await Promise.allSettled([
+      fetchSelf(latest),
+      fetchCheckinStatus(latest, month),
+      checkSiteStatus(latest),
+    ])
+    if (selfResult.status === "fulfilled") {
+      patch.lastSelf = selfResult.value
       patch.lastError = ""
-    } catch (e: any) {
-      patch.lastError = getErrorMessage(e)
+    } else {
+      patch.lastError = getErrorMessage(selfResult.reason)
     }
-    try {
-      const status = await fetchCheckinStatus(latest, month)
-      patch.lastCheckin = status
-      Object.assign(patch, getTodayCheckinPatch(status))
-      if (!patch.lastError) patch.lastError = ""
-    } catch (e: any) {
-      if (!patch.lastError) patch.lastError = getErrorMessage(e)
-      Object.assign(patch, getCheckinDisabledPatch(e?.message ?? e))
+    if (statusResult.status === "fulfilled") {
+      patch.lastCheckin = statusResult.value
+      Object.assign(patch, getTodayCheckinPatch(statusResult.value))
+      if (selfResult.status === "fulfilled") patch.lastError = ""
+    } else {
+      if (!patch.lastError) patch.lastError = getErrorMessage(statusResult.reason)
+      Object.assign(patch, getCheckinDisabledPatch((statusResult.reason as any)?.message ?? statusResult.reason))
+    }
+    if (siteResult.status === "fulfilled") {
+      patch.lastSiteStatus = siteResult.value
     }
     patchAccount(latest.id, patch)
     const next = loadAccounts().find(a => a.id === accountId)

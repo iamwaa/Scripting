@@ -3,7 +3,7 @@ import { AppData, AnniversaryEvent, Person } from './types'
 import { loadAppData } from './storage'
 import { resolveWidgetAvatarPath } from './widgetAvatar'
 import { buildOccurrenceList, getReferenceDate, getEffectiveType, getWeddingAnniversaryName, getWeddingNameColor, formatElapsedYearsAndDays } from './dateUtils'
-import { CapsuleTag, RELATIONSHIP_STYLES, DEFAULT_RELATIONSHIP_STYLE } from './components'
+import { CapsuleTag, EVENT_TYPE_ICONS, RELATIONSHIP_STYLES, DEFAULT_RELATIONSHIP_STYLE } from './components'
 
 // 每种尺寸默认显示的纪念日数量
 const FAMILY_LIMITS: Record<string, number> = {
@@ -134,6 +134,28 @@ function PersonAvatar({ person, size }: { person: Person; size: number }) {
   )
 }
 
+// 小组件专用紧凑胶囊标签（比 CapsuleTag 更小以适应 widget 空间）
+interface WidgetTagProps {
+  label: string
+  color?: string
+}
+
+function WidgetTag({ label, color = '#8E8E93' }: WidgetTagProps) {
+  const tagColor = color as Color
+  const backgroundColor = colorWithAlpha(color, 0.16)
+  return (
+    <HStack
+      spacing={2}
+      padding={{ vertical: 3, horizontal: 6 }}
+      background={backgroundColor}
+      clipShape={{ type: 'rect', cornerRadius: 10 }}
+      alignment="center"
+    >
+      <Text font={9} fontWeight="medium" foregroundStyle={tagColor}>{label}</Text>
+    </HStack>
+  )
+}
+
 // 副标题胶囊标签：生日显示年龄、恋爱/结婚显示周年、一次性事件显示“纪念日”等
 function EventSubtitleTags({ item }: { item: Occurrence }) {
   const event = item.event
@@ -149,7 +171,7 @@ function EventSubtitleTags({ item }: { item: Occurrence }) {
         ageLabel = item.daysSince === 0 ? '今天' : `${item.daysSince} 天`
       }
     }
-    return <CapsuleTag label={ageLabel} color="#007AFF" />
+    return <WidgetTag label={ageLabel} color={EVENT_TYPE_ICONS.birthday.color} />
   }
 
   if (effectiveType === 'love' && item.yearsPassed !== undefined) {
@@ -162,7 +184,7 @@ function EventSubtitleTags({ item }: { item: Occurrence }) {
         label = item.daysSince === 0 ? '今天' : `${item.daysSince} 天`
       }
     }
-    return <CapsuleTag label={label} color="#FF2D55" />
+    return <WidgetTag label={label} color={EVENT_TYPE_ICONS.love.color} />
   }
 
   if (effectiveType === 'wedding' && item.yearsPassed !== undefined) {
@@ -177,14 +199,14 @@ function EventSubtitleTags({ item }: { item: Occurrence }) {
     }
     const anniversaryName = item.yearsPassed > 0 ? getWeddingAnniversaryName(item.yearsPassed) : undefined
     return (
-      <HStack spacing={4} alignment="center">
-        <CapsuleTag label={label} color="#FF2D55" />
-        {anniversaryName ? <CapsuleTag label={anniversaryName} color={getWeddingNameColor(item.yearsPassed)} /> : null}
+      <HStack spacing={2} alignment="center">
+        <WidgetTag label={label} color={EVENT_TYPE_ICONS.wedding.color} />
+        {anniversaryName ? <WidgetTag label={anniversaryName} color={getWeddingNameColor(item.yearsPassed)} /> : null}
       </HStack>
     )
   }
 
-  return <CapsuleTag label="纪念日" color="#8E8E93" />
+  return <WidgetTag label="纪念日" color="#007AFF" />
 }
 
 // 中号/大号共用的单行纪念日视图
@@ -229,16 +251,16 @@ function SmallWidgetView({ item }: { item: Occurrence }) {
       <Text fontWeight="semibold" fontDesign="rounded" font={getSmallDaysFont(item.daysLeft)} foregroundStyle={daysColor} offset={{ x: 0, y: 12 }} lineLimit={1}>
         {formatDaysLeft(item.daysLeft)}
       </Text>
-      <VStack spacing={0} frame={{ maxWidth: Infinity, maxHeight: Infinity }} alignment="center">
-        <HStack spacing={0} alignment="center" frame={{ maxWidth: Infinity }}>
+      <VStack spacing={0} frame={{ maxWidth: Infinity, maxHeight: Infinity }} alignment="leading">
+        <HStack spacing={8} alignment="center">
           <PersonAvatar person={item.person} size={params.avatarSize} />
-          <VStack alignment="leading" spacing={0} frame={{ maxWidth: Infinity }}>
+          <VStack alignment="leading" spacing={0}>
             <Text fontWeight="bold" font={params.titleFont} lineLimit={1}>{title}</Text>
             <EventSubtitleTags item={item} />
           </VStack>
         </HStack>
         <Spacer />
-        <Text foregroundStyle="secondaryLabel" font={params.dateFont}>{dateText}</Text>
+        <Text foregroundStyle="secondaryLabel" font={params.dateFont} frame={{ maxWidth: Infinity, alignment: "center" }}>{dateText}</Text>
       </VStack>
     </ZStack>
   )

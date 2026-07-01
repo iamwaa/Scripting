@@ -6,10 +6,12 @@ declare const FileManager: any
 
 // --- 数据结构定义 ---
 export type CustomField = { id: string; key: string; value: string }
-export type AccountItem = { id: string; name: string; createdAt: string; apiKey?: string; username?: string; password?: string; email?: string; notes?: string; url?: string; tags?: string[]; avatarUrl?: string; customFields?: CustomField[]; isPinned?: boolean }
-export type BookmarkItem = { id: string; title: string; createdAt: string; url: string; tags?: string[]; notes?: string; iconUrl?: string; customFields?: CustomField[]; isPinned?: boolean }
+export type AccountItem = { id: string; name: string; createdAt: string; apiKey?: string; username?: string; password?: string; email?: string; notes?: string; url?: string; tags?: string[]; avatarUrl?: string; customFields?: CustomField[]; isPinned?: boolean; groupId?: string }
+export type BookmarkItem = { id: string; title: string; createdAt: string; url: string; tags?: string[]; notes?: string; iconUrl?: string; customFields?: CustomField[]; isPinned?: boolean; groupId?: string }
 export type SyncBackupPayload = { accounts: AccountItem[]; bookmarks: BookmarkItem[] }
 export type WebDAVConfig = { url: string; username: string; password: string }
+// 分组数据结构
+export type GroupItem = { id: string; name: string; createdAt: string; isCollapsed?: boolean }
 
 // --- 存储路径 ---
 const DATA_DIR = Path.join(Path.dirname(Path.dirname(Script.directory)), 'configs', '账号管理数据')
@@ -17,6 +19,9 @@ const ACCOUNTS_FILE = Path.join(DATA_DIR, 'accounts.json')
 const BOOKMARKS_FILE = Path.join(DATA_DIR, 'bookmarks.json')
 const WEBDAV_FILE = Path.join(DATA_DIR, 'webdav.json')
 const FILE_PASSWORD_FILE = Path.join(DATA_DIR, 'file_password.json')
+const GROUPS_FILE = Path.join(DATA_DIR, 'groups.json')
+const ACCOUNT_GROUPS_FILE = Path.join(DATA_DIR, 'account_groups.json')
+const BOOKMARK_GROUPS_FILE = Path.join(DATA_DIR, 'bookmark_groups.json')
 
 const LOCAL_APP_SECRET = "Scripting_App_Local_Shield_2024!@#"
 const PAYLOAD_SIGNATURE = "SCRIPTING_SECURE_PAYLOAD_V1"
@@ -125,6 +130,41 @@ export const loadBookmarks = async (): Promise<BookmarkItem[]> => {
 export const saveBookmarks = async (bookmarks: BookmarkItem[]): Promise<void> => {
   await ensureDataDir()
   await FileManager.writeAsString(BOOKMARKS_FILE, encryptPayload(bookmarks, LOCAL_APP_SECRET))
+}
+
+// --- 分组数据读写 ---
+const loadGroupFile = async (filePath: string): Promise<GroupItem[]> => {
+  try {
+    if (!(await FileManager.exists(filePath))) return []
+    const raw = await FileManager.readAsString(filePath)
+    if (!raw) return []
+    if (Array.isArray(raw)) return raw
+    if (typeof raw === "string") return decryptPayload<GroupItem[]>(raw, LOCAL_APP_SECRET)
+    return []
+  } catch { return [] }
+}
+
+const saveGroupFile = async (filePath: string, groups: GroupItem[]): Promise<void> => {
+  await ensureDataDir()
+  await FileManager.writeAsString(filePath, encryptPayload(groups, LOCAL_APP_SECRET))
+}
+
+export const loadAccountGroups = () => loadGroupFile(ACCOUNT_GROUPS_FILE)
+export const saveAccountGroups = (groups: GroupItem[]) => saveGroupFile(ACCOUNT_GROUPS_FILE, groups)
+export const loadBookmarkGroups = () => loadGroupFile(BOOKMARK_GROUPS_FILE)
+export const saveBookmarkGroups = (groups: GroupItem[]) => saveGroupFile(BOOKMARK_GROUPS_FILE, groups)
+
+// 兼容旧版：迁移 groups.json 到 account_groups.json
+export const migrateOldGroups = async (): Promise<void> => {
+  try {
+    if (await FileManager.exists(GROUPS_FILE)) {
+      const oldGroups = await loadGroupFile(GROUPS_FILE)
+      if (oldGroups.length > 0 && !(await FileManager.exists(ACCOUNT_GROUPS_FILE))) {
+        await saveGroupFile(ACCOUNT_GROUPS_FILE, oldGroups)
+      }
+      await FileManager.remove(GROUPS_FILE)
+    }
+  } catch {}
 }
 
 export const loadWebDAVConfig = async (): Promise<WebDAVConfig | null> => {

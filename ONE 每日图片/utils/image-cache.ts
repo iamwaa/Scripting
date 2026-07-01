@@ -1,4 +1,4 @@
-import { fetch, Path } from 'scripting'
+import { fetch, Path, Widget } from 'scripting'
 import { createStorageManager } from './storage'
 
 const CACHE_STORAGE_NAME = 'ScriptPie.ImageCache'
@@ -118,8 +118,11 @@ export class ImageCacheManager {
     }
   }
 
-  private static downscaleImageBytes(originalBytes: Uint8Array): Uint8Array {
+  private static cropImageToSquare(originalBytes: Uint8Array): Uint8Array {
     try {
+      // 统一裁切为 512x512 的正方形
+      const targetSize = 512
+
       const data = Data.fromUint8Array(originalBytes)
       if (!data) {
         return originalBytes
@@ -130,21 +133,25 @@ export class ImageCacheManager {
         return originalBytes
       }
 
-      const longestEdge = Math.max(image.width, image.height)
-      if (longestEdge <= CACHE_CONFIG.maxImageEdge) {
+      // 计算居中裁剪区域
+      const minDimension = Math.min(image.width, image.height)
+      const sourceX = Math.round((image.width - minDimension) / 2)
+      const sourceY = Math.round((image.height - minDimension) / 2)
+
+      // 居中裁切为正方形
+      const croppedImage = image.renderedIn(
+        { width: targetSize, height: targetSize },
+        {
+          position: { x: sourceX, y: sourceY },
+          size: { width: minDimension, height: minDimension },
+        }
+      )
+
+      if (!croppedImage) {
         return originalBytes
       }
 
-      const ratio = CACHE_CONFIG.maxImageEdge / longestEdge
-      const thumbnail = image.preparingThumbnail({
-        width: Math.round(image.width * ratio),
-        height: Math.round(image.height * ratio),
-      })
-      if (!thumbnail) {
-        return originalBytes
-      }
-
-      const jpegData = Data.fromJPEG(thumbnail, CACHE_CONFIG.jpegQuality)
+      const jpegData = Data.fromJPEG(croppedImage, CACHE_CONFIG.jpegQuality)
       return jpegData?.toUint8Array() || originalBytes
     } catch {
       return originalBytes
@@ -162,7 +169,7 @@ export class ImageCacheManager {
       }
 
       const imageData = await response.arrayBuffer()
-      const bytesToWrite = this.downscaleImageBytes(new Uint8Array(imageData))
+      const bytesToWrite = this.cropImageToSquare(new Uint8Array(imageData))
 
       // 确保父目录存在后用同步 API 写入，避免异步目录创建未完成导致写入失败
       const parentDir = localPath.substring(0, localPath.lastIndexOf('/'))

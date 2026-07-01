@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
   ZStack,
+LiveActivity,
 } from "scripting"
 import type { ResourceItem } from "../types/resource"
 import { WebURL } from "../utils/WebURL"

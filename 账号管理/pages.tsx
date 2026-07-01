@@ -1,9 +1,12 @@
-import { useState, useEffect, useMemo, useCallback, useRef, NavigationStack, List, Section, HStack, VStack, Text, Button, Spacer, Image, Rectangle,
-  Navigation, Script, TextField, Menu, ToolbarItem, Toolbar, ToolbarSpacer
+import {
+  useState, useEffect, useMemo, useCallback, useRef, NavigationStack, List, Section, HStack, VStack, Text, Button, Spacer, Image, Rectangle,
+  Navigation, Script, TextField, Menu, Picker, ToolbarItem, Toolbar, ToolbarSpacer
 } from "scripting"
 
+// 状态 setter 类型，支持直接值和函数式更新
+export type StateSetter<T> = (value: T | ((prev: T) => T)) => void
 import {
-  AccountItem, BookmarkItem, WebDAVConfig, CustomField,
+  AccountItem, BookmarkItem, WebDAVConfig, CustomField, GroupItem,
   generateId, getGroupLetter, processUrl, fetchSiteInfo, loadFilePassword, saveFilePassword, clearWebDAVConfigFile,
   encryptPayload, decryptPayload, normalizeSyncPayload, uploadToWebDAV, downloadFromWebDAV, testWebDAVConnection, saveWebDAVConfig, isEncryptedFormat,
   maskPassword, maskApiKey, sortByDisplayTitle
@@ -12,34 +15,45 @@ import {
 import { AvatarIcon, FormRow, AccountRow, BookmarkRow } from "./components"
 
 // --- 页面 Props 类型定义 ---
-export type AccountEditorPageProps = { initialAccount?: AccountItem; onSave: (account: AccountItem) => void }
-export type AccountPreviewPageProps = { account: AccountItem; onUpdate: (updatedAccount: AccountItem) => void; onDelete: (id: string) => void }
-export type ApiListPageProps = { accounts: AccountItem[]; setAccounts: (acc: AccountItem[]) => void; isSelecting: boolean; setIsSelecting: (isSelecting: boolean) => void }
+export type AccountEditorPageProps = { initialAccount?: AccountItem; onSave: (account: AccountItem) => void; groups?: GroupItem[] }
+export type AccountPreviewPageProps = { account: AccountItem; onUpdate: (updatedAccount: AccountItem) => void; onDelete: (id: string) => void; groups?: GroupItem[] }
+export type ApiListPageProps = { accounts: AccountItem[]; setAccounts: StateSetter<AccountItem[]>; groups: GroupItem[]; setGroups: StateSetter<GroupItem[]>; isSelecting: boolean; setIsSelecting: (isSelecting: boolean) => void }
+export type BookmarkListPageProps = { bookmarks: BookmarkItem[]; setBookmarks: StateSetter<BookmarkItem[]>; groups: GroupItem[]; setGroups: StateSetter<GroupItem[]>; isSelecting: boolean; setIsSelecting: (isSelecting: boolean) => void }
 
-export type BookmarkEditorPageProps = { initialBookmark?: BookmarkItem; onSave: (bookmark: BookmarkItem) => void }
+export type BookmarkEditorPageProps = { initialBookmark?: BookmarkItem; onSave: (bookmark: BookmarkItem) => void; groups?: GroupItem[] }
 export type BookmarkPreviewPageProps = {
   bookmark: BookmarkItem
   onUpdate: (updatedBookmark: BookmarkItem) => void
   onDelete: (id: string) => void
   onDuplicate?: (bookmark: BookmarkItem) => void
+  groups?: GroupItem[]
 }
 
 export type SettingsPageProps = {
-  accounts: AccountItem[];
-  setAccounts: (acc: AccountItem[]) => void;
-  bookmarks: BookmarkItem[];
-  setBookmarks: (items: BookmarkItem[]) => void;
-  webdavConfig: WebDAVConfig | null;
-  setWebdavConfig: (cfg: WebDAVConfig | null) => void;
+  accounts: AccountItem[]
+  setAccounts: StateSetter<AccountItem[]>
+  bookmarks: BookmarkItem[]
+  setBookmarks: StateSetter<BookmarkItem[]>
+  webdavConfig: WebDAVConfig | null
+  setWebdavConfig: (cfg: WebDAVConfig | null) => void
+}
+
+// 分组子页面 Props
+export type GroupPageProps = {
+  group: GroupItem
+  groups: GroupItem[]
+  setGroups: StateSetter<GroupItem[]>
+  type: "account" | "bookmark"
 }
 
 // 全局变量，用于跨页面维持 toast 状态
-let pendingActionToast: { msg: string; isError: boolean } | null = null;
+let pendingActionToast: { msg: string; isError: boolean } | null = null
 
 // Account 业务页面
-export const AccountEditorPage = ({ initialAccount, onSave }: AccountEditorPageProps) => {
+export const AccountEditorPage = ({ initialAccount, onSave, groups }: AccountEditorPageProps) => {
   const [name, setName] = useState<string>(initialAccount?.name || "")
   const [tagsStr, setTagsStr] = useState<string>(initialAccount?.tags?.join(", ") || "")
+  const [groupId, setGroupId] = useState<string | undefined>(initialAccount?.groupId)
   const [avatarUrl, setAvatarUrl] = useState<string>(initialAccount?.avatarUrl || "")
   const [username, setUsername] = useState<string>(initialAccount?.username || "")
   const [email, setEmail] = useState<string>(initialAccount?.email || "")
@@ -107,7 +121,8 @@ export const AccountEditorPage = ({ initialAccount, onSave }: AccountEditorPageP
       avatarUrl: avatarUrl.trim() || undefined,
       tags: parsedTags.length > 0 ? parsedTags : undefined,
       customFields: validCustomFields.length > 0 ? validCustomFields : undefined,
-      isPinned: initialAccount?.isPinned || false
+      isPinned: initialAccount?.isPinned || false,
+      groupId
     })
     dismiss()
   }
@@ -119,20 +134,34 @@ export const AccountEditorPage = ({ initialAccount, onSave }: AccountEditorPageP
         navigationBarTitleDisplayMode="inline"
         toast={{ isPresented: toast.msg !== "", onChanged: (v) => { if (!v) setToast({ msg: "", isError: false }) }, message: toast.msg || " ", position: "top", textColor: toast.isError ? "#FF3B30" : undefined }}
         toolbar={{
-          topBarLeading: <Button action={() => dismiss()}><HStack spacing={5}><Image systemName="chevron.left" fontWeight="semibold" foregroundStyle="#007AFF"/></HStack></Button>,
+          topBarLeading: <Button action={() => dismiss()}><HStack spacing={5}><Image systemName="chevron.left" fontWeight="semibold" foregroundStyle="#007AFF" /></HStack></Button>,
           topBarTrailing: <Button action={handleSave}><Text foregroundStyle="#007AFF" fontWeight="semibold">保存</Text></Button>,
         }}
       >
         <Section header={<Text>基础信息</Text>}>
-          <HStack alignment="center" spacing={8}>
-            <FormRow label="账号名称" value={name} onChanged={setName} prompt="填写网址后自动获取" autofocus={!initialAccount} />
-            <Button buttonStyle="plain" action={handleFetchName}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="title3" /></Button>
+          <HStack alignment="center" spacing={12} padding={{ vertical: 4 }}>
+            <Text frame={{ width: 75, alignment: "leading" }} foregroundStyle="#333333">账号名称</Text>
+            <TextField label={<Text>{"l"}</Text>} value={name} onChanged={setName} prompt="填写网址后自动获取" autofocus={!initialAccount} />
+            <Button buttonStyle="plain" action={handleFetchName}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="subheadline" /></Button>
+            {name.length > 0 ? <Button buttonStyle="plain" action={() => setName("")}><Image systemName="xmark.circle.fill" foregroundStyle="#C7C7CC" font="subheadline" /></Button> : undefined}
+          </HStack>
+          <HStack alignment="center" spacing={12} padding={{ vertical: 4 }}>
+            <Text frame={{ width: 75, alignment: "leading" }} foregroundStyle="#333333">图标链接</Text>
+            <TextField label={<Text>{"l"}</Text>} value={avatarUrl} onChanged={setAvatarUrl} prompt="填写网址后自动获取（可选）" />
+            <Button buttonStyle="plain" action={handleFetchAvatar}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="subheadline" /></Button>
+            {avatarUrl.length > 0 ? <Button buttonStyle="plain" action={() => setAvatarUrl("")}><Image systemName="xmark.circle.fill" foregroundStyle="#C7C7CC" font="subheadline" /></Button> : undefined}
           </HStack>
           <FormRow label="分类标签" value={tagsStr} onChanged={setTagsStr} prompt="多个标签用逗号分隔（可选）" />
-          <HStack alignment="center" spacing={8}>
-            <FormRow label="头像链接" value={avatarUrl} onChanged={setAvatarUrl} prompt="填写网址后自动获取（可选）" />
-            <Button buttonStyle="plain" action={handleFetchAvatar}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="title3" /></Button>
-          </HStack>
+          {groups && groups.length > 0 ? (
+            <Picker
+              title="所属分组"
+              value={groupId || "__ungrouped__"}
+              onChanged={(v: string) => setGroupId(v === "__ungrouped__" ? undefined : v)}
+            >
+              <Text tag="__ungrouped__">未分组</Text>
+              {groups.map(g => <Text key={g.id} tag={g.id}>{g.name}</Text>)}
+            </Picker>
+          ) : undefined}
         </Section>
         <Section header={<Text>账号凭据</Text>} footer={<Text foregroundStyle="#8E8E93" font="footnote">请至少填写一种登录凭据或密钥</Text>}>
           <FormRow label="用户名" value={username} onChanged={setUsername} prompt="登录账号（可选）" />
@@ -162,7 +191,7 @@ export const AccountEditorPage = ({ initialAccount, onSave }: AccountEditorPageP
   )
 }
 
-export const AccountPreviewPage = ({ account, onUpdate, onDelete }: AccountPreviewPageProps) => {
+export const AccountPreviewPage = ({ account, onUpdate, onDelete, groups }: AccountPreviewPageProps) => {
   const [currentAccount, setCurrentAccount] = useState<AccountItem>(account)
   const [toast, setToast] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false })
   const showToast = (msg: string, isError = false) => setToast({ msg, isError })
@@ -170,7 +199,7 @@ export const AccountPreviewPage = ({ account, onUpdate, onDelete }: AccountPrevi
   const ShapeVStack = VStack as any
 
   const handleEdit = () => {
-    Navigation.present(<AccountEditorPage initialAccount={currentAccount} onSave={(acc) => { setCurrentAccount(acc); onUpdate(acc); showToast("修改已保存") }} />)
+    Navigation.present(<AccountEditorPage initialAccount={currentAccount} groups={groups} onSave={(acc) => { setCurrentAccount(acc); onUpdate(acc); showToast("修改已保存") }} />)
   }
 
   const handleDelete = async () => {
@@ -183,9 +212,9 @@ export const AccountPreviewPage = ({ account, onUpdate, onDelete }: AccountPrevi
   const CopyableRow = ({ label, value, isSecret = false, maskedValue }: { label: string, value: string, isSecret?: boolean, maskedValue?: string }) => (
     <Button action={() => { Pasteboard.setString(value); showToast(`${label}已复制`) }}>
       <HStack alignment="center">
-         <Text>{label}</Text>
-         <Spacer />
-         <Text foregroundStyle="#8E8E93" lineLimit={1} frame={{ maxWidth: 220, alignment: "trailing" }}>{isSecret ? (maskedValue || "••••••••") : value}</Text>
+        <Text>{label}</Text>
+        <Spacer />
+        <Text foregroundStyle="#8E8E93" lineLimit={1} frame={{ maxWidth: 220, alignment: "trailing" }}>{isSecret ? (maskedValue || "••••••••") : value}</Text>
       </HStack>
     </Button>
   )
@@ -199,7 +228,7 @@ export const AccountPreviewPage = ({ account, onUpdate, onDelete }: AccountPrevi
         navigationBarTitleDisplayMode="inline"
         toast={{ isPresented: toast.msg !== "", onChanged: (v) => { if (!v) setToast({ msg: "", isError: false }) }, message: toast.msg || " ", position: "top", textColor: toast.isError ? "#FF3B30" : undefined }}
         toolbar={{
-          topBarLeading: <Button action={() => dismiss()}><HStack spacing={5}><Image systemName="chevron.left" fontWeight="semibold" foregroundStyle="#007AFF"/></HStack></Button>,
+          topBarLeading: <Button action={() => dismiss()}><HStack spacing={5}><Image systemName="chevron.left" fontWeight="semibold" foregroundStyle="#007AFF" /></HStack></Button>,
           topBarTrailing: <Button action={handleEdit}><Text foregroundStyle="#007AFF">编辑</Text></Button>,
         }}
       >
@@ -207,15 +236,25 @@ export const AccountPreviewPage = ({ account, onUpdate, onDelete }: AccountPrevi
           <AvatarIcon url={currentAccount.avatarUrl} name={currentAccount.name} size={64} />
           <VStack alignment="leading" spacing={8}>
             <Text font="title2" fontWeight="bold">{currentAccount.name}</Text>
-            {currentAccount.tags?.length ? (
-              <HStack spacing={6}>
-                {currentAccount.tags.map((tag, index) => (
-                  <ShapeVStack key={index} background="quaternarySystemFill" clipShape={{ type: "rect", cornerRadius: 4 }}>
-                    <Text font="caption2" foregroundStyle="#007AFF" fontWeight="medium" padding={{ horizontal: 6, vertical: 2 }}>{tag}</Text>
-                  </ShapeVStack>
-                ))}
-              </HStack>
-            ) : undefined}
+            <HStack spacing={6} alignment="center">
+              {account.groupId && groups ? (
+                <ShapeVStack background="quaternarySystemFill" clipShape={{ type: "rect", cornerRadius: 4 }}>
+                  <HStack spacing={4} alignment="center" padding={{ horizontal: 6, vertical: 2 }}>
+                    <Image systemName="folder.fill" foregroundStyle="#FF9500" font="caption2" />
+                    <Text font="caption2" foregroundStyle="#FF9500" fontWeight="medium">{groups.find(g => g.id === account.groupId)?.name || "未知分组"}</Text>
+                  </HStack>
+                </ShapeVStack>
+              ) : undefined}
+              {currentAccount.tags?.length ? (
+                <HStack spacing={6}>
+                  {currentAccount.tags.map((tag, index) => (
+                    <ShapeVStack key={index} background="quaternarySystemFill" clipShape={{ type: "rect", cornerRadius: 4 }}>
+                      <Text font="caption2" foregroundStyle="#007AFF" fontWeight="medium" padding={{ horizontal: 6, vertical: 2 }}>{tag}</Text>
+                    </ShapeVStack>
+                  ))}
+                </HStack>
+              ) : undefined}
+            </HStack>
           </VStack>
           <Spacer />
         </HStack>
@@ -243,11 +282,12 @@ export const AccountPreviewPage = ({ account, onUpdate, onDelete }: AccountPrevi
   )
 }
 
-export const ApiListPage = ({ accounts, setAccounts, isSelecting, setIsSelecting }: ApiListPageProps) => {
+export const ApiListPage = ({ accounts, setAccounts, groups, setGroups, isSelecting, setIsSelecting }: ApiListPageProps) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [activeFilterType, setActiveFilterType] = useState<"all" | "accounts" | "groups">("all")
   const [toast, setToast] = useState({ msg: "", isError: false, isPresented: false })
-  
+
   const showToast = useCallback((msg: string, isError = false) => {
     setToast(prev => ({ ...prev, isPresented: false }))
     setTimeout(() => setToast({ msg, isError, isPresented: true }), 150)
@@ -255,47 +295,103 @@ export const ApiListPage = ({ accounts, setAccounts, isSelecting, setIsSelecting
 
   useEffect(() => {
     if (!isSelecting && pendingActionToast) {
-      const pt = pendingActionToast;
-      pendingActionToast = null;
-      setTimeout(() => showToast(pt.msg, pt.isError), 0); 
+      const pt = pendingActionToast
+      pendingActionToast = null
+      setTimeout(() => showToast(pt.msg, pt.isError), 0)
     }
   }, [isSelecting, showToast])
 
-  const { filteredAccounts, groupedAccounts, sortedGroups, allTags } = useMemo(() => {
+  const { filteredAccounts, sectionData, allTags } = useMemo(() => {
     let filtered = accounts
     if (activeTag) filtered = filtered.filter(a => a.tags?.includes(activeTag))
 
-    const grouped = filtered.reduce((acc, account) => {
-      const group = account.isPinned ? "置顶" : getGroupLetter(account.name)
-      if (!acc[group]) acc[group] = []
-      acc[group].push(account)
-      return acc
-    }, {} as Record<string, AccountItem[]>)
+    // 构建分组数据：分组条目和未分组项目按字母混合排序
+    type SectionItem = { _type: "group"; group: GroupItem } | { _type: "account"; account: AccountItem }
+    const sectionMap: Record<string, SectionItem[]> = {}
 
-    Object.values(grouped).forEach(groupItems => groupItems.sort((a, b) => sortByDisplayTitle(a.name, b.name)))
-    
-    const sorted = Object.keys(grouped).sort((a, b) => {
-      if (a === "置顶") return -1;
-      if (b === "置顶") return 1;
-      return a === "#" ? 1 : b === "#" ? -1 : a.localeCompare(b);
+    // 根据类型筛选显示分组条目（筛选标签时隐藏）
+    if (!activeTag && (activeFilterType === "all" || activeFilterType === "groups")) {
+      for (const group of groups) {
+        const letter = getGroupLetter(group.name)
+        if (!sectionMap[letter]) sectionMap[letter] = []
+        sectionMap[letter].push({ _type: "group", group })
+      }
+    }
+
+    // 根据类型筛选显示未分组的账号
+    if (activeFilterType === "all" || activeFilterType === "accounts") {
+      const ungrouped = filtered.filter(a => !a.groupId)
+      for (const account of ungrouped) {
+        const letter = account.isPinned ? "置顶" : getGroupLetter(account.name)
+        if (!sectionMap[letter]) sectionMap[letter] = []
+        sectionMap[letter].push({ _type: "account", account })
+      }
+    }
+
+    // 排序每个 section 内的项目
+    for (const items of Object.values(sectionMap)) {
+      items.sort((a, b) => {
+        const nameA = a._type === "group" ? a.group.name : a.account.name
+        const nameB = b._type === "group" ? b.group.name : b.account.name
+        return sortByDisplayTitle(nameA, nameB)
+      })
+    }
+
+    // 构建有序 sections
+    const sortedKeys = Object.keys(sectionMap).sort((a, b) => {
+      if (a === "置顶") return -1
+      if (b === "置顶") return 1
+      if (a === "#") return 1
+      if (b === "#") return -1
+      return a.localeCompare(b)
     })
-    const tags = Array.from(new Set(accounts.flatMap(a => a.tags || []))).sort()
-    
-    return { filteredAccounts: filtered, groupedAccounts: grouped, sortedGroups: sorted, allTags: tags }
-  }, [accounts, activeTag])
+    const sections = sortedKeys.map(key => ({ key, title: key, items: sectionMap[key] }))
+
+    const tags = Array.from(new Set(accounts.filter(a => !a.groupId).flatMap(a => a.tags || []))).sort()
+    return { filteredAccounts: filtered, sectionData: sections, allTags: tags }
+  }, [accounts, groups, activeTag, activeFilterType])
 
   const addAccount = async () => {
-    await Navigation.present(<AccountEditorPage onSave={acc => { setAccounts([...accounts, acc]); showToast("账号已添加") }} />)
+    await Navigation.present(<AccountEditorPage groups={groups} onSave={acc => { setAccounts(prev => [...prev, acc]); showToast("账号已添加") }} />)
+  }
+
+  // 创建新分组
+  const handleCreateGroup = async () => {
+    const name = await Dialog.prompt({ title: "创建分组", message: "请输入分组名称", placeholder: "例如：工作、个人" })
+    if (!name?.trim()) return
+    if (groups.some(g => g.name === name.trim())) return showToast("该分组已存在", true)
+    const newGroup: GroupItem = { id: generateId(), name: name.trim(), createdAt: new Date().toLocaleDateString() }
+    setGroups(prev => [...prev, newGroup])
+    showToast(`分组「${name.trim()}」已创建`)
+  }
+
+  // 移动账号到分组
+  const handleMoveToGroup = (accountId: string, groupId: string) => {
+    setAccounts(prev => prev.map(a => a.id === accountId ? { ...a, groupId } : a))
+    const group = groups.find(g => g.id === groupId)
+    showToast(`已移至「${group?.name || ""}」`)
+  }
+
+  // 从分组中移除
+  const handleRemoveFromGroup = (accountId: string) => {
+    setAccounts(prev => prev.map(a => a.id === accountId ? { ...a, groupId: undefined } : a))
+    showToast("已从分组中移除")
   }
 
   const openPreviewPage = (account: AccountItem) => {
     Navigation.present(
-      <AccountPreviewPage 
-        account={account} 
-        onUpdate={updatedAccount => { setAccounts(accounts.map(a => a.id === updatedAccount.id ? updatedAccount : a)) }}
-        onDelete={id => { setAccounts(accounts.filter(a => a.id !== id)); showToast("账号已删除", true) }}
+      <AccountPreviewPage
+        account={account}
+        groups={groups}
+        onUpdate={updatedAccount => { setAccounts(prev => prev.map(a => a.id === updatedAccount.id ? updatedAccount : a)) }}
+        onDelete={id => { setAccounts(prev => prev.filter(a => a.id !== id)); showToast("账号已删除", true) }}
       />
     )
+  }
+
+  // 打开分组子页面
+  const openGroupPage = (group: GroupItem) => {
+    Navigation.present(<GroupPage group={group} groups={groups} setGroups={setGroups} items={accounts} setItems={setAccounts} type="account" />)
   }
 
   const isAllSelected = filteredAccounts.length > 0 && selectedIds.size === filteredAccounts.length
@@ -303,7 +399,7 @@ export const ApiListPage = ({ accounts, setAccounts, isSelecting, setIsSelecting
   return (
     <NavigationStack>
       <List
-        navigationTitle={activeTag ? `筛选: ${activeTag}` : "账号管理"}
+        navigationTitle={activeFilterType !== "all" ? (activeFilterType === "accounts" ? "仅显示账号" : "仅显示分组") : activeTag ? `筛选: ${activeTag}` : "账号管理"}
         navigationBarTitleDisplayMode="inline"
         toast={{ isPresented: toast.isPresented, onChanged: (v) => { if (!v) setToast(prev => ({ ...prev, isPresented: false })) }, message: toast.msg || " ", position: "top", textColor: toast.isError ? "#FF3B30" : undefined }}
         toolbar={
@@ -313,8 +409,8 @@ export const ApiListPage = ({ accounts, setAccounts, isSelecting, setIsSelecting
                 <Button key="cancel-select" action={() => { setIsSelecting(false); setSelectedIds(new Set()) }}>
                   <Text foregroundStyle="#007AFF" fontWeight="semibold">取消</Text>
                 </Button>
-              ) : activeTag ? (
-                <Button key="cancel-filter" action={() => setActiveTag(null)}>
+              ) : activeTag || activeFilterType !== "all" ? (
+                <Button key="cancel-filter" action={() => { setActiveTag(null); setActiveFilterType("all") }}>
                   <Text foregroundStyle="#007AFF" fontWeight="semibold">取消</Text>
                 </Button>
               ) : (
@@ -326,12 +422,12 @@ export const ApiListPage = ({ accounts, setAccounts, isSelecting, setIsSelecting
 
             {isSelecting && (
               <ToolbarItem placement="topBarTrailing">
-                <Button key="select-all" action={() => { 
-                  if (isAllSelected) { 
-                    setSelectedIds(new Set()); showToast("已取消全选") 
-                  } else { 
-                    const allIds = new Set(filteredAccounts.map(a => a.id)); setSelectedIds(allIds); showToast(`已选择 ${allIds.size} 条信息`) 
-                  } 
+                <Button key="select-all" action={() => {
+                  if (isAllSelected) {
+                    setSelectedIds(new Set()); showToast("已取消全选")
+                  } else {
+                    const allIds = new Set(filteredAccounts.map(a => a.id)); setSelectedIds(allIds); showToast(`已选择 ${allIds.size} 条信息`)
+                  }
                 }}>
                   <Text foregroundStyle="#007AFF" fontWeight="semibold">{isAllSelected ? "取消全选" : "全选"}</Text>
                 </Button>
@@ -340,20 +436,22 @@ export const ApiListPage = ({ accounts, setAccounts, isSelecting, setIsSelecting
 
             {!isSelecting && (
               <ToolbarItem placement="topBarTrailing">
-                <Button key="add-btn" action={addAccount}>
-                  <Image systemName="plus" foregroundStyle="#007AFF" fontWeight="semibold" />
-                </Button>
+                <Menu key="add-menu" label={<Image systemName="plus" foregroundStyle="#007AFF" fontWeight="semibold" />}>
+                  <Button action={addAccount}><HStack><Text>新建账号</Text><Image systemName="person.badge.plus" /></HStack></Button>
+                  <Button action={handleCreateGroup}><HStack><Text>创建分组</Text><Image systemName="folder.badge.plus" /></HStack></Button>
+                </Menu>
               </ToolbarItem>
             )}
-            
+
             {!isSelecting && (
               <ToolbarSpacer placement="topBarTrailing" />
             )}
-            
+
             {!isSelecting && accounts.length > 0 && (
               <ToolbarItem placement="topBarTrailing">
-                <Menu key="more-menu" label={<Image systemName={activeTag ? "line.3.horizontal.decrease.circle.fill" : "ellipsis"} foregroundStyle={activeTag ? "#FF9500" : "#007AFF"} font="title3" />}>
+                <Menu key="more-menu" label={<Image systemName={(activeTag || activeFilterType !== "all") ? "line.3.horizontal.decrease.circle.fill" : "ellipsis"} foregroundStyle={(activeTag || activeFilterType !== "all") ? "#FF9500" : "#007AFF"} font="title3" />}>
                   {filteredAccounts.length > 0 && <Button action={() => { setIsSelecting(true); setSelectedIds(new Set()) }}><HStack><Text>选择</Text><Image systemName="checkmark.circle" /></HStack></Button>}
+                  {groups.length > 0 && <Menu label={<HStack><Text>筛选类型</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveFilterType("all")}><HStack><Text>显示全部</Text>{activeFilterType === "all" && <Image systemName="checkmark" />}</HStack></Button><Button action={() => setActiveFilterType("accounts")}><HStack><Text>账号</Text>{activeFilterType === "accounts" && <Image systemName="checkmark" />}</HStack></Button><Button action={() => setActiveFilterType("groups")}><HStack><Text>分组</Text>{activeFilterType === "groups" && <Image systemName="checkmark" />}</HStack></Button></Menu>}
                   {allTags.length > 0 && <Menu label={<HStack><Text>筛选标签</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveTag(null)}><HStack><Text>显示全部</Text>{activeTag === null && <Image systemName="checkmark" />}</HStack></Button>{allTags.map(tag => <Button key={tag} action={() => setActiveTag(tag)}><HStack><Text>{tag}</Text>{activeTag === tag && <Image systemName="checkmark" />}</HStack></Button>)}</Menu>}
                 </Menu>
               </ToolbarItem>
@@ -363,7 +461,7 @@ export const ApiListPage = ({ accounts, setAccounts, isSelecting, setIsSelecting
               <ToolbarItem placement="bottomBar">
                 <HStack key="bottom-actions" spacing={16} alignment="center" padding={{ horizontal: 10 }}>
                   <Button disabled={selectedIds.size === 0} action={() => {
-                    if (selectedIds.size === 0) return;
+                    if (selectedIds.size === 0) return
                     const selectedItems = accounts.filter(a => selectedIds.has(a.id))
                     const copyText = selectedItems.map(a => {
                       const parts = [`标题: ${a.name}`]
@@ -383,10 +481,10 @@ export const ApiListPage = ({ accounts, setAccounts, isSelecting, setIsSelecting
                   }}><HStack spacing={4} alignment="center"><Image systemName="doc.on.doc" foregroundStyle={selectedIds.size > 0 ? "#007AFF" : "#C7C7CC"} font="footnote" fontWeight="semibold" /><Text foregroundStyle={selectedIds.size > 0 ? "#007AFF" : "#C7C7CC"} font="footnote" fontWeight="semibold">复制</Text></HStack></Button>
                   <Text font="footnote" fontWeight="semibold" foregroundStyle="#8E8E93">已选择 {selectedIds.size} 项</Text>
                   <Button disabled={selectedIds.size === 0} action={async () => {
-                    if (selectedIds.size === 0) return;
-                    const count = selectedIds.size;
+                    if (selectedIds.size === 0) return
+                    const count = selectedIds.size
                     if (await Dialog.confirm({ title: "确认删除", message: `确认删除这 ${count} 条信息吗？操作不可恢复。` })) {
-                      setAccounts(accounts.filter(a => !selectedIds.has(a.id)))
+                      setAccounts(prev => prev.filter(a => !selectedIds.has(a.id)))
                       pendingActionToast = { msg: `已删除 ${count} 条信息`, isError: true }
                       setSelectedIds(new Set()); setIsSelecting(false)
                     }
@@ -397,30 +495,75 @@ export const ApiListPage = ({ accounts, setAccounts, isSelecting, setIsSelecting
           </Toolbar>
         }
       >
-        {filteredAccounts.length === 0 ? (
+        {filteredAccounts.length === 0 && (activeTag || activeFilterType !== "all" || groups.length === 0) ? (
           <VStack padding={40} frame={{ maxWidth: "infinity" }} alignment="center"><Image systemName="person.circle" foregroundStyle="#C7C7CC" font="largeTitle" /><Text foregroundStyle="#8E8E93" font="body" padding={{ top: 12 }}>暂无账号，点击右上角 + 添加</Text></VStack>
         ) : (
-          sortedGroups.map(group => (
-            <Section key={group} header={<Text>{group}</Text>}>
-              {groupedAccounts[group].map((account: AccountItem) => (
-                <AccountRow 
-                  key={account.id}
-                  account={account}
-                  isSelecting={isSelecting}
-                  isSelected={selectedIds.has(account.id)}
-                  onSelectToggle={() => {
-                    const newSet = new Set(selectedIds)
-                    if (newSet.has(account.id)) newSet.delete(account.id)
-                    else newSet.add(account.id)
-                    setSelectedIds(newSet)
-                    showToast(newSet.size > 0 ? `已选择 ${newSet.size} 个项目` : "已取消选择")
-                  }}
-                  onClick={() => openPreviewPage(account)}
-                  onDelete={() => { setAccounts(accounts.filter(a => a.id !== account.id)); showToast("已删除", true) }}
-                  onPinToggle={() => { setAccounts(accounts.map(a => a.id === account.id ? { ...a, isPinned: !a.isPinned } : a)); showToast(account.isPinned ? "已取消置顶" : "已置顶") }}
-                  showToast={showToast}
-                />
-              ))}
+          sectionData.map(section => (
+            <Section key={section.key} header={<Text>{section.title}</Text>}>
+              {section.items.map((item, idx) => {
+                if (item._type === "group") {
+                  return (
+                    <Button
+                      key={`group-${item.group.id}`}
+                      action={() => openGroupPage(item.group)}
+                      contextMenu={{
+                        menuItems: (
+                          <>
+                            <Button action={async () => {
+                              const newName = await Dialog.prompt({ title: "重命名分组", message: "请输入新名称", defaultValue: item.group.name })
+                              if (!newName?.trim() || newName.trim() === item.group.name) return
+                              if (groups.some(g => g.name === newName.trim())) return showToast("该分组名已存在", true)
+                              setGroups(prev => prev.map(g => g.id === item.group.id ? { ...g, name: newName.trim() } : g))
+                              showToast("分组已重命名")
+                            }}><Text>重命名</Text><Image systemName="pencil" /></Button>
+                            <Button action={async () => {
+                              if (await Dialog.confirm({ title: "删除分组", message: `确定删除分组「${item.group.name}」吗？组内项目将变为未分组。` })) {
+                                setAccounts(prev => prev.map(a => a.groupId === item.group.id ? { ...a, groupId: undefined } : a))
+                                setGroups(prev => prev.filter(g => g.id !== item.group.id))
+                                showToast("分组已删除")
+                              }
+                            }} role="destructive"><Text>删除分组</Text><Image systemName="trash" foregroundStyle="#FF3B30" /></Button>
+                          </>
+                        )
+                      }}
+                    >
+                      <HStack spacing={12} alignment="center" padding={{ vertical: 4 }}>
+                        <VStack frame={{ width: 36, height: 36 }} alignment="center" background="quaternarySystemFill" clipShape={{ type: "rect", cornerRadius: 8 }}>
+                          <Image systemName="folder.fill" foregroundStyle="#FF9500" font="title3" />
+                        </VStack>
+                        <Text font="headline">{item.group.name}</Text>
+                        <Spacer />
+                        <Text foregroundStyle="#8E8E93" font="subheadline">{accounts.filter(a => a.groupId === item.group.id).length} 项</Text>
+                        <Image systemName="chevron.right" foregroundStyle="#C7C7CC" font="caption" />
+                      </HStack>
+                    </Button>
+                  )
+                }
+                const account = item.account
+                return (
+                  <AccountRow
+                    key={account.id}
+                    account={account}
+                    isSelecting={isSelecting}
+                    isSelected={selectedIds.has(account.id)}
+                    onSelectToggle={() => {
+                      const newSet = new Set(selectedIds)
+                      if (newSet.has(account.id)) newSet.delete(account.id)
+                      else newSet.add(account.id)
+                      setSelectedIds(newSet)
+                      showToast(newSet.size > 0 ? `已选择 ${newSet.size} 个项目` : "已取消选择")
+                    }}
+                    onClick={() => openPreviewPage(account)}
+                    onDelete={() => { setAccounts(prev => prev.filter(a => a.id !== account.id)); showToast("已删除", true) }}
+                    onPinToggle={() => { setAccounts(prev => prev.map(a => a.id === account.id ? { ...a, isPinned: !a.isPinned } : a)); showToast(account.isPinned ? "已取消置顶" : "已置顶") }}
+                    groups={groups}
+                    onMoveToGroup={(groupId) => handleMoveToGroup(account.id, groupId)}
+                    onRemoveFromGroup={() => handleRemoveFromGroup(account.id)}
+                    onCreateGroup={handleCreateGroup}
+                    showToast={showToast}
+                  />
+                )
+              })}
             </Section>
           ))
         )}
@@ -430,10 +573,11 @@ export const ApiListPage = ({ accounts, setAccounts, isSelecting, setIsSelecting
 }
 
 // Bookmark 业务页面
-export const BookmarkEditorPage = ({ initialBookmark, onSave }: BookmarkEditorPageProps) => {
+export const BookmarkEditorPage = ({ initialBookmark, onSave, groups }: BookmarkEditorPageProps) => {
   const [title, setTitle] = useState<string>(initialBookmark?.title || "")
   const [url, setUrl] = useState<string>(initialBookmark?.url || "")
   const [tagsStr, setTagsStr] = useState<string>(initialBookmark?.tags?.join(", ") || "")
+  const [groupId, setGroupId] = useState<string | undefined>(initialBookmark?.groupId)
   const [iconUrl, setIconUrl] = useState<string>(initialBookmark?.iconUrl || "")
   const [notes, setNotes] = useState<string>(initialBookmark?.notes || "")
   const [customFields, setCustomFields] = useState<CustomField[]>(initialBookmark?.customFields || [])
@@ -492,7 +636,8 @@ export const BookmarkEditorPage = ({ initialBookmark, onSave }: BookmarkEditorPa
       notes: notes.trim() || undefined,
       iconUrl: iconUrl.trim() || undefined,
       customFields: validCustomFields.length > 0 ? validCustomFields : undefined,
-      isPinned: initialBookmark?.isPinned || false
+      isPinned: initialBookmark?.isPinned || false,
+      groupId
     })
     dismiss()
   }
@@ -504,21 +649,35 @@ export const BookmarkEditorPage = ({ initialBookmark, onSave }: BookmarkEditorPa
         navigationBarTitleDisplayMode="inline"
         toast={{ isPresented: toast.msg !== "", onChanged: (v) => { if (!v) setToast({ msg: "", isError: false }) }, message: toast.msg || " ", position: "top", textColor: toast.isError ? "#FF3B30" : undefined }}
         toolbar={{
-          topBarLeading: <Button action={() => dismiss()}><HStack spacing={5}><Image systemName="chevron.left" fontWeight="semibold" foregroundStyle="#007AFF"/></HStack></Button>,
+          topBarLeading: <Button action={() => dismiss()}><HStack spacing={5}><Image systemName="chevron.left" fontWeight="semibold" foregroundStyle="#007AFF" /></HStack></Button>,
           topBarTrailing: <Button action={handleSave}><Text foregroundStyle="#007AFF" fontWeight="semibold">保存</Text></Button>,
         }}
       >
         <Section header={<Text>链接信息</Text>}>
-          <HStack alignment="center" spacing={8}>
-            <FormRow label="书签名称" value={title} onChanged={setTitle} prompt="填写链接后自动获取" autofocus={!initialBookmark} />
-            <Button buttonStyle="plain" action={handleFetchTitle}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="title3" /></Button>
+          <HStack alignment="center" spacing={12} padding={{ vertical: 4 }}>
+            <Text frame={{ width: 75, alignment: "leading" }} foregroundStyle="#333333">书签名称</Text>
+            <TextField label={<Text>{"l"}</Text>} value={title} onChanged={setTitle} prompt="填写链接后自动获取" autofocus={!initialBookmark} />
+            <Button buttonStyle="plain" action={handleFetchTitle}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="subheadline" /></Button>
+            {title.length > 0 ? <Button buttonStyle="plain" action={() => setTitle("")}><Image systemName="xmark.circle.fill" foregroundStyle="#C7C7CC" font="subheadline" /></Button> : undefined}
+          </HStack>
+          <HStack alignment="center" spacing={12} padding={{ vertical: 4 }}>
+            <Text frame={{ width: 75, alignment: "leading" }} foregroundStyle="#333333">图标链接</Text>
+            <TextField label={<Text>{"l"}</Text>} value={iconUrl} onChanged={setIconUrl} prompt="填写链接后自动获取（可选）" />
+            <Button buttonStyle="plain" action={handleFetchIcon}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="subheadline" /></Button>
+            {iconUrl.length > 0 ? <Button buttonStyle="plain" action={() => setIconUrl("")}><Image systemName="xmark.circle.fill" foregroundStyle="#C7C7CC" font="subheadline" /></Button> : undefined}
           </HStack>
           <FormRow label="书签链接" value={url} onChanged={(v: string) => { setUrl(v); autoFillFromUrl(v) }} prompt="https://example.com" />
           <FormRow label="分类标签" value={tagsStr} onChanged={setTagsStr} prompt="多个标签用逗号分隔（可选）" />
-          <HStack alignment="center" spacing={8}>
-            <FormRow label="图标链接" value={iconUrl} onChanged={setIconUrl} prompt="填写链接后自动获取（可选）" />
-            <Button buttonStyle="plain" action={handleFetchIcon}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="title3" /></Button>
-          </HStack>
+          {groups && groups.length > 0 ? (
+            <Picker
+              title="所属分组"
+              value={groupId || "__ungrouped__"}
+              onChanged={(v: string) => setGroupId(v === "__ungrouped__" ? undefined : v)}
+            >
+              <Text tag="__ungrouped__">未分组</Text>
+              {groups.map(g => <Text key={g.id} tag={g.id}>{g.name}</Text>)}
+            </Picker>
+          ) : undefined}
         </Section>
         <Section header={<Text>附加信息</Text>}>
           <FormRow label="备注" value={notes} onChanged={setNotes} prompt="其他备忘信息（可选）" />
@@ -539,18 +698,20 @@ export const BookmarkEditorPage = ({ initialBookmark, onSave }: BookmarkEditorPa
   )
 }
 
-export const BookmarkPreviewPage = ({ bookmark, onUpdate, onDelete }: BookmarkPreviewPageProps) => {
+export const BookmarkPreviewPage = ({ bookmark, onUpdate, onDelete, groups }: BookmarkPreviewPageProps) => {
   const [currentBookmark, setCurrentBookmark] = useState<BookmarkItem>(bookmark)
   const [toast, setToast] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false })
   const dismiss = Navigation.useDismiss()
   const showToast = (msg: string, isError = false) => setToast({ msg, isError })
+  const ShapeVStack = VStack as any
+  const groupName = bookmark.groupId && groups ? groups.find(g => g.id === bookmark.groupId)?.name : undefined
 
-  const handleEdit = () => { Navigation.present(<BookmarkEditorPage initialBookmark={currentBookmark} onSave={(nextBookmark: BookmarkItem) => { setCurrentBookmark(nextBookmark); onUpdate(nextBookmark); showToast("修改已保存") }} />) }
+  const handleEdit = () => { Navigation.present(<BookmarkEditorPage initialBookmark={currentBookmark} groups={groups} onSave={(nextBookmark: BookmarkItem) => { setCurrentBookmark(nextBookmark); onUpdate(nextBookmark); showToast("修改已保存") }} />) }
   const handleDelete = async () => { if (await Dialog.confirm({ title: "确认删除", message: `确定要删除「${currentBookmark.title}」吗？` })) { onDelete(currentBookmark.id); dismiss() } }
   const CopyableRow = ({ label, value }: { label: string, value: string }) => (
     <Button action={() => { Pasteboard.setString(value); showToast(`${label}已复制`) }}><HStack alignment="center"><Text>{label}</Text><Spacer /><Text foregroundStyle="#8E8E93" lineLimit={1} frame={{ maxWidth: 220, alignment: "trailing" }}>{value}</Text></HStack></Button>
   )
-  
+
   const hasAdditionalInfo = !!(currentBookmark.notes || currentBookmark.customFields?.length)
 
   return (
@@ -560,7 +721,7 @@ export const BookmarkPreviewPage = ({ bookmark, onUpdate, onDelete }: BookmarkPr
         navigationBarTitleDisplayMode="inline"
         toast={{ isPresented: toast.msg !== "", onChanged: (v) => { if (!v) setToast({ msg: "", isError: false }) }, message: toast.msg || " ", position: "top", textColor: toast.isError ? "#FF3B30" : undefined }}
         toolbar={{
-          topBarLeading: <Button action={() => dismiss()}><HStack spacing={5}><Image systemName="chevron.left" fontWeight="semibold" foregroundStyle="#007AFF"/></HStack></Button>,
+          topBarLeading: <Button action={() => dismiss()}><HStack spacing={5}><Image systemName="chevron.left" fontWeight="semibold" foregroundStyle="#007AFF" /></HStack></Button>,
           topBarTrailing: <Button action={handleEdit}><Text foregroundStyle="#007AFF">编辑</Text></Button>,
         }}
       >
@@ -568,41 +729,52 @@ export const BookmarkPreviewPage = ({ bookmark, onUpdate, onDelete }: BookmarkPr
           <AvatarIcon url={currentBookmark.iconUrl} name={currentBookmark.title} size={64} />
           <VStack alignment="leading" spacing={8}>
             <Text font="title2" fontWeight="bold">{currentBookmark.title}</Text>
-            {currentBookmark.tags?.length ? (
-              <HStack spacing={6}>
-                {currentBookmark.tags.map((tag: string, index: number) => { const ShapeVStack = VStack as any; return <ShapeVStack key={index} background="quaternarySystemFill" clipShape={{ type: "rect", cornerRadius: 4 }}><Text font="caption2" foregroundStyle="#007AFF" fontWeight="medium" padding={{ horizontal: 6, vertical: 2 }}>{tag}</Text></ShapeVStack> })}
-              </HStack>
-            ) : undefined}
+            <HStack spacing={6} alignment="center">
+              {groupName ? (
+                <ShapeVStack background="quaternarySystemFill" clipShape={{ type: "rect", cornerRadius: 4 }}>
+                  <HStack spacing={4} alignment="center" padding={{ horizontal: 6, vertical: 2 }}>
+                    <Image systemName="folder.fill" foregroundStyle="#FF9500" font="caption2" />
+                    <Text font="caption2" foregroundStyle="#FF9500" fontWeight="medium">{groupName}</Text>
+                  </HStack>
+                </ShapeVStack>
+              ) : undefined}
+              {currentBookmark.tags?.length ? (
+                <HStack spacing={6}>
+                  {currentBookmark.tags.map((tag: string, index: number) => <ShapeVStack key={index} background="quaternarySystemFill" clipShape={{ type: "rect", cornerRadius: 4 }}><Text font="caption2" foregroundStyle="#007AFF" fontWeight="medium" padding={{ horizontal: 6, vertical: 2 }}>{tag}</Text></ShapeVStack>)}
+                </HStack>
+              ) : undefined}
+            </HStack>
           </VStack>
           <Spacer />
         </HStack>
 
-        <Section 
-          header={<Text>链接信息</Text>} 
+        <Section
+          header={<Text>链接信息</Text>}
           footer={!hasAdditionalInfo ? <Text font="footnote" foregroundStyle="#8E8E93">点击信息即可快速复制</Text> : undefined}
         >
           <CopyableRow label="链接" value={currentBookmark.url} />
         </Section>
 
         {hasAdditionalInfo ? (
-          <Section 
-            header={<Text>附加信息</Text>} 
+          <Section
+            header={<Text>附加信息</Text>}
             footer={<Text font="footnote" foregroundStyle="#8E8E93">点击信息即可快速复制</Text>}
           >
             {currentBookmark.notes ? <CopyableRow label="备注" value={currentBookmark.notes} /> : undefined}
             {currentBookmark.customFields?.map((field: CustomField) => <CopyableRow key={field.id} label={field.key} value={field.value} />)}
           </Section>
         ) : undefined}
-        
+
         <Section><Button action={handleDelete}><HStack frame={{ maxWidth: "infinity" }} alignment="center"><Text foregroundStyle="#FF3B30">删除此书签</Text></HStack></Button></Section>
       </List>
     </NavigationStack>
   )
 }
 
-export const BookmarkListPage = ({ bookmarks, setBookmarks, isSelecting, setIsSelecting }: { bookmarks: BookmarkItem[], setBookmarks: (items: BookmarkItem[]) => void, isSelecting: boolean, setIsSelecting: (isSelecting: boolean) => void }) => {
+export const BookmarkListPage = ({ bookmarks, setBookmarks, groups, setGroups, isSelecting, setIsSelecting }: BookmarkListPageProps) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [activeFilterType, setActiveFilterType] = useState<"all" | "accounts" | "groups">("all")
   const [toast, setToast] = useState({ msg: "", isError: false, isPresented: false })
 
   const showToast = useCallback((msg: string, isError = false) => {
@@ -618,39 +790,95 @@ export const BookmarkListPage = ({ bookmarks, setBookmarks, isSelecting, setIsSe
     }
   }, [isSelecting, showToast])
 
-  const { filteredBookmarks, groupedBookmarks, sortedGroups, allTags } = useMemo(() => {
+  const { filteredBookmarks, sectionData, allTags } = useMemo(() => {
     let filtered = bookmarks
     if (activeTag) filtered = filtered.filter(item => item.tags?.includes(activeTag))
 
-    const grouped = filtered.reduce((acc, bookmark) => {
-      const group = bookmark.isPinned ? "置顶" : getGroupLetter(bookmark.title)
-      if (!acc[group]) acc[group] = []
-      acc[group].push(bookmark)
-      return acc
-    }, {} as Record<string, BookmarkItem[]>)
+    // 构建分组数据：分组条目和未分组项目按字母混合排序
+    type SectionItem = { _type: "group"; group: GroupItem } | { _type: "bookmark"; bookmark: BookmarkItem }
+    const sectionMap: Record<string, SectionItem[]> = {}
 
-    Object.values(grouped).forEach(groupItems => groupItems.sort((a, b) => sortByDisplayTitle(a.title, b.title)))
+    // 根据类型筛选显示分组条目（筛选标签时隐藏）
+    if (!activeTag && (activeFilterType === "all" || activeFilterType === "groups")) {
+      for (const group of groups) {
+        const letter = getGroupLetter(group.name)
+        if (!sectionMap[letter]) sectionMap[letter] = []
+        sectionMap[letter].push({ _type: "group", group })
+      }
+    }
 
-    const sorted = Object.keys(grouped).sort((a, b) => {
-      if (a === "置顶") return -1;
-      if (b === "置顶") return 1;
-      return a === "#" ? 1 : b === "#" ? -1 : a.localeCompare(b);
+    // 根据类型筛选显示未分组的书签
+    if (activeFilterType === "all" || activeFilterType === "accounts") {
+      const ungrouped = filtered.filter(item => !item.groupId)
+      for (const bookmark of ungrouped) {
+        const letter = bookmark.isPinned ? "置顶" : getGroupLetter(bookmark.title)
+        if (!sectionMap[letter]) sectionMap[letter] = []
+        sectionMap[letter].push({ _type: "bookmark", bookmark })
+      }
+    }
+
+    // 排序每个 section 内的项目
+    for (const items of Object.values(sectionMap)) {
+      items.sort((a, b) => {
+        const nameA = a._type === "group" ? a.group.name : a.bookmark.title
+        const nameB = b._type === "group" ? b.group.name : b.bookmark.title
+        return sortByDisplayTitle(nameA, nameB)
+      })
+    }
+
+    // 构建有序 sections
+    const sortedKeys = Object.keys(sectionMap).sort((a, b) => {
+      if (a === "置顶") return -1
+      if (b === "置顶") return 1
+      if (a === "#") return 1
+      if (b === "#") return -1
+      return a.localeCompare(b)
     })
-    const tags = Array.from(new Set(bookmarks.flatMap(item => item.tags || []))).sort()
+    const sections = sortedKeys.map(key => ({ key, title: key, items: sectionMap[key] }))
 
-    return { filteredBookmarks: filtered, groupedBookmarks: grouped, sortedGroups: sorted, allTags: tags }
-  }, [bookmarks, activeTag])
+    const tags = Array.from(new Set(bookmarks.filter(item => !item.groupId).flatMap(item => item.tags || []))).sort()
+    return { filteredBookmarks: filtered, sectionData: sections, allTags: tags }
+  }, [bookmarks, groups, activeTag, activeFilterType])
 
-  const addBookmark = async () => { Navigation.present(<BookmarkEditorPage onSave={bookmark => { setBookmarks([...bookmarks, bookmark]); showToast("书签已添加") }} />) }
+  const addBookmark = async () => { Navigation.present(<BookmarkEditorPage groups={groups} onSave={bookmark => { setBookmarks(prev => [...prev, bookmark]); showToast("书签已添加") }} />) }
+
+  // 创建新分组
+  const handleCreateGroup = async () => {
+    const name = await Dialog.prompt({ title: "创建分组", message: "请输入分组名称", placeholder: "例如：工作、个人" })
+    if (!name?.trim()) return
+    if (groups.some(g => g.name === name.trim())) return showToast("该分组已存在", true)
+    const newGroup: GroupItem = { id: generateId(), name: name.trim(), createdAt: new Date().toLocaleDateString() }
+    setGroups(prev => [...prev, newGroup])
+    showToast(`分组「${name.trim()}」已创建`)
+  }
+
+  // 移动书签到分组
+  const handleMoveToGroup = (bookmarkId: string, groupId: string) => {
+    setBookmarks(prev => prev.map(item => item.id === bookmarkId ? { ...item, groupId } : item))
+    const group = groups.find(g => g.id === groupId)
+    showToast(`已移至「${group?.name || ""}」`)
+  }
+
+  // 从分组中移除
+  const handleRemoveFromGroup = (bookmarkId: string) => {
+    setBookmarks(prev => prev.map(item => item.id === bookmarkId ? { ...item, groupId: undefined } : item))
+    showToast("已从分组中移除")
+  }
   const openPreviewPage = (bookmark: BookmarkItem) => {
     Navigation.present(
-      <BookmarkPreviewPage 
-        bookmark={bookmark} 
-        onUpdate={(updatedBookmark: BookmarkItem) => { setBookmarks(bookmarks.map(item => item.id === updatedBookmark.id ? updatedBookmark : item)) }} 
-        onDelete={(id: string) => { setBookmarks(bookmarks.filter(item => item.id !== id)); showToast("书签已删除", true) }} 
-        onDuplicate={(nextBookmark: BookmarkItem) => { setBookmarks([...bookmarks, nextBookmark]); showToast("书签副本已添加") }} 
+      <BookmarkPreviewPage
+        bookmark={bookmark}
+        groups={groups}
+        onUpdate={(updatedBookmark: BookmarkItem) => { setBookmarks(prev => prev.map(item => item.id === updatedBookmark.id ? updatedBookmark : item)) }}
+        onDelete={(id: string) => { setBookmarks(prev => prev.filter(item => item.id !== id)); showToast("书签已删除", true) }}
+        onDuplicate={(nextBookmark: BookmarkItem) => { setBookmarks(prev => [...prev, nextBookmark]); showToast("书签副本已添加") }}
       />
     )
+  }
+
+  // 打开分组子页面
+  const openGroupPage = (group: GroupItem) => {
+    Navigation.present(<BookmarkGroupPage group={group} groups={groups} setGroups={setGroups} items={bookmarks} setItems={setBookmarks} type="bookmark" />)
   }
 
   const isAllSelected = filteredBookmarks.length > 0 && selectedIds.size === filteredBookmarks.length
@@ -658,7 +886,7 @@ export const BookmarkListPage = ({ bookmarks, setBookmarks, isSelecting, setIsSe
   return (
     <NavigationStack>
       <List
-        navigationTitle={activeTag ? `筛选: ${activeTag}` : "书签管理"}
+        navigationTitle={activeFilterType !== "all" ? (activeFilterType === "accounts" ? "仅显示书签" : "仅显示分组") : activeTag ? `筛选: ${activeTag}` : "书签管理"}
         navigationBarTitleDisplayMode="inline"
         toast={{ isPresented: toast.isPresented, onChanged: (v) => { if (!v) setToast(prev => ({ ...prev, isPresented: false })) }, message: toast.msg || " ", position: "top", textColor: toast.isError ? "#FF3B30" : undefined }}
         toolbar={
@@ -668,8 +896,8 @@ export const BookmarkListPage = ({ bookmarks, setBookmarks, isSelecting, setIsSe
                 <Button key="cancel-select" action={() => { setIsSelecting(false); setSelectedIds(new Set()) }}>
                   <Text foregroundStyle="#007AFF" fontWeight="semibold">取消</Text>
                 </Button>
-              ) : activeTag ? (
-                <Button key="cancel-filter" action={() => setActiveTag(null)}>
+              ) : activeTag || activeFilterType !== "all" ? (
+                <Button key="cancel-filter" action={() => { setActiveTag(null); setActiveFilterType("all") }}>
                   <Text foregroundStyle="#007AFF" fontWeight="semibold">取消</Text>
                 </Button>
               ) : (
@@ -681,12 +909,12 @@ export const BookmarkListPage = ({ bookmarks, setBookmarks, isSelecting, setIsSe
 
             {isSelecting && (
               <ToolbarItem placement="topBarTrailing">
-                <Button key="select-all" action={() => { 
-                  if (isAllSelected) { 
-                    setSelectedIds(new Set()); showToast("已取消全选") 
-                  } else { 
-                    const allIds = new Set(filteredBookmarks.map(item => item.id)); setSelectedIds(allIds); showToast(`已选择 ${allIds.size} 条书签`) 
-                  } 
+                <Button key="select-all" action={() => {
+                  if (isAllSelected) {
+                    setSelectedIds(new Set()); showToast("已取消全选")
+                  } else {
+                    const allIds = new Set(filteredBookmarks.map(item => item.id)); setSelectedIds(allIds); showToast(`已选择 ${allIds.size} 条书签`)
+                  }
                 }}>
                   <Text foregroundStyle="#007AFF" fontWeight="semibold">{isAllSelected ? "取消全选" : "全选"}</Text>
                 </Button>
@@ -695,25 +923,27 @@ export const BookmarkListPage = ({ bookmarks, setBookmarks, isSelecting, setIsSe
 
             {!isSelecting && (
               <ToolbarItem placement="topBarTrailing">
-                <Button key="add-btn" action={addBookmark}>
-                  <Image systemName="plus" foregroundStyle="#007AFF" fontWeight="semibold" />
-                </Button>
+                <Menu key="add-menu" label={<Image systemName="plus" foregroundStyle="#007AFF" fontWeight="semibold" />}>
+                  <Button action={addBookmark}><HStack><Text>新建书签</Text><Image systemName="bookmark" /></HStack></Button>
+                  <Button action={handleCreateGroup}><HStack><Text>创建分组</Text><Image systemName="folder.badge.plus" /></HStack></Button>
+                </Menu>
               </ToolbarItem>
             )}
-            
+
             {!isSelecting && (
               <ToolbarSpacer placement="topBarTrailing" />
             )}
-            
+
             {!isSelecting && bookmarks.length > 0 && (
               <ToolbarItem placement="topBarTrailing">
-                <Menu key="more-menu" label={<Image systemName={activeTag ? "line.3.horizontal.decrease.circle.fill" : "ellipsis"} foregroundStyle={activeTag ? "#FF9500" : "#007AFF"} font="title3" />}>
+                <Menu key="more-menu" label={<Image systemName={(activeTag || activeFilterType !== "all") ? "line.3.horizontal.decrease.circle.fill" : "ellipsis"} foregroundStyle={(activeTag || activeFilterType !== "all") ? "#FF9500" : "#007AFF"} font="title3" />}>
                   {filteredBookmarks.length > 0 && <Button action={() => { setIsSelecting(true); setSelectedIds(new Set()) }}><HStack><Text>选择</Text><Image systemName="checkmark.circle" /></HStack></Button>}
+                  {groups.length > 0 && <Menu label={<HStack><Text>筛选类型</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveFilterType("all")}><HStack><Text>显示全部</Text>{activeFilterType === "all" && <Image systemName="checkmark" />}</HStack></Button><Button action={() => setActiveFilterType("accounts")}><HStack><Text>书签</Text>{activeFilterType === "accounts" && <Image systemName="checkmark" />}</HStack></Button><Button action={() => setActiveFilterType("groups")}><HStack><Text>分组</Text>{activeFilterType === "groups" && <Image systemName="checkmark" />}</HStack></Button></Menu>}
                   {allTags.length > 0 && <Menu label={<HStack><Text>筛选标签</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveTag(null)}><HStack><Text>显示全部</Text>{activeTag === null && <Image systemName="checkmark" />}</HStack></Button>{allTags.map(tag => <Button key={tag} action={() => setActiveTag(tag)}><HStack><Text>{tag}</Text>{activeTag === tag && <Image systemName="checkmark" />}</HStack></Button>)}</Menu>}
                 </Menu>
               </ToolbarItem>
             )}
-            
+
             {isSelecting && (
               <ToolbarItem placement="bottomBar">
                 <HStack key="bottom-actions" spacing={16} alignment="center" padding={{ horizontal: 10 }}>
@@ -736,7 +966,7 @@ export const BookmarkListPage = ({ bookmarks, setBookmarks, isSelecting, setIsSe
                     if (selectedIds.size === 0) return
                     const count = selectedIds.size
                     if (await Dialog.confirm({ title: "确认删除", message: `确认删除这 ${count} 条书签吗？操作不可恢复。` })) {
-                      setBookmarks(bookmarks.filter(item => !selectedIds.has(item.id)))
+                      setBookmarks(prev => prev.filter(item => !selectedIds.has(item.id)))
                       pendingActionToast = { msg: `已删除 ${count} 条书签`, isError: true }
                       setSelectedIds(new Set()); setIsSelecting(false)
                     }
@@ -747,26 +977,375 @@ export const BookmarkListPage = ({ bookmarks, setBookmarks, isSelecting, setIsSe
           </Toolbar>
         }
       >
-        {filteredBookmarks.length === 0 ? (
+        {filteredBookmarks.length === 0 && (activeTag || activeFilterType !== "all" || groups.length === 0) ? (
           <VStack padding={40} frame={{ maxWidth: "infinity" }} alignment="center"><Image systemName="bookmark.circle" foregroundStyle="#C7C7CC" font="largeTitle" /><Text foregroundStyle="#8E8E93" font="body" padding={{ top: 12 }}>暂无书签，点击右上角 + 添加</Text></VStack>
         ) : (
-          sortedGroups.map(group => (
-            <Section key={group} header={<Text>{group}</Text>}>
-              {groupedBookmarks[group].map(bookmark => (
-                <BookmarkRow
-                  key={bookmark.id}
-                  bookmark={bookmark}
+          sectionData.map(section => (
+            <Section key={section.key} header={<Text>{section.title}</Text>}>
+              {section.items.map((item) => {
+                if (item._type === "group") {
+                  return (
+                    <Button
+                      key={`group-${item.group.id}`}
+                      action={() => openGroupPage(item.group)}
+                      contextMenu={{
+                        menuItems: (
+                          <>
+                            <Button action={async () => {
+                              const newName = await Dialog.prompt({ title: "重命名分组", message: "请输入新名称", defaultValue: item.group.name })
+                              if (!newName?.trim() || newName.trim() === item.group.name) return
+                              if (groups.some(g => g.name === newName.trim())) return showToast("该分组名已存在", true)
+                              setGroups(prev => prev.map(g => g.id === item.group.id ? { ...g, name: newName.trim() } : g))
+                              showToast("分组已重命名")
+                            }}><Text>重命名</Text><Image systemName="pencil" /></Button>
+                            <Button action={async () => {
+                              if (await Dialog.confirm({ title: "删除分组", message: `确定删除分组「${item.group.name}」吗？组内项目将变为未分组。` })) {
+                                setBookmarks(prev => prev.map(b => b.groupId === item.group.id ? { ...b, groupId: undefined } : b))
+                                setGroups(prev => prev.filter(g => g.id !== item.group.id))
+                                showToast("分组已删除")
+                              }
+                            }} role="destructive"><Text>删除分组</Text><Image systemName="trash" foregroundStyle="#FF3B30" /></Button>
+                          </>
+                        )
+                      }}
+                    >
+                      <HStack spacing={12} alignment="center" padding={{ vertical: 4 }}>
+                        <VStack frame={{ width: 36, height: 36 }} alignment="center" background="quaternarySystemFill" clipShape={{ type: "rect", cornerRadius: 8 }}>
+                          <Image systemName="folder.fill" foregroundStyle="#FF9500" font="title3" />
+                        </VStack>
+                        <Text font="headline">{item.group.name}</Text>
+                        <Spacer />
+                        <Text foregroundStyle="#8E8E93" font="subheadline">{bookmarks.filter(b => b.groupId === item.group.id).length} 项</Text>
+                        <Image systemName="chevron.right" foregroundStyle="#C7C7CC" font="caption" />
+                      </HStack>
+                    </Button>
+                  )
+                }
+                const bookmark = item.bookmark
+                return (
+                  <BookmarkRow
+                    key={bookmark.id}
+                    bookmark={bookmark}
+                    isSelecting={isSelecting}
+                    isSelected={selectedIds.has(bookmark.id)}
+                    onSelectToggle={() => {
+                      const newSet = new Set(selectedIds)
+                      if (newSet.has(bookmark.id)) newSet.delete(bookmark.id)
+                      else newSet.add(bookmark.id)
+                      setSelectedIds(newSet); showToast(newSet.size > 0 ? `已选择 ${newSet.size} 个项目` : "已取消选择")
+                    }}
+                    onClick={() => openPreviewPage(bookmark)}
+                    onDelete={() => { setBookmarks(prev => prev.filter(item => item.id !== bookmark.id)); showToast("已删除", true) }}
+                    onPinToggle={() => { setBookmarks(prev => prev.map(item => item.id === bookmark.id ? { ...item, isPinned: !item.isPinned } : item)); showToast(bookmark.isPinned ? "已取消置顶" : "已置顶") }}
+                    groups={groups}
+                    onMoveToGroup={(groupId) => handleMoveToGroup(bookmark.id, groupId)}
+                    onRemoveFromGroup={() => handleRemoveFromGroup(bookmark.id)}
+                    onCreateGroup={handleCreateGroup}
+                    showToast={showToast}
+                  />
+                )
+              })}
+            </Section>
+          ))
+        )}
+      </List>
+    </NavigationStack>
+  )
+}
+
+// 分组子页面
+export const GroupPage = ({ group, groups, setGroups, items, setItems, type }: GroupPageProps & { items: AccountItem[]; setItems: StateSetter<AccountItem[]> }) => {
+  const [localItems, setLocalItems] = useState<AccountItem[]>(items)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [isSelecting, setIsSelecting] = useState(false)
+  const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [toast, setToast] = useState({ msg: "", isError: false, isPresented: false })
+  const dismiss = Navigation.useDismiss()
+  const showToast = useCallback((msg: string, isError = false) => { setToast(prev => ({ ...prev, isPresented: false })); setTimeout(() => setToast({ msg, isError, isPresented: true }), 150) }, [])
+
+  // 同时更新本地状态和父状态
+  const updateItems = useCallback((updater: (prev: AccountItem[]) => AccountItem[]) => {
+    setLocalItems(updater)
+    setItems(updater)
+  }, [setItems])
+
+  const { groupItems, allTags, sectionData } = useMemo(() => {
+    let filtered = localItems.filter((item: AccountItem) => item.groupId === group.id)
+    if (activeTag) filtered = filtered.filter((item: AccountItem) => item.tags?.includes(activeTag))
+    const tags = Array.from(new Set(localItems.filter((item: AccountItem) => item.groupId === group.id).flatMap((item: AccountItem) => item.tags || []))).sort()
+
+    // 按字母分组（与主列表同款逻辑）
+    const sectionMap: Record<string, AccountItem[]> = {}
+    for (const item of filtered) {
+      const letter = item.isPinned ? "置顶" : getGroupLetter(item.name)
+      if (!sectionMap[letter]) sectionMap[letter] = []
+      sectionMap[letter].push(item)
+    }
+    for (const arr of Object.values(sectionMap)) arr.sort((a, b) => sortByDisplayTitle(a.name, b.name))
+    const sortedKeys = Object.keys(sectionMap).sort((a, b) => {
+      if (a === "置顶") return -1; if (b === "置顶") return 1
+      if (a === "#") return 1; if (b === "#") return -1
+      return a.localeCompare(b)
+    })
+    const sections = sortedKeys.map(key => ({ key, title: key, items: sectionMap[key] }))
+
+    return { groupItems: filtered, allTags: tags, sectionData: sections }
+  }, [localItems, group.id, activeTag])
+
+  const handleRemoveFromGroup = (itemId: string) => {
+    updateItems((prev: AccountItem[]) => prev.map((item: AccountItem) => item.id === itemId ? { ...item, groupId: undefined } : item))
+    showToast("已从分组中移除")
+  }
+
+  const addAccount = async () => {
+    await Navigation.present(<AccountEditorPage groups={groups} onSave={(acc: AccountItem) => { updateItems((prev: AccountItem[]) => [...prev, { ...acc, groupId: group.id }]); showToast("账号已添加") }} />)
+  }
+
+  const isAllSelected = groupItems.length > 0 && selectedIds.size === groupItems.length
+
+  return (
+    <NavigationStack>
+      <List
+        navigationTitle={group.name}
+        navigationBarTitleDisplayMode="inline"
+        toast={{ isPresented: toast.isPresented, onChanged: (v: boolean) => { if (!v) setToast(prev => ({ ...prev, isPresented: false })) }, message: toast.msg || " ", position: "top", textColor: toast.isError ? "#FF3B30" : undefined }}
+        toolbar={
+          <Toolbar>
+            <ToolbarItem placement="topBarLeading">
+              {isSelecting ? (
+                <Button action={() => { setIsSelecting(false); setSelectedIds(new Set()) }}><Text foregroundStyle="#007AFF" fontWeight="semibold">取消</Text></Button>
+              ) : (
+                <Button action={() => dismiss()}><HStack spacing={5}><Image systemName="chevron.left" fontWeight="semibold" foregroundStyle="#007AFF" /></HStack></Button>
+              )}
+            </ToolbarItem>
+            {isSelecting && (
+              <ToolbarItem placement="topBarTrailing">
+                <Button action={() => {
+                  if (isAllSelected) { setSelectedIds(new Set()); showToast("已取消全选") }
+                  else { const allIds = new Set(groupItems.map(a => a.id)); setSelectedIds(allIds); showToast(`已选择 ${allIds.size} 条信息`) }
+                }}><Text foregroundStyle="#007AFF" fontWeight="semibold">{isAllSelected ? "取消全选" : "全选"}</Text></Button>
+              </ToolbarItem>
+            )}
+            {!isSelecting && (
+              <ToolbarItem placement="topBarTrailing">
+                <Button action={addAccount}><Image systemName="plus" foregroundStyle="#007AFF" fontWeight="semibold" /></Button>
+              </ToolbarItem>
+            )}
+            {!isSelecting && <ToolbarSpacer placement="topBarTrailing" />}
+            {!isSelecting && groupItems.length > 0 && (
+              <ToolbarItem placement="topBarTrailing">
+                <Menu key="more-menu" label={<Image systemName={activeTag ? "line.3.horizontal.decrease.circle.fill" : "ellipsis"} foregroundStyle={activeTag ? "#FF9500" : "#007AFF"} font="title3" />}>
+                  <Button action={() => { setIsSelecting(true); setSelectedIds(new Set()) }}><HStack><Text>选择</Text><Image systemName="checkmark.circle" /></HStack></Button>
+                  {allTags.length > 0 && <Menu label={<HStack><Text>筛选标签</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveTag(null)}><HStack><Text>显示全部</Text>{activeTag === null && <Image systemName="checkmark" />}</HStack></Button>{allTags.map(tag => <Button key={tag} action={() => setActiveTag(tag)}><HStack><Text>{tag}</Text>{activeTag === tag && <Image systemName="checkmark" />}</HStack></Button>)}</Menu>}
+                </Menu>
+              </ToolbarItem>
+            )}
+            {isSelecting && (
+              <ToolbarItem placement="bottomBar">
+                <HStack spacing={16} alignment="center" padding={{ horizontal: 10 }}>
+                  <Button disabled={selectedIds.size === 0} action={() => {
+                    if (selectedIds.size === 0) return
+                    const selectedItems = groupItems.filter(a => selectedIds.has(a.id))
+                    const copyText = selectedItems.map(a => {
+                      const parts = [`标题: ${a.name}`]
+                      if (a.username) parts.push(`用户名: ${a.username}`)
+                      if (a.email) parts.push(`邮箱: ${a.email}`)
+                      if (a.password) parts.push(`密码: ${a.password}`)
+                      if (a.apiKey) parts.push(`API Key: ${a.apiKey}`)
+                      if (a.url) parts.push(`网址: ${a.url}`)
+                      if (a.notes) parts.push(`备注: ${a.notes}`)
+                      return parts.join('\n')
+                    }).join('\n\n' + '='.repeat(10) + '\n\n')
+                    Pasteboard.setString(copyText)
+                    showToast(`已复制 ${selectedItems.length} 条信息`)
+                    setSelectedIds(new Set()); setIsSelecting(false)
+                  }}><HStack spacing={4} alignment="center"><Image systemName="doc.on.doc" foregroundStyle={selectedIds.size > 0 ? "#007AFF" : "#C7C7CC"} font="footnote" /><Text foregroundStyle={selectedIds.size > 0 ? "#007AFF" : "#C7C7CC"} font="footnote" fontWeight="semibold">复制</Text></HStack></Button>
+                  <Text font="footnote" fontWeight="semibold" foregroundStyle="#8E8E93">已选择 {selectedIds.size} 项</Text>
+                  <Button disabled={selectedIds.size === 0} action={async () => {
+                    if (selectedIds.size === 0) return
+                    const count = selectedIds.size
+                    if (await Dialog.confirm({ title: "确认移出", message: `确认将 ${count} 个项目移出此分组吗？` })) {
+                      updateItems((prev: AccountItem[]) => prev.map((item: AccountItem) => selectedIds.has(item.id) ? { ...item, groupId: undefined } : item))
+                      showToast(`已移出 ${count} 个项目`)
+                      setSelectedIds(new Set()); setIsSelecting(false)
+                    }
+                  }}><HStack spacing={4} alignment="center"><Image systemName="folder.badge.minus" foregroundStyle={selectedIds.size > 0 ? "#FF3B30" : "#C7C7CC"} font="footnote" /><Text foregroundStyle={selectedIds.size > 0 ? "#FF3B30" : "#C7C7CC"} font="footnote" fontWeight="semibold">移出</Text></HStack></Button>
+                </HStack>
+              </ToolbarItem>
+            )}
+          </Toolbar>
+        }
+      >
+        {groupItems.length === 0 ? (
+          <VStack padding={40} frame={{ maxWidth: "infinity" }} alignment="center"><Image systemName="folder" foregroundStyle="#C7C7CC" font="largeTitle" /><Text foregroundStyle="#8E8E93" font="body" padding={{ top: 12 }}>{activeTag ? "此标签下无内容" : "此分组暂无内容"}</Text></VStack>
+        ) : (
+          sectionData.map(section => (
+            <Section key={section.key} header={<Text>{section.title}</Text>}>
+              {section.items.map((item: AccountItem) => (
+                <AccountRow
+                  key={item.id}
+                  account={item}
                   isSelecting={isSelecting}
-                  isSelected={selectedIds.has(bookmark.id)}
+                  isSelected={selectedIds.has(item.id)}
                   onSelectToggle={() => {
                     const newSet = new Set(selectedIds)
-                    if (newSet.has(bookmark.id)) newSet.delete(bookmark.id)
-                    else newSet.add(bookmark.id)
+                    if (newSet.has(item.id)) newSet.delete(item.id)
+                    else newSet.add(item.id)
+                    setSelectedIds(newSet)
+                    showToast(newSet.size > 0 ? `已选择 ${newSet.size} 个项目` : "已取消选择")
+                  }}
+                  onClick={() => Navigation.present(<AccountPreviewPage account={item} groups={groups} onUpdate={(updated: AccountItem) => { updateItems((prev: AccountItem[]) => prev.map((i: AccountItem) => i.id === updated.id ? updated : i)) }} onDelete={(id: string) => { updateItems((prev: AccountItem[]) => prev.filter((i: AccountItem) => i.id !== id)); showToast("已删除", true) }} />)}
+                  onDelete={() => { updateItems((prev: AccountItem[]) => prev.filter((i: AccountItem) => i.id !== item.id)); showToast("已删除", true) }}
+                  onRemoveFromGroup={() => handleRemoveFromGroup(item.id)}
+                  showToast={showToast}
+                />
+              ))}
+            </Section>
+          ))
+        )}
+      </List>
+    </NavigationStack>
+  )
+}
+
+// 书签分组子页面
+export const BookmarkGroupPage = ({ group, groups, setGroups, items, setItems }: GroupPageProps & { items: BookmarkItem[]; setItems: StateSetter<BookmarkItem[]> }) => {
+  const [localItems, setLocalItems] = useState<BookmarkItem[]>(items)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [isSelecting, setIsSelecting] = useState(false)
+  const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [toast, setToast] = useState({ msg: "", isError: false, isPresented: false })
+  const dismiss = Navigation.useDismiss()
+  const showToast = useCallback((msg: string, isError = false) => { setToast(prev => ({ ...prev, isPresented: false })); setTimeout(() => setToast({ msg, isError, isPresented: true }), 150) }, [])
+
+  // 同时更新本地状态和父状态
+  const updateItems = useCallback((updater: (prev: BookmarkItem[]) => BookmarkItem[]) => {
+    setLocalItems(updater)
+    setItems(updater)
+  }, [setItems])
+
+  const { groupItems, allTags, sectionData } = useMemo(() => {
+    let filtered = localItems.filter((item: BookmarkItem) => item.groupId === group.id)
+    if (activeTag) filtered = filtered.filter((item: BookmarkItem) => item.tags?.includes(activeTag))
+    const tags = Array.from(new Set(localItems.filter((item: BookmarkItem) => item.groupId === group.id).flatMap((item: BookmarkItem) => item.tags || []))).sort()
+
+    // 按字母分组（与主列表同款逻辑）
+    const sectionMap: Record<string, BookmarkItem[]> = {}
+    for (const item of filtered) {
+      const letter = item.isPinned ? "置顶" : getGroupLetter(item.title)
+      if (!sectionMap[letter]) sectionMap[letter] = []
+      sectionMap[letter].push(item)
+    }
+    for (const arr of Object.values(sectionMap)) arr.sort((a, b) => sortByDisplayTitle(a.title, b.title))
+    const sortedKeys = Object.keys(sectionMap).sort((a, b) => {
+      if (a === "置顶") return -1; if (b === "置顶") return 1
+      if (a === "#") return 1; if (b === "#") return -1
+      return a.localeCompare(b)
+    })
+    const sections = sortedKeys.map(key => ({ key, title: key, items: sectionMap[key] }))
+
+    return { groupItems: filtered, allTags: tags, sectionData: sections }
+  }, [localItems, group.id, activeTag])
+
+  const handleRemoveFromGroup = (itemId: string) => {
+    updateItems((prev: BookmarkItem[]) => prev.map((item: BookmarkItem) => item.id === itemId ? { ...item, groupId: undefined } : item))
+    showToast("已从分组中移除")
+  }
+
+  const addBookmark = async () => {
+    await Navigation.present(<BookmarkEditorPage groups={groups} onSave={(bookmark: BookmarkItem) => { updateItems((prev: BookmarkItem[]) => [...prev, { ...bookmark, groupId: group.id }]); showToast("书签已添加") }} />)
+  }
+
+  const isAllSelected = groupItems.length > 0 && selectedIds.size === groupItems.length
+
+  return (
+    <NavigationStack>
+      <List
+        navigationTitle={group.name}
+        navigationBarTitleDisplayMode="inline"
+        toast={{ isPresented: toast.isPresented, onChanged: (v: boolean) => { if (!v) setToast(prev => ({ ...prev, isPresented: false })) }, message: toast.msg || " ", position: "top", textColor: toast.isError ? "#FF3B30" : undefined }}
+        toolbar={
+          <Toolbar>
+            <ToolbarItem placement="topBarLeading">
+              {isSelecting ? (
+                <Button action={() => { setIsSelecting(false); setSelectedIds(new Set()) }}><Text foregroundStyle="#007AFF" fontWeight="semibold">取消</Text></Button>
+              ) : (
+                <Button action={() => dismiss()}><HStack spacing={5}><Image systemName="chevron.left" fontWeight="semibold" foregroundStyle="#007AFF" /></HStack></Button>
+              )}
+            </ToolbarItem>
+            {isSelecting && (
+              <ToolbarItem placement="topBarTrailing">
+                <Button action={() => {
+                  if (isAllSelected) { setSelectedIds(new Set()); showToast("已取消全选") }
+                  else { const allIds = new Set(groupItems.map(item => item.id)); setSelectedIds(allIds); showToast(`已选择 ${allIds.size} 条书签`) }
+                }}><Text foregroundStyle="#007AFF" fontWeight="semibold">{isAllSelected ? "取消全选" : "全选"}</Text></Button>
+              </ToolbarItem>
+            )}
+            {!isSelecting && (
+              <ToolbarItem placement="topBarTrailing">
+                <Button action={addBookmark}><Image systemName="plus" foregroundStyle="#007AFF" fontWeight="semibold" /></Button>
+              </ToolbarItem>
+            )}
+            {!isSelecting && <ToolbarSpacer placement="topBarTrailing" />}
+            {!isSelecting && groupItems.length > 0 && (
+              <ToolbarItem placement="topBarTrailing">
+                <Menu key="more-menu" label={<Image systemName={activeTag ? "line.3.horizontal.decrease.circle.fill" : "ellipsis"} foregroundStyle={activeTag ? "#FF9500" : "#007AFF"} font="title3" />}>
+                  <Button action={() => { setIsSelecting(true); setSelectedIds(new Set()) }}><HStack><Text>选择</Text><Image systemName="checkmark.circle" /></HStack></Button>
+                  {allTags.length > 0 && <Menu label={<HStack><Text>筛选标签</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveTag(null)}><HStack><Text>显示全部</Text>{activeTag === null && <Image systemName="checkmark" />}</HStack></Button>{allTags.map(tag => <Button key={tag} action={() => setActiveTag(tag)}><HStack><Text>{tag}</Text>{activeTag === tag && <Image systemName="checkmark" />}</HStack></Button>)}</Menu>}
+                </Menu>
+              </ToolbarItem>
+            )}
+            {isSelecting && (
+              <ToolbarItem placement="bottomBar">
+                <HStack spacing={16} alignment="center" padding={{ horizontal: 10 }}>
+                  <Button disabled={selectedIds.size === 0} action={() => {
+                    if (selectedIds.size === 0) return
+                    const selectedItems = groupItems.filter(item => selectedIds.has(item.id))
+                    const copyText = selectedItems.map(item => {
+                      const parts = [`标题: ${item.title}`, `链接: ${item.url}`]
+                      if (item.notes) parts.push(`备注: ${item.notes}`)
+                      return parts.join('\n')
+                    }).join('\n\n' + '='.repeat(10) + '\n\n')
+                    Pasteboard.setString(copyText)
+                    showToast(`已复制 ${selectedItems.length} 条书签`)
+                    setSelectedIds(new Set()); setIsSelecting(false)
+                  }}><HStack spacing={4} alignment="center"><Image systemName="doc.on.doc" foregroundStyle={selectedIds.size > 0 ? "#007AFF" : "#C7C7CC"} font="footnote" /><Text foregroundStyle={selectedIds.size > 0 ? "#007AFF" : "#C7C7CC"} font="footnote" fontWeight="semibold">复制</Text></HStack></Button>
+                  <Text font="footnote" fontWeight="semibold" foregroundStyle="#8E8E93">已选择 {selectedIds.size} 项</Text>
+                  <Button disabled={selectedIds.size === 0} action={async () => {
+                    if (selectedIds.size === 0) return
+                    const count = selectedIds.size
+                    if (await Dialog.confirm({ title: "确认移出", message: `确认将 ${count} 个书签移出此分组吗？` })) {
+                      updateItems((prev: BookmarkItem[]) => prev.map((item: BookmarkItem) => selectedIds.has(item.id) ? { ...item, groupId: undefined } : item))
+                      showToast(`已移出 ${count} 个书签`)
+                      setSelectedIds(new Set()); setIsSelecting(false)
+                    }
+                  }}><HStack spacing={4} alignment="center"><Image systemName="folder.badge.minus" foregroundStyle={selectedIds.size > 0 ? "#FF3B30" : "#C7C7CC"} font="footnote" /><Text foregroundStyle={selectedIds.size > 0 ? "#FF3B30" : "#C7C7CC"} font="footnote" fontWeight="semibold">移出</Text></HStack></Button>
+                </HStack>
+              </ToolbarItem>
+            )}
+          </Toolbar>
+        }
+      >
+        {groupItems.length === 0 ? (
+          <VStack padding={40} frame={{ maxWidth: "infinity" }} alignment="center"><Image systemName="folder" foregroundStyle="#C7C7CC" font="largeTitle" /><Text foregroundStyle="#8E8E93" font="body" padding={{ top: 12 }}>{activeTag ? "此标签下无内容" : "此分组暂无内容"}</Text></VStack>
+        ) : (
+          sectionData.map(section => (
+            <Section key={section.key} header={<Text>{section.title}</Text>}>
+              {section.items.map((item: BookmarkItem) => (
+                <BookmarkRow
+                  key={item.id}
+                  bookmark={item}
+                  isSelecting={isSelecting}
+                  isSelected={selectedIds.has(item.id)}
+                  onSelectToggle={() => {
+                    const newSet = new Set(selectedIds)
+                    if (newSet.has(item.id)) newSet.delete(item.id)
+                    else newSet.add(item.id)
                     setSelectedIds(newSet); showToast(newSet.size > 0 ? `已选择 ${newSet.size} 个项目` : "已取消选择")
                   }}
-                  onClick={() => openPreviewPage(bookmark)}
-                  onDelete={() => { setBookmarks(bookmarks.filter(item => item.id !== bookmark.id)); showToast("已删除", true) }}
-                  onPinToggle={() => { setBookmarks(bookmarks.map(item => item.id === bookmark.id ? { ...item, isPinned: !item.isPinned } : item)); showToast(bookmark.isPinned ? "已取消置顶" : "已置顶") }}
+                  onClick={() => Navigation.present(<BookmarkPreviewPage bookmark={item} groups={groups} onUpdate={(updated: BookmarkItem) => { updateItems((prev: BookmarkItem[]) => prev.map((i: BookmarkItem) => i.id === updated.id ? updated : i)) }} onDelete={(id: string) => { updateItems((prev: BookmarkItem[]) => prev.filter((i: BookmarkItem) => i.id !== id)); showToast("已删除", true) }} />)}
+                  onDelete={() => { updateItems((prev: BookmarkItem[]) => prev.filter((i: BookmarkItem) => i.id !== item.id)); showToast("已删除", true) }}
+                  onRemoveFromGroup={() => handleRemoveFromGroup(item.id)}
                   showToast={showToast}
                 />
               ))}
@@ -779,7 +1358,9 @@ export const BookmarkListPage = ({ bookmarks, setBookmarks, isSelecting, setIsSe
 }
 
 // 搜索和设置页面
-export const SearchPage = ({ accounts, setAccounts, bookmarks, setBookmarks }: { accounts: AccountItem[], setAccounts: (acc: AccountItem[]) => void, bookmarks: BookmarkItem[], setBookmarks: (items: BookmarkItem[]) => void }) => {
+export type SearchPageProps = { accounts: AccountItem[]; setAccounts: StateSetter<AccountItem[]>; bookmarks: BookmarkItem[]; setBookmarks: StateSetter<BookmarkItem[]>; accountGroups: GroupItem[]; bookmarkGroups: GroupItem[] }
+
+export const SearchPage = ({ accounts, setAccounts, bookmarks, setBookmarks, accountGroups, bookmarkGroups }: SearchPageProps) => {
   const [searchText, setSearchText] = useState<string>("")
   const [toast, setToast] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false })
   const showToast = (msg: string, isError = false) => setToast({ msg, isError })
@@ -788,14 +1369,14 @@ export const SearchPage = ({ accounts, setAccounts, bookmarks, setBookmarks }: {
     if (!searchText.trim()) return []
     const query = searchText.toLowerCase()
     return accounts
-      .filter(a => 
+      .filter(a =>
         a.name.toLowerCase().includes(query) || (a.username && a.username.toLowerCase().includes(query)) || (a.email && a.email.toLowerCase().includes(query)) || (a.url && a.url.toLowerCase().includes(query)) || (a.notes && a.notes.toLowerCase().includes(query)) || (a.apiKey && a.apiKey.toLowerCase().includes(query)) || (a.tags && a.tags.some(tag => tag.toLowerCase().includes(query))) || (a.customFields && a.customFields.some(field => field.key.toLowerCase().includes(query) || field.value.toLowerCase().includes(query)))
       )
       .sort((a, b) => sortByDisplayTitle(a.name, b.name))
   }, [accounts, searchText])
 
   const openPreviewPage = (account: AccountItem) => {
-    Navigation.present(<AccountPreviewPage account={account} onUpdate={(updatedAccount: AccountItem) => { setAccounts(accounts.map(a => a.id === updatedAccount.id ? updatedAccount : a)) }} onDelete={(id: string) => { setAccounts(accounts.filter(a => a.id !== id)); showToast("账号已删除", true) }} />)
+    Navigation.present(<AccountPreviewPage account={account} groups={accountGroups} onUpdate={(updatedAccount: AccountItem) => { setAccounts(prev => prev.map(a => a.id === updatedAccount.id ? updatedAccount : a)) }} onDelete={(id: string) => { setAccounts(prev => prev.filter(a => a.id !== id)); showToast("账号已删除", true) }} />)
   }
 
   const filteredBookmarks = useMemo(() => {
@@ -809,7 +1390,7 @@ export const SearchPage = ({ accounts, setAccounts, bookmarks, setBookmarks }: {
   }, [bookmarks, searchText])
 
   const openBookmarkPreviewPage = (bookmark: BookmarkItem) => {
-    Navigation.present(<BookmarkPreviewPage bookmark={bookmark} onUpdate={(updatedBookmark: BookmarkItem) => { setBookmarks(bookmarks.map(item => item.id === updatedBookmark.id ? updatedBookmark : item)) }} onDelete={(id: string) => { setBookmarks(bookmarks.filter(item => item.id !== id)); showToast("书签已删除", true) }} />)
+    Navigation.present(<BookmarkPreviewPage bookmark={bookmark} groups={bookmarkGroups} onUpdate={(updatedBookmark: BookmarkItem) => { setBookmarks(prev => prev.map(item => item.id === updatedBookmark.id ? updatedBookmark : item)) }} onDelete={(id: string) => { setBookmarks(prev => prev.filter(item => item.id !== id)); showToast("书签已删除", true) }} />)
   }
 
   return (
@@ -828,12 +1409,12 @@ export const SearchPage = ({ accounts, setAccounts, bookmarks, setBookmarks }: {
           <>
             {filteredAccounts.length > 0 ? (
               <Section header={<Text>账号</Text>}>
-                {filteredAccounts.map(account => <AccountRow key={account.id} account={account} onClick={() => openPreviewPage(account)} onDelete={() => { setAccounts(accounts.filter(a => a.id !== account.id)); showToast("已删除", true) }} onPinToggle={() => { setAccounts(accounts.map(a => a.id === account.id ? { ...a, isPinned: !a.isPinned } : a)); showToast(account.isPinned ? "已取消置顶" : "已置顶") }} showToast={showToast} />)}
+                {filteredAccounts.map(account => <AccountRow key={account.id} account={account} onClick={() => openPreviewPage(account)} onDelete={() => { setAccounts(prev => prev.filter(a => a.id !== account.id)); showToast("已删除", true) }} onPinToggle={() => { setAccounts(prev => prev.map(a => a.id === account.id ? { ...a, isPinned: !a.isPinned } : a)); showToast(account.isPinned ? "已取消置顶" : "已置顶") }} showToast={showToast} />)}
               </Section>
             ) : undefined}
             {filteredBookmarks.length > 0 ? (
               <Section header={<Text>书签</Text>}>
-                {filteredBookmarks.map(bookmark => <BookmarkRow key={bookmark.id} bookmark={bookmark} onClick={() => openBookmarkPreviewPage(bookmark)} onDelete={() => { setBookmarks(bookmarks.filter(item => item.id !== bookmark.id)); showToast("书签已删除", true) }} onPinToggle={() => { setBookmarks(bookmarks.map(item => item.id === bookmark.id ? { ...item, isPinned: !item.isPinned } : item)); showToast(bookmark.isPinned ? "已取消置顶" : "已置顶") }} showToast={showToast} />)}
+                {filteredBookmarks.map(bookmark => <BookmarkRow key={bookmark.id} bookmark={bookmark} onClick={() => openBookmarkPreviewPage(bookmark)} onDelete={() => { setBookmarks(prev => prev.filter(item => item.id !== bookmark.id)); showToast("书签已删除", true) }} onPinToggle={() => { setBookmarks(prev => prev.map(item => item.id === bookmark.id ? { ...item, isPinned: !item.isPinned } : item)); showToast(bookmark.isPinned ? "已取消置顶" : "已置顶") }} showToast={showToast} />)}
               </Section>
             ) : undefined}
           </>

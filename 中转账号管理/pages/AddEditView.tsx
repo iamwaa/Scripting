@@ -5,7 +5,7 @@ import { getErrorMessage } from "../utils/error"
 import { loadAccounts, patchAccount } from "../services/storage"
 import { getWebLoginCookie, fetchSelf } from "../services/auth"
 import { upsertAccount } from "../services/account"
-import { LabeledTextField, LabeledSecureField } from "../components/FormFields"
+import { LabeledTextField } from "../components/FormFields"
 
 // 添加/编辑账号页面
 export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: () => void }) {
@@ -168,7 +168,7 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
     </Section>
     <Section header={<Text>账号密码登录</Text>} footer={<Text>{platform === "sub2api" ? "Sub2API 账号密码登录使用邮箱和密码；如果站点启用了 Turnstile 或 2FA，建议改用网页登录获取登录令牌。" : "如果站点启用了 Turnstile 或 2FA，建议改用浏览器登录后的 Cookie。"}</Text>}>
       <LabeledTextField title={platform === "sub2api" ? "邮箱" : "用户名"} value={username} onChanged={setUsername} prompt="可选" />
-      <LabeledSecureField title="密码" value={password} onChanged={setPassword} prompt={initial ? "留空则不修改" : "可选"} />
+      <LabeledTextField title="密码" value={password} onChanged={setPassword} prompt={initial ? "留空则不修改" : "可选"} />
     </Section>
     <Section
       header={<Text>{platform === "sub2api" ? "网页登录令牌" : "第三方登录 Cookie"}</Text>}
@@ -194,7 +194,7 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
       </Button>
     </Section>
     {platform !== "sub2api" ? <Section header={<Text>访问令牌登录（NewAPI）</Text>} footer={<Text>适用于 NewAPI 站点的访问令牌（Access Token），可在个人设置中生成。使用访问令牌时需要填写用户 ID，可从页面 URL 或 API 响应中获取。</Text>}>
-      <LabeledSecureField title="访问令牌" value={accessToken} onChanged={setAccessToken} prompt="32位 Access Token" />
+      <LabeledTextField title="访问令牌" value={accessToken} onChanged={setAccessToken} prompt="32位 Access Token" />
       <LabeledTextField title="用户 ID" value={accessTokenUserId} onChanged={setAccessTokenUserId} prompt="必填，用户数字 ID" />
       <Button action={pasteAccessToken}>
         <HStack spacing={8} alignment="center">

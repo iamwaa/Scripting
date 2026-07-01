@@ -1,44 +1,45 @@
 {
+  "color" : "rgba(124, 76, 179,1)",
   "name" : "中转账号管理",
+  "description" : "",
   "version" : "1.0.0",
   "remoteResource" : null,
-  "icon" : "square.2.layers.3d.fill",
-  "localizedDescriptions" : {
-    "en" : "",
-    "ru" : "",
-    "es" : "",
+  "localizedNames" : {
+    "it" : "",
+    "ja" : "",
     "pt" : "",
     "de" : "",
-    "ja" : "",
     "zh" : "",
+    "ru" : "",
     "fr" : "",
-    "it" : ""
+    "en" : "",
+    "es" : ""
   },
+  "icon" : "checklist",
   "author" : {
     "email" : null,
     "homepage" : "https:\/\/github.com\/iamwaa",
     "name" : "Waa"
   },
+  "permissions" : null,
   "iconImage" : null,
-  "contributors" : [
-
-  ],
-  "color" : "rgba(124, 76, 179,1)",
-  "entry" : "index.tsx",
+  "runInApp" : false,
   "intentInputTypes" : [
 
   ],
-  "localizedNames" : {
+  "localizedDescriptions" : {
+    "en" : "",
+    "de" : "",
+    "fr" : "",
     "es" : "",
     "it" : "",
-    "zh" : "",
-    "fr" : "",
-    "ja" : "",
-    "en" : "",
     "ru" : "",
+    "zh" : "",
     "pt" : "",
-    "de" : ""
+    "ja" : ""
   },
-  "description" : "",
-  "runInApp" : false
+  "entry" : "index.tsx",
+  "contributors" : [
+
+  ]
 }

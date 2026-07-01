@@ -57,7 +57,7 @@ const EVENT_TYPE_LABELS: Record<AnniversaryEvent['type'], string> = {
   custom: '其他'
 }
 
-const EVENT_TYPE_ICONS: Record<AnniversaryEvent['type'], { icon: string; color: string }> = {
+export const EVENT_TYPE_ICONS: Record<AnniversaryEvent['type'], { icon: string; color: string }> = {
   birthday: { icon: 'gift.fill', color: '#FF9500' },
   meet: { icon: 'hand.wave.fill', color: '#007AFF' },
   love: { icon: 'heart.fill', color: '#FF2D55' },
@@ -305,7 +305,7 @@ export function EventRow({ event, person, onSelected, onDelete, onTogglePin, onT
         ageLabel = daysSince === 0 ? '今天' : `${daysSince} 天`
       }
     }
-    subtitleTags = <CapsuleTag label={ageLabel} color="#007AFF" />
+    subtitleTags = <CapsuleTag label={ageLabel} color={EVENT_TYPE_ICONS.birthday.color} />
   } else if (effectiveType === 'love' && yearsPassed !== undefined) {
     // 不满 1 周年显示月数，不满 1 个月显示天数，当天显示“今天”
     let label = `${yearsPassed} 周年`
@@ -316,7 +316,7 @@ export function EventRow({ event, person, onSelected, onDelete, onTogglePin, onT
         label = daysSince === 0 ? '今天' : `${daysSince} 天`
       }
     }
-    subtitleTags = <CapsuleTag label={label} color="#FF2D55" />
+    subtitleTags = <CapsuleTag label={label} color={EVENT_TYPE_ICONS.love.color} />
   } else if (effectiveType === 'wedding' && yearsPassed !== undefined) {
     // 不满 1 周年显示月数，不满 1 个月显示天数，当天显示“今天”
     let label = `${yearsPassed} 周年`
@@ -330,12 +330,13 @@ export function EventRow({ event, person, onSelected, onDelete, onTogglePin, onT
     const anniversaryName = yearsPassed > 0 ? getWeddingAnniversaryName(yearsPassed) : undefined
     subtitleTags = (
       <HStack spacing={4} alignment="center">
-        <CapsuleTag label={label} color="#FF2D55" />
+        <CapsuleTag label={label} color={EVENT_TYPE_ICONS.wedding.color} />
         {anniversaryName ? <CapsuleTag label={anniversaryName} color={getWeddingNameColor(yearsPassed)} /> : null}
       </HStack>
     )
   } else {
-    subtitleTags = <CapsuleTag label="纪念日" color="#8E8E93" />
+    const typeColor = '#007AFF'
+    subtitleTags = <CapsuleTag label="纪念日" color={typeColor} />
   }
 
   // 右下角日期：已过的显示设定日期，未来的显示下一个日期

@@ -1,4 +1,4 @@
-import { useState, useEffect, Navigation, NavigationStack, List, Section, Text, Button, HStack, Spacer, Image, NavigationLink, Toolbar, ToolbarItem } from "scripting"
+import { useState, useEffect, Navigation, NavigationStack, List, Section, Text, Button, HStack, Spacer, Image, NavigationLink, Toolbar, ToolbarItem, Notification } from "scripting"
 import type { Account, AccountSortKey, SortDirection, SelfInfo, CheckinStatus } from "../types"
 import { SITE_STATUS_AUTO_CHECK_INTERVAL } from "../constants"
 import { isSub2ApiAccount, localDateString, now, shouldSkipBatchCheckinByTime } from "../utils/format"
@@ -63,8 +63,10 @@ export function MainView() {
       return
     }
     if (targetAccounts.length === 0) return
+    // 请求后台运行权限（自动和手动检测都支持）
+    const canBackground = await BackgroundKeeper.keepAlive()
     setBusy(true)
-    setBusyLabel("检测连通性中...")
+    setBusyLabel(canBackground ? "检测连通性中（支持后台运行）..." : "检测连通性中...")
     if (showResult) {
       saveAccounts(currentAccounts.map(account => ({
         ...account,
@@ -91,12 +93,19 @@ export function MainView() {
         reload()
       }
     } finally {
+      // 释放后台运行权限
+      if (canBackground) await BackgroundKeeper.stopKeepAlive()
       setBusy(false)
       setBusyLabel("")
-    }
-    if (showResult) {
-      setToastMessage(`连通性检测完成：正常 ${ok}，异常 ${fail}`)
-      setShowToast(true)
+      // 发送通知，点击时不需要打开脚本
+      if (targetAccounts.length > 0) {
+        await Notification.schedule({
+          title: "连通性检测完成",
+          body: `正常 ${ok} 个，异常 ${fail} 个`,
+          threadIdentifier: "batch-operations",
+          tapAction: "none",
+        })
+      }
     }
   }
 
@@ -106,32 +115,45 @@ export function MainView() {
       setShowToast(true)
       return
     }
+    // 请求后台运行权限
+    const canBackground = await BackgroundKeeper.keepAlive()
     setBusy(true)
-    setBusyLabel("批量查余额中...")
+    setBusyLabel(canBackground ? "批量查余额中（支持后台运行）..." : "批量查余额中...")
+    const startTime = Date.now()
     let ok = 0
     let fail = 0
     const allAccounts = loadAccounts()
     const total = allAccounts.length
-    for (let i = 0; i < allAccounts.length; i++) {
-      const account = allAccounts[i]
-      setBusyLabel(`批量查余额中 (${i + 1}/${total})...`)
-      try {
-        const siteStatus = await checkSiteStatus(account)
-        patchAccount(account.id, { lastSiteStatus: siteStatus })
-        const latest = loadAccounts().find(item => item.id === account.id) ?? account
-        const data = await fetchSelf(latest)
-        patchAccount(account.id, { lastSelf: data, lastError: "" })
-        ok++
-      } catch (e: any) {
-        patchAccount(account.id, { lastError: getErrorMessage(e) })
-        fail++
+    try {
+      for (let i = 0; i < allAccounts.length; i++) {
+        const account = allAccounts[i]
+        setBusyLabel(`批量查余额中 (${i + 1}/${total})...`)
+        try {
+          const siteStatus = await checkSiteStatus(account)
+          patchAccount(account.id, { lastSiteStatus: siteStatus })
+          const latest = loadAccounts().find(item => item.id === account.id) ?? account
+          const data = await fetchSelf(latest)
+          patchAccount(account.id, { lastSelf: data, lastError: "" })
+          ok++
+        } catch (e: any) {
+          patchAccount(account.id, { lastError: getErrorMessage(e) })
+          fail++
+        }
+        reload()
       }
-      reload()
+    } finally {
+      // 释放后台运行权限
+      if (canBackground) await BackgroundKeeper.stopKeepAlive()
+      setBusy(false)
+      setBusyLabel("")
+      // 发送通知，点击时不需要打开脚本
+      await Notification.schedule({
+        title: "批量查余额完成",
+        body: `成功 ${ok} 个，失败 ${fail} 个`,
+        threadIdentifier: "batch-operations",
+        tapAction: "none",
+      })
     }
-    setBusy(false)
-    setBusyLabel("")
-    setToastMessage(`批量查询完成：成功 ${ok}，失败 ${fail}`)
-    setShowToast(true)
   }
 
   async function checkinAll() {
@@ -140,8 +162,10 @@ export function MainView() {
       setShowToast(true)
       return
     }
+    // 请求后台运行权限
+    const canBackground = await BackgroundKeeper.keepAlive()
     setBusy(true)
-    setBusyLabel("批量签到中...")
+    setBusyLabel(canBackground ? "批量签到中（支持后台运行）..." : "批量签到中...")
     let ok = 0
     let fail = 0
     let skipped = 0
@@ -151,54 +175,66 @@ export function MainView() {
     const allAccounts = loadAccounts()
     const total = allAccounts.length
     let processed = 0
-    for (const account of allAccounts) {
-      processed++
-      setBusyLabel(`批量签到中 (${processed}/${total})...`)
-      if (account.excludeFromBatchCheckin) {
-        skipped++
-        skippedExcluded++
-        continue
+    try {
+      for (const account of allAccounts) {
+        processed++
+        setBusyLabel(`批量签到中 (${processed}/${total})...`)
+        if (account.excludeFromBatchCheckin) {
+          skipped++
+          skippedExcluded++
+          continue
+        }
+        if (shouldSkipBatchCheckinByTime(account)) {
+          skipped++
+          skippedTime++
+          continue
+        }
+        if (getTodayCheckinInfo(account).checked) {
+          skipped++
+          skippedSigned++
+          continue
+        }
+        try {
+          await doCheckin(account)
+          let self: SelfInfo | undefined
+          let status: CheckinStatus | undefined
+          try { self = await fetchSelf(account) } catch {}
+          try { status = await fetchCheckinStatus(account) } catch {}
+          patchAccount(account.id, { lastSelf: self, lastCheckin: status, lastError: "", ...getTodayCheckinPatch(status) })
+          ok++
+        } catch (e: any) {
+          const message = getErrorMessage(e)
+          patchAccount(account.id, { lastError: message, ...getCheckinDisabledPatch(message) })
+          fail++
+        }
+        reload()
       }
-      if (shouldSkipBatchCheckinByTime(account)) {
-        skipped++
-        skippedTime++
-        continue
+    } finally {
+      // 释放后台运行权限
+      if (canBackground) await BackgroundKeeper.stopKeepAlive()
+      setBusy(false)
+      setBusyLabel("")
+      // 构建结果消息
+      const skippedParts = [
+        skippedExcluded ? `排除 ${skippedExcluded}` : "",
+        skippedTime ? `未到时间 ${skippedTime}` : "",
+        skippedSigned ? `已签 ${skippedSigned}` : "",
+      ].filter(Boolean).join("，")
+      let resultMessage: string
+      if (ok === 0 && fail === 0) {
+        resultMessage = skipped > 0 ? `没有符合签到条件的账号：已跳过 ${skipped} 个${skippedParts ? `（${skippedParts}）` : ""}` : "没有账号需要签到"
+      } else {
+        const message = skipped > 0 ? `成功 ${ok}，失败 ${fail}，跳过 ${skipped}${skippedParts ? `（${skippedParts}）` : ""}` : `成功 ${ok}，失败 ${fail}`
+        resultMessage = `批量签到完成：${message}`
       }
-      if (getTodayCheckinInfo(account).checked) {
-        skipped++
-        skippedSigned++
-        continue
-      }
-      try {
-        await doCheckin(account)
-        let self: SelfInfo | undefined
-        let status: CheckinStatus | undefined
-        try { self = await fetchSelf(account) } catch {}
-        try { status = await fetchCheckinStatus(account) } catch {}
-        patchAccount(account.id, { lastSelf: self, lastCheckin: status, lastError: "", ...getTodayCheckinPatch(status) })
-        ok++
-      } catch (e: any) {
-        const message = getErrorMessage(e)
-        patchAccount(account.id, { lastError: message, ...getCheckinDisabledPatch(message) })
-        fail++
-      }
-      reload()
+      // 发送通知，点击时不需要打开脚本
+      await Notification.schedule({
+        title: "批量签到完成",
+        body: resultMessage,
+        threadIdentifier: "batch-operations",
+        tapAction: "none",
+      })
     }
-    setBusy(false)
-    setBusyLabel("")
-    const skippedParts = [
-      skippedExcluded ? `排除 ${skippedExcluded}` : "",
-      skippedTime ? `未到时间 ${skippedTime}` : "",
-      skippedSigned ? `已签 ${skippedSigned}` : "",
-    ].filter(Boolean).join("，")
-    if (ok === 0 && fail === 0) {
-      setToastMessage(skipped > 0 ? `没有符合签到条件的账号：已跳过 ${skipped} 个${skippedParts ? `（${skippedParts}）` : ""}` : "没有账号需要签到")
-      setShowToast(true)
-      return
-    }
-    const message = skipped > 0 ? `成功 ${ok}，失败 ${fail}，跳过 ${skipped}${skippedParts ? `（${skippedParts}）` : ""}` : `成功 ${ok}，失败 ${fail}`
-    setToastMessage(`批量签到完成：${message}`)
-    setShowToast(true)
   }
 
   async function quickSync(account: Account) {
@@ -254,21 +290,27 @@ export function MainView() {
     try {
       await openManualCheckinWebView(account)
       const latest = loadAccounts().find(item => item.id === account.id) ?? account
-      try {
-        const status = await fetchCheckinStatus(latest)
-        patchAccount(latest.id, { lastCheckin: status, lastError: "", ...getTodayCheckinPatch(status) })
-        setToastMessage(`"${account.name}"签到状态已更新`)
-      } catch (e: any) {
-        const message = getErrorMessage(e)
-        const balancePatch: Partial<Account> = { lastError: message, ...getCheckinDisabledPatch(message) }
-        try {
-          balancePatch.lastSelf = await fetchSelf(latest)
-          setToastMessage(`网页已关闭，签到接口不可用`)
-        } catch {
-          setToastMessage(`网页已关闭，签到接口不可用`)
-        }
-        patchAccount(latest.id, balancePatch)
+      // 网页签到关闭后同时刷新余额和签到状态
+      const [selfResult, statusResult] = await Promise.allSettled([
+        fetchSelf(latest),
+        fetchCheckinStatus(latest),
+      ])
+      const patch: Partial<Account> = {}
+      if (selfResult.status === "fulfilled") {
+        patch.lastSelf = selfResult.value
       }
+      if (statusResult.status === "fulfilled") {
+        patch.lastCheckin = statusResult.value
+        patch.lastError = ""
+        Object.assign(patch, getTodayCheckinPatch(statusResult.value))
+        setToastMessage(`"${account.name}"签到状态已更新`)
+      } else {
+        const message = getErrorMessage(statusResult.reason)
+        patch.lastError = message
+        Object.assign(patch, getCheckinDisabledPatch(message))
+        setToastMessage(`网页已关闭，签到接口不可用`)
+      }
+      patchAccount(latest.id, patch)
     } catch (e: any) {
       const message = getErrorMessage(e)
       patchAccount(account.id, { lastError: message, ...getCheckinDisabledPatch(message) })

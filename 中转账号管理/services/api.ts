@@ -68,9 +68,17 @@ export async function sub2ApiRequest<T = any>(account: Account, method: string, 
   try {
     json = raw ? JSON.parse(raw) : {}
   } catch {
+    // 非 JSON 响应通常是触发了验证或登录失效，而非真正的 API 路径错误
     throw new Error(`响应不是 JSON：${raw.slice(0, 60)}`)
   }
-  if (!response.ok) throw new Error(translateErrorMessage(json?.message || json?.detail || `HTTP ${response.status}`))
+  if (!response.ok) {
+    // HTTP 401/403/404 都可能表示登录失效，把状态码拼进消息，便于上层 isAuthExpiredError 识别并触发重登录
+    const status = Number(response.status) || 0
+    const rawMessage = json?.message || json?.detail || (status ? `HTTP ${status}` : "未知错误")
+    const authExpired = status === 401 || status === 403 || (status === 404 && /session|token|login|登录|权限|auth/i.test(rawMessage))
+    const message = authExpired ? `未登录或权限不足（HTTP ${status}）：${rawMessage}` : rawMessage
+    throw new Error(translateErrorMessage(message))
+  }
   return unwrapSub2ApiJson<T>(json)
 }
 
@@ -210,6 +218,7 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
   try {
     json = raw ? JSON.parse(raw) : {}
   } catch {
+    // 非 JSON 响应通常是触发了验证或登录失效，而非真正的 API 路径错误
     throw new Error(`响应不是 JSON：${raw.slice(0, 60)}`)
   }
 
@@ -217,7 +226,12 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
   const responseCookies = Array.isArray(response?.cookies) ? response.cookies : []
 
   if (json.success !== true) {
-    throw new Error(translateErrorMessage(json.message || `HTTP ${response.status}`))
+    // HTTP 401/403/404 都可能表示登录失效，把状态码拼进消息，便于上层 isAuthExpiredError 识别并触发重登录
+    const status = Number(response?.status) || 0
+    const rawMessage = json.message || (status ? `HTTP ${status}` : "未知错误")
+    const authExpired = status === 401 || status === 403 || (status === 404 && /session|token|login|登录|权限|auth/i.test(rawMessage))
+    const message = authExpired ? `无权进行此操作，未登录或权限不足（HTTP ${status}）：${rawMessage}` : rawMessage
+    throw new Error(translateErrorMessage(message))
   }
   return { data: json.data as T, cookie: mergeCookies("", setCookie, responseCookies) }
 }

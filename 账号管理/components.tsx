@@ -1,6 +1,6 @@
-import { useState, useMemo, VStack, HStack, Text, Button, Spacer, Image, TextField, Link } from "scripting"
+import { useState, useMemo, VStack, HStack, Text, Button, Spacer, Image, TextField, Link, Menu } from "scripting"
 
-import { AccountItem, BookmarkItem, maskPassword, maskApiKey, processUrl } from "./utils"
+import { AccountItem, BookmarkItem, GroupItem, maskPassword, maskApiKey, processUrl } from "./utils"
 
 declare const Pasteboard: any;
 declare const Dialog: any;
@@ -21,6 +21,9 @@ export const LetterIcon = ({ name, size = 36 }: { name: string, size?: number })
 
 export const AvatarIcon = ({ url, name, size = 36 }: { url?: string; name: string, size?: number }) => {
   const [hasError, setHasError] = useState<boolean>(false)
+  const [prevUrl, setPrevUrl] = useState<string | undefined>(url)
+  // url 变化时重置错误状态，使组件能重新尝试加载新图片
+  if (url !== prevUrl) { setPrevUrl(url); setHasError(false) }
   if (!url?.trim() || hasError) return <LetterIcon name={name} size={size} />
   const ShapeVStack = VStack as any
 
@@ -51,10 +54,14 @@ export type AccountRowProps = {
   onClick?: () => void
   onDelete?: () => void
   onPinToggle?: () => void
+  groups?: GroupItem[]
+  onMoveToGroup?: (groupId: string) => void
+  onRemoveFromGroup?: () => void
+  onCreateGroup?: () => void
   showToast: (msg: string, isError?: boolean) => void
 }
 
-export const AccountRow = ({ account, isSelecting, isSelected, onSelectToggle, onClick, onDelete, onPinToggle, showToast }: AccountRowProps) => {
+export const AccountRow = ({ account, isSelecting, isSelected, onSelectToggle, onClick, onDelete, onPinToggle, groups, onMoveToGroup, onRemoveFromGroup, onCreateGroup, showToast }: AccountRowProps) => {
   const ShapeVStack = VStack as any 
   const displaySubTitle = account.username || account.email || ""
 
@@ -89,6 +96,16 @@ export const AccountRow = ({ account, isSelecting, isSelected, onSelectToggle, o
               Pasteboard.setString(parts.join('\n'))
               showToast("全部信息已复制")
             }}><Text>复制全部信息</Text><Image systemName="doc.on.doc" /></Button>
+            {groups && groups.length > 0 ? (
+              <Menu label={<HStack><Text>添加到组</Text><Image systemName="folder" /></HStack>}>
+                {account.groupId ? <Button action={() => onRemoveFromGroup?.()}><HStack><Text>从组移除</Text><Image systemName="folder.badge.minus" /></HStack></Button> : undefined}
+                {groups.map(g => (
+                  <Button key={g.id} action={() => onMoveToGroup?.(g.id)}>
+                    <HStack><Text>{account.groupId === g.id ? `✓ ${g.name}` : g.name}</Text><Image systemName="folder" /></HStack>
+                  </Button>
+                ))}
+              </Menu>
+            ) : undefined}
             {onDelete ? <Button action={async () => { if (await Dialog.confirm({ title: "确认删除", message: `确定要删除「${account.name}」吗？` })) onDelete() }} role="destructive"><Text>删除</Text><Image systemName="trash" foregroundStyle="#FF3B30" /></Button> : undefined}
           </>
         )
@@ -126,10 +143,14 @@ export type BookmarkRowProps = {
   onClick?: () => void
   onDelete?: () => void
   onPinToggle?: () => void
+  groups?: GroupItem[]
+  onMoveToGroup?: (groupId: string) => void
+  onRemoveFromGroup?: () => void
+  onCreateGroup?: () => void
   showToast: (msg: string, isError?: boolean) => void
 }
 
-export const BookmarkRow = ({ bookmark, isSelecting, isSelected, onSelectToggle, onClick, onDelete, onPinToggle, showToast }: BookmarkRowProps) => {
+export const BookmarkRow = ({ bookmark, isSelecting, isSelected, onSelectToggle, onClick, onDelete, onPinToggle, groups, onMoveToGroup, onRemoveFromGroup, onCreateGroup, showToast }: BookmarkRowProps) => {
   const ShapeVStack = VStack as any
   const validUrl = useMemo(() => processUrl(bookmark.url), [bookmark.url])
 
@@ -158,6 +179,16 @@ export const BookmarkRow = ({ bookmark, isSelecting, isSelected, onSelectToggle,
               Pasteboard.setString(parts.join('\n'))
               showToast("书签信息已复制")
             }}><Text>复制全部信息</Text><Image systemName="doc.on.doc" /></Button>
+            {groups && groups.length > 0 ? (
+              <Menu label={<HStack><Text>添加到组</Text><Image systemName="folder" /></HStack>}>
+                {bookmark.groupId ? <Button action={() => onRemoveFromGroup?.()}><HStack><Text>从组移除</Text><Image systemName="folder.badge.minus" /></HStack></Button> : undefined}
+                {groups.map(g => (
+                  <Button key={g.id} action={() => onMoveToGroup?.(g.id)}>
+                    <HStack><Text>{bookmark.groupId === g.id ? `✓ ${g.name}` : g.name}</Text><Image systemName="folder" /></HStack>
+                  </Button>
+                ))}
+              </Menu>
+            ) : undefined}
             {onDelete ? <Button action={async () => { if (await Dialog.confirm({ title: "确认删除", message: `确定要删除书签「${bookmark.title}」吗？` })) onDelete() }} role="destructive"><Text>删除</Text><Image systemName="trash" foregroundStyle="#FF3B30" /></Button> : undefined}
           </>
         )

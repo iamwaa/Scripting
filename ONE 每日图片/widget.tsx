@@ -1,4 +1,4 @@
-import { Image, VStack, HStack, ZStack, Spacer, Text, Widget, Rectangle } from 'scripting'
+import { Image, VStack, ZStack, Spacer, Text, Widget, Rectangle, gradient } from 'scripting'
 import {
   getCurrentSettings,
   getDisplayWallpaper,
@@ -39,14 +39,25 @@ type TextOverlayLayout = {
   metadataFont: number
   titleFont: number
   titleLineLimit: number
+  shadowRadius: number
 }
+
+const WIDGET_TEXT_MASK = gradient('linear', {
+  stops: [
+    { color: 'rgba(0,0,0,0)', location: 0 },
+    { color: 'rgba(0,0,0,0.15)', location: 0.5 },
+    { color: 'rgba(0,0,0,0.3)', location: 1 },
+  ],
+  startPoint: 'top',
+  endPoint: 'bottom',
+})
 
 const MEDIUM_TEXT_LAYOUT: TextOverlayLayout = {
   contentSpacing: 2,
   metadataSpacing: 2,
   padding: {
-    top: 0,
-    bottom: 50,
+    top: 8,
+    bottom: 106,
     leading: 16,
     trailing: 16,
   },
@@ -54,21 +65,23 @@ const MEDIUM_TEXT_LAYOUT: TextOverlayLayout = {
   metadataFont: 14,
   titleFont: 12,
   titleLineLimit: 2,
+  shadowRadius: 1,
 }
 
 const LARGE_TEXT_LAYOUT: TextOverlayLayout = {
   contentSpacing: 4,
   metadataSpacing: 4,
   padding: {
-    top: 0,
-    bottom: 16,
-    leading: 120,
-    trailing: 120,
+    top: 10,
+    bottom: 12,
+    leading: 26,
+    trailing: 26,
   },
   dayFont: 36,
   metadataFont: 18,
   titleFont: 15,
   titleLineLimit: 2,
+  shadowRadius: 1,
 }
 
 const buildFallbackTitle = (title: string): string => {
@@ -127,12 +140,12 @@ const WidgetBackground = ({
 }: WidgetBackgroundProps) => {
   if (localImagePath) {
     return (
-      <Image filePath={localImagePath} resizable={true} scaleToFill={true} />
+      <Image filePath={localImagePath} resizable={true} scaleToFill={true} frame={{ maxWidth: 'infinity', maxHeight: 'infinity' }} />
     )
   }
 
   // 当本尺寸离线缓存不存在时，使用网络原图作为兜底展示。
-  return <Image imageUrl={imageUrl} resizable={true} scaleToFill={true} />
+  return <Image imageUrl={imageUrl} resizable={true} scaleToFill={true} frame={{ maxWidth: 'infinity', maxHeight: 'infinity' }} />
 }
 
 type WidgetTextOverlayProps = {
@@ -143,8 +156,12 @@ type WidgetTextOverlayProps = {
   layout: TextOverlayLayout
 }
 
-const WidgetScrim = () => {
-  return <Rectangle fill="#000000" opacity={0.2} />
+// 文字保留轻量阴影，主要可读性由图片渐变遮罩承担
+const TEXT_SHADOW = {
+  color: 'rgba(0,0,0,0.55)' as const,
+  radius: 1,
+  x: 0,
+  y: 1,
 }
 
 const WidgetTextOverlay = ({
@@ -162,51 +179,63 @@ const WidgetTextOverlay = ({
   }
 
   return (
-    <VStack spacing={0}>
-      <Spacer />
-
-      <HStack spacing={0}>
-        <VStack
-          alignment="leading"
-          spacing={layout.contentSpacing}
-          padding={layout.padding}
-          frame={{ maxWidth: 'infinity', alignment: 'leading' }}
-        >
-          {showCopyright && (
-            <VStack alignment="leading" spacing={layout.metadataSpacing}>
-              {!!dateParts.day && (
-                <Text
-                  font={layout.dayFont}
-                  foregroundStyle="#ffffff"
-                  lineLimit={1}
-                >
-                  {dateParts.day}
-                </Text>
-              )}
-              <Text
-                font={layout.metadataFont}
-                foregroundStyle="#ffffff"
-                lineLimit={1}
-              >
-                {dateParts.metadata}
-              </Text>
-            </VStack>
-          )}
-
-          {showTitle && (
+    <VStack
+      alignment="leading"
+      spacing={layout.contentSpacing}
+      padding={layout.padding}
+      frame={{ maxWidth: 'infinity', maxHeight: 'infinity', alignment: 'bottomLeading' }}
+    >
+      {showCopyright && (
+        <VStack alignment="leading" spacing={layout.metadataSpacing}>
+          {!!dateParts.day && (
             <Text
-              font={layout.titleFont}
+              font={layout.dayFont}
               foregroundStyle="#ffffff"
-              lineLimit={{ max: layout.titleLineLimit, reservesSpace: false }}
-              truncationMode="tail"
-              frame={{ maxWidth: 'infinity', alignment: 'leading' }}
-              layoutPriority={1}
+              shadow={{
+                color: TEXT_SHADOW.color,
+                radius: layout.shadowRadius,
+                x: TEXT_SHADOW.x,
+                y: TEXT_SHADOW.y,
+              }}
+              lineLimit={1}
             >
-              {buildFallbackTitle(title)}
+              {dateParts.day}
             </Text>
           )}
+          <Text
+            font={layout.metadataFont}
+            foregroundStyle="#ffffff"
+            shadow={{
+              color: TEXT_SHADOW.color,
+              radius: layout.shadowRadius,
+              x: TEXT_SHADOW.x,
+              y: TEXT_SHADOW.y,
+            }}
+            lineLimit={1}
+          >
+            {dateParts.metadata}
+          </Text>
         </VStack>
-      </HStack>
+      )}
+
+      {showTitle && (
+        <Text
+          font={layout.titleFont}
+          foregroundStyle="#ffffff"
+          shadow={{
+            color: TEXT_SHADOW.color,
+            radius: layout.shadowRadius,
+            x: TEXT_SHADOW.x,
+            y: TEXT_SHADOW.y,
+          }}
+          lineLimit={{ max: layout.titleLineLimit, reservesSpace: true }}
+          truncationMode="tail"
+          frame={{ maxWidth: 'infinity', alignment: 'leading' }}
+          layoutPriority={1}
+        >
+          {buildFallbackTitle(title)}
+        </Text>
+      )}
     </VStack>
   )
 }
@@ -235,10 +264,16 @@ const TextWidget = ({
   showCopyright,
   layout,
 }: TextWidgetProps) => {
+  // 使用 ZStack 作为容器，文案固定在左下角，完全不受图片影响
   return (
-    <ZStack>
+    <ZStack frame={{ maxWidth: 'infinity', maxHeight: 'infinity' }}>
       <WidgetBackground imageUrl={imageUrl} localImagePath={localImagePath} />
-      <WidgetScrim />
+      {(showTitle || showCopyright) && (
+        <Rectangle
+          fill={WIDGET_TEXT_MASK}
+          frame={{ maxWidth: 'infinity', maxHeight: 'infinity' }}
+        />
+      )}
       <WidgetTextOverlay
         title={title}
         copyright={copyright}

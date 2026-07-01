@@ -17,7 +17,17 @@ export const ERROR_TRANSLATIONS: Array<[RegExp, string]> = [
   [/missing\s+token|no\s+token/i, "缺少登录令牌，请先登录"],
   [/access.?token\s+(has\s+)?expired|访问令牌已过期/i, "访问令牌已过期，请重新获取"],
   [/invalid\s+access.?token|访问令牌无效|access.?token\s+invalid/i, "访问令牌无效，请检查输入是否正确"],
+  // NewAPI 中文失效提示（需在 not found 规则之前，避免被误译为 API 路径不对）
+  [/无权进行此操作|未登录或权限不足|登录状态已过期|令牌无效|令牌已过期/i, "登录状态已失效，请重新登录或获取 Cookie"],
+  // session 失效（需在 not found 规则之前，session not found 属于登录失效而非路径错误）
+  [/session\s*(not\s+found|expired|invalid)|no\s+session|session\s+失效/i, "登录会话已失效，请重新登录或获取 Cookie"],
   [/requires?\s+2fa|two.?factor|需要.*验证码/i, "该账号需要二步验证，请使用\"网页登录\""],
+  
+  // 验证和防护（需在资源错误之前，避免登录失效被误译为路径错误）
+  [/turnstile|签名|signature|challenge/i, "站点启用了 Cloudflare Turnstile 验证，请使用\"网页签到\"或\"网页登录\""],
+  [/captcha|验证码/i, "需要验证码，请使用\"网页登录\"完成验证"],
+  [/cloudflare|cf.?ray/i, "站点触发了 Cloudflare 防护，请使用\"网页登录\"通过验证"],
+  [/响应不是 JSON/i, "站点返回了非 JSON 数据，可能触发了验证、登录失效或重定向，请使用\"网页登录\"重新获取 Cookie"],
   
   // 限流和配额
   [/too\s+many\s+requests|rate\s+limit(ed)?|请求.*频繁/i, "请求过于频繁，请稍后再试（建议等待 1-5 分钟）"],
@@ -25,7 +35,7 @@ export const ERROR_TRANSLATIONS: Array<[RegExp, string]> = [
   [/daily\s+limit|daily\s+quota/i, "已达到每日请求限制"],
   [/concurrency\s+limit/i, "并发请求数超限，请稍后再试"],
   
-  // 资源错误
+  // 资源错误（登录失效相关已在上面拦截，这里只处理真正的路径错误）
   [/not\s+found|404/i, "请求的资源不存在，请检查站点地址或 API 路径"],
   [/already\s+exists|duplicate/i, "资源已存在或重复"],
   [/invalid\s+request|bad\s+request|400/i, "请求参数错误"],
@@ -43,12 +53,6 @@ export const ERROR_TRANSLATIONS: Array<[RegExp, string]> = [
   [/bad\s+gateway|502/i, "网关错误，站点服务可能暂时不可用"],
   [/service\s+unavailable|503/i, "服务暂不可用，站点可能正在维护"],
   [/gateway\s+timeout|504/i, "网关超时，站点响应过慢"],
-  
-  // 验证和防护
-  [/turnstile|签名|signature|challenge/i, "站点启用了 Cloudflare Turnstile 验证，请使用\"网页签到\"或\"网页登录\""],
-  [/captcha|验证码/i, "需要验证码，请使用\"网页登录\"完成验证"],
-  [/cloudflare|cf.?ray/i, "站点触发了 Cloudflare 防护，请使用\"网页登录\"通过验证"],
-  [/响应不是 JSON.*<html|<script>var\s+arg1=/i, "站点返回了网页而非 API 数据，可能触发了验证或重定向"],
   
   // 功能和配置
   [/签到.*未开启|check.?in.*(disabled|not\s+enabled)|sign.?in.*(disabled|not\s+enabled)/i, "该站点未启用签到功能"],

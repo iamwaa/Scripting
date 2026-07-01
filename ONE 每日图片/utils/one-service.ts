@@ -1,4 +1,4 @@
-import { fetch } from 'scripting'
+import { fetch, Notification } from 'scripting'
 import { createStorageManager } from './storage'
 
 // ONE 每日内容数据。保留原来的 BingImage 名称，避免牵动 UI 层导入。
@@ -108,7 +108,14 @@ const STORAGE_KEYS = {
   LAST_UPDATE: 'lastUpdate',
   CACHED_DATA: 'cachedData',
   REFRESH_LOGS: 'refreshLogs',
+  NOTIFY_ENABLED: 'notifyEnabled',
+  NOTIFY_HOUR: 'notifyHour',
+  NOTIFY_MINUTE: 'notifyMinute',
 } as const
+
+// 每日刷新通知的固定标识，用于更新/取消
+const DAILY_REFRESH_NOTIFICATION_ID = 'one-daily-refresh'
+const SCRIPT_NAME = 'ONE 每日图片'
 
 const storageManager = createStorageManager(STORAGE_NAME)
 const REFRESH_LEAD_TIME_MINUTES = 5
@@ -129,6 +136,11 @@ const DEFAULT_SETTINGS: BingSettings = {
   refreshHour: 9,
   refreshMinute: 0,
 }
+
+// 默认通知配置
+const DEFAULT_NOTIFY_ENABLED = false
+const DEFAULT_NOTIFY_HOUR = 8
+const DEFAULT_NOTIFY_MINUTE = 0
 
 const MONTH_MAP: Record<string, string> = {
   Jan: '01',
@@ -996,4 +1008,108 @@ export const BingSettingsManager = {
     const date: Date = new Date(timestamp)
     setRefreshTime(date.getHours(), date.getMinutes())
   },
+}
+
+// ========== 每日定时通知刷新功能 ==========
+
+// 获取通知开关状态
+export const getNotifyEnabled = (): boolean => {
+  return storageManager.storage.get<boolean>(STORAGE_KEYS.NOTIFY_ENABLED) ?? DEFAULT_NOTIFY_ENABLED
+}
+
+// 设置通知开关状态
+export const setNotifyEnabled = (enabled: boolean): void => {
+  storageManager.storage.set(STORAGE_KEYS.NOTIFY_ENABLED, enabled)
+}
+
+// 获取通知时间
+export const getNotifyTimeParts = (): { hour: number; minute: number } => {
+  const hour = storageManager.storage.get<number>(STORAGE_KEYS.NOTIFY_HOUR)
+  const minute = storageManager.storage.get<number>(STORAGE_KEYS.NOTIFY_MINUTE)
+  return {
+    hour: hour != null ? clampRefreshHour(hour) : DEFAULT_NOTIFY_HOUR,
+    minute: minute != null ? clampRefreshMinute(minute) : DEFAULT_NOTIFY_MINUTE,
+  }
+}
+
+// 设置通知时间
+export const setNotifyTime = (hour: number, minute: number): void => {
+  storageManager.storage.set(STORAGE_KEYS.NOTIFY_HOUR, clampRefreshHour(hour))
+  storageManager.storage.set(STORAGE_KEYS.NOTIFY_MINUTE, clampRefreshMinute(minute))
+}
+
+// 格式化通知时间显示
+export const formatNotifyTime = (): string => {
+  const { hour, minute } = getNotifyTimeParts()
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
+// 构建通知时间的 Date 值（用于 DatePicker）
+export const buildNotifyTimeDateValue = (): number => {
+  const { hour, minute } = getNotifyTimeParts()
+  const date: Date = new Date()
+  date.setHours(hour, minute, 0, 0)
+  return date.getTime()
+}
+
+// 调度每日刷新通知（参考工作日闹钟的 CalendarNotificationTrigger + repeats 实现）
+export const scheduleDailyRefreshNotification = async (): Promise<boolean> => {
+  // 先移除旧的通知
+  await Notification.removeAllPendingsOfCurrentScript()
+
+  const notifyEnabled = getNotifyEnabled()
+  if (!notifyEnabled) return false
+
+  const { hour, minute } = getNotifyTimeParts()
+
+  // 使用 DateComponents.forDaily 创建每天重复触发的通知
+  const triggerTime = new Date()
+  triggerTime.setHours(hour, minute, 0, 0)
+
+  const dateComponents = DateComponents.forDaily(triggerTime)
+  const trigger = new CalendarNotificationTrigger({
+    dateMatching: dateComponents,
+    repeats: true,
+  })
+
+  const result = await Notification.schedule({
+    title: SCRIPT_NAME,
+    body: '每日图片已更新，点击查看',
+    trigger,
+    threadIdentifier: DAILY_REFRESH_NOTIFICATION_ID,
+    userInfo: {
+      source: DAILY_REFRESH_NOTIFICATION_ID,
+    },
+    // 点击通知时运行当前脚本的 intent 来刷新数据
+    tapAction: {
+      type: 'runScript',
+      scriptName: SCRIPT_NAME,
+    },
+  })
+
+  addRefreshLog({
+    status: result ? 'success' : 'error',
+    message: result
+      ? `已调度每天 ${formatNotifyTime()} 的刷新通知`
+      : '调度刷新通知失败',
+    forceRefresh: false,
+  })
+
+  return result
+}
+
+// 取消每日刷新通知
+export const cancelDailyRefreshNotification = async (): Promise<void> => {
+  await Notification.removeAllPendingsOfCurrentScript()
+
+  addRefreshLog({
+    status: 'success',
+    message: '已取消每日刷新通知',
+    forceRefresh: false,
+  })
+}
+
+// 检查脚本是否由通知点击启动
+export const isLaunchedByNotification = (): boolean => {
+  return Notification.current != null
 }

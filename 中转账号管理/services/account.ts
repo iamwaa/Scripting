@@ -9,7 +9,7 @@ import { checkSiteStatus, fetchSelf, fetchCheckinStatus, doCheckin } from "./aut
 export function getAuthSourceText(account: Account) {
   if (account.authSource === "password") return "账号"
   if (account.authSource === "web") return "网页"
-  if (account.authSource === "cookie") return "手动Cookie"
+  if (account.authSource === "cookie") return "Cookie"
   if (account.authSource === "accessToken") return "令牌"
   if (getSecret(account.cookieKey)) return "Cookie"
   if (getSecret(account.accessTokenKey)) return "令牌"
