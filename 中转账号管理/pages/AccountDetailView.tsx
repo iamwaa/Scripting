@@ -61,9 +61,9 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     if (statusResult.status === "fulfilled") {
       patch.lastCheckin = statusResult.value
       Object.assign(patch, getTodayCheckinPatch(statusResult.value))
-      if (selfResult.status === "fulfilled") patch.lastError = ""
     } else {
-      if (!patch.lastError) patch.lastError = getErrorMessage(statusResult.reason)
+      // fetchSelf 成功即表示登录有效，签到接口失败不应覆盖成登录错误，避免误报“登录失效”
+      if (selfResult.status !== "fulfilled") patch.lastError = getErrorMessage(statusResult.reason)
       Object.assign(patch, getCheckinDisabledPatch((statusResult.reason as any)?.message ?? statusResult.reason))
     }
     if (siteResult.status === "fulfilled") {

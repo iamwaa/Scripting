@@ -1,0 +1,45 @@
+{
+  "localizedDescriptions" : {
+    "fr" : "",
+    "pt" : "",
+    "zh" : "查看电竞赛事赛程并订阅赛前通知",
+    "de" : "",
+    "es" : "",
+    "it" : "",
+    "en" : "",
+    "ru" : "",
+    "ja" : ""
+  },
+  "version" : "1.0.0",
+  "permissions" : null,
+  "icon" : "sportscourt.fill",
+  "iconImage" : "",
+  "name" : "电竞赛程通",
+  "author" : {
+    "name" : "Waa",
+    "homepage" : "https:\/\/github.com\/iamwaa",
+    "email" : null
+  },
+  "remoteResource" : null,
+  "runInApp" : false,
+  "contributors" : [
+
+  ],
+  "color" : "rgba(10, 132, 255, 1)",
+  "description" : "查看电竞赛事赛程并订阅赛前通知",
+  "localizedNames" : {
+    "es" : "",
+    "pt" : "",
+    "en" : "",
+    "de" : "",
+    "ru" : "",
+    "ja" : "",
+    "zh" : "电竞赛程通",
+    "fr" : "",
+    "it" : ""
+  },
+  "entry" : "index.tsx",
+  "intentInputTypes" : [
+
+  ]
+}

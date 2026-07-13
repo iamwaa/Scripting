@@ -11,11 +11,11 @@ export function AccountSummary({ accounts }: { accounts: Account[] }) {
 
   return <Section title="总览">
     <HStack spacing={12}>
-      <VStack alignment="leading" spacing={4} frame={{ width: 90, alignment: "leading" }}>
+      <VStack alignment="leading" spacing={4} frame={{ width: 80, alignment: "leading" }}>
         <Text font="caption" foregroundStyle="secondaryLabel">账号</Text>
         <Text font="title2">{accounts.length}</Text>
       </VStack>
-      <VStack alignment="leading" spacing={4} frame={{ width: 90, alignment: "leading" }}>
+      <VStack alignment="leading" spacing={4} frame={{ width: 80, alignment: "leading" }}>
         <Text font="caption" foregroundStyle="secondaryLabel">已签到</Text>
         <Text font="title2">{checkedCount}</Text>
       </VStack>

@@ -1,6 +1,6 @@
 import type { Account, AccountDraft, SelfInfo, SiteStatus, CheckinRecord, CheckinStatus, AccountSortKey, SortDirection, AccountSortPreference } from "../types"
 import { isSub2ApiAccount, getPlatformText, localDateString, getSelfQuotaValue, getCheckinRecordMap, sumCheckinAwards, uid, now, normalizeBaseUrl } from "../utils/format"
-import { getErrorMessage } from "../utils/error"
+import { getErrorMessage, CHECKIN_DISABLED_PATTERN } from "../utils/error"
 import { loadAccounts, saveAccounts, setSecret, removeSecret, secretKey, getSecret, patchAccount } from "./storage"
 import { removeAccountSecrets } from "./api"
 import { checkSiteStatus, fetchSelf, fetchCheckinStatus, doCheckin } from "./auth"
@@ -261,7 +261,7 @@ export function getCheckinCount(status: CheckinStatus | undefined, records: Chec
 // 检查签到功能是否未开启并生成补丁
 export function getCheckinDisabledPatch(message: any): Partial<Account> {
   const text = String(message ?? "")
-  if (/签到功能未开启|签到.*未开启|check-?in.*(disabled|not\s+enabled)|sign-?in.*(disabled|not\s+enabled)/i.test(text)) {
+  if (CHECKIN_DISABLED_PATTERN.test(text)) {
     return { lastCheckin: { enabled: false } }
   }
   return {}

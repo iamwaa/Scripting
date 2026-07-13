@@ -6,6 +6,18 @@ import { translateErrorMessage } from "../utils/error"
 import { mergeCookies } from "../utils/cookie"
 import { getSecret, removeSecret } from "./storage"
 
+// 服务端消息中出现这些关键词才认为是登录失效；
+// 单纯的 "forbidden"/"access denied"/"permission denied" 不算，因为 403 常被用作额度/IP/权限等业务错误
+const AUTH_EXPIRED_MESSAGE_RE = /unauthorized|not\s+logged\s+in|no\s+access\s+token|authentication\s+(is\s+)?required|token\s+(has\s+)?expired|session\s+(has\s+)?expired|cookie\s+(has\s+)?expired|login\s+expired|invalid\s+token|malformed\s+token|missing\s+token|access.?token|session\s*(not\s+found|expired|invalid)|no\s+session|无权进行此操作|未登录|登录状态已过期|登录已过期|令牌无效|令牌已过期/i
+
+// 构造带 HTTP 状态和 authExpired 元数据的错误，供上层判断是否需要重登
+function makeApiError(message: string, opts?: { status?: number, authExpired?: boolean }) {
+  const err: any = new Error(translateErrorMessage(message))
+  if (opts?.status) err.status = opts.status
+  if (opts?.authExpired) err.authExpired = true
+  return err
+}
+
 export function getHeader(response: any, name: string) {
   try {
     if (typeof response?.headers?.get === "function") return response.headers.get(name) ?? response.headers.get(name.toLowerCase()) ?? ""
@@ -35,7 +47,7 @@ export async function sub2ApiRequest<T = any>(account: Account, method: string, 
   }
 
   const token = getSecret(account.cookieKey)
-  if (!token) throw new Error(`缺少 Sub2API 登录令牌，请使用“网页登录获取 Cookie”或粘贴 auth_token`)
+  if (!token) throw new Error("缺少 Sub2API 登录令牌")
 
   const hasQuery = path.includes("?")
   const timezone = encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC")
@@ -69,15 +81,15 @@ export async function sub2ApiRequest<T = any>(account: Account, method: string, 
     json = raw ? JSON.parse(raw) : {}
   } catch {
     // 非 JSON 响应通常是触发了验证或登录失效，而非真正的 API 路径错误
-    throw new Error(`响应不是 JSON：${raw.slice(0, 60)}`)
+    throw makeApiError(`响应不是 JSON：${raw.slice(0, 60)}`, { authExpired: !response.ok })
   }
   if (!response.ok) {
-    // HTTP 401/403/404 都可能表示登录失效，把状态码拼进消息，便于上层 isAuthExpiredError 识别并触发重登录
+    // 保留服务端原始消息让翻译规则正确分类（额度不足/被封禁/限流等），auth-expired 只作为元数据附带
+    // 401 无条件视为登录失效；403/404 只在消息含认证关键词时才算（避免额度/IP/封禁被误判）
     const status = Number(response.status) || 0
     const rawMessage = json?.message || json?.detail || (status ? `HTTP ${status}` : "未知错误")
-    const authExpired = status === 401 || status === 403 || (status === 404 && /session|token|login|登录|权限|auth/i.test(rawMessage))
-    const message = authExpired ? `未登录或权限不足（HTTP ${status}）：${rawMessage}` : rawMessage
-    throw new Error(translateErrorMessage(message))
+    const authExpired = status === 401 || AUTH_EXPIRED_MESSAGE_RE.test(rawMessage)
+    throw makeApiError(rawMessage, { status, authExpired })
   }
   return unwrapSub2ApiJson<T>(json)
 }
@@ -202,7 +214,7 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
     headers.Cookie = cookie
   }
   if (account.lastSelf?.id) headers["New-Api-User"] = String(account.lastSelf.id)
-  else if (path !== "/api/user/login" && !accessToken) throw new Error("缺少用户 ID，请先执行一次登录")
+  else if (path !== "/api/user/login" && !accessToken) throw new Error("缺少用户 ID，请先登录")
   if (body !== undefined) headers["Content-Type"] = "application/json"
 
   const response = await fetch(`${baseUrl}${path}`, {
@@ -219,19 +231,19 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
     json = raw ? JSON.parse(raw) : {}
   } catch {
     // 非 JSON 响应通常是触发了验证或登录失效，而非真正的 API 路径错误
-    throw new Error(`响应不是 JSON：${raw.slice(0, 60)}`)
+    throw makeApiError(`响应不是 JSON：${raw.slice(0, 60)}`, { authExpired: true })
   }
 
   const setCookie = getHeader(response, "set-cookie")
   const responseCookies = Array.isArray(response?.cookies) ? response.cookies : []
 
   if (json.success !== true) {
-    // HTTP 401/403/404 都可能表示登录失效，把状态码拼进消息，便于上层 isAuthExpiredError 识别并触发重登录
+    // 保留服务端原始消息让翻译规则正确分类（额度不足/被封禁/限流等），auth-expired 只作为元数据附带
+    // NewAPI 常返回 HTTP 200 + success:false，主要靠消息文本识别；403 单独不足以判定登录失效
     const status = Number(response?.status) || 0
     const rawMessage = json.message || (status ? `HTTP ${status}` : "未知错误")
-    const authExpired = status === 401 || status === 403 || (status === 404 && /session|token|login|登录|权限|auth/i.test(rawMessage))
-    const message = authExpired ? `无权进行此操作，未登录或权限不足（HTTP ${status}）：${rawMessage}` : rawMessage
-    throw new Error(translateErrorMessage(message))
+    const authExpired = status === 401 || AUTH_EXPIRED_MESSAGE_RE.test(rawMessage)
+    throw makeApiError(rawMessage, { status, authExpired })
   }
   return { data: json.data as T, cookie: mergeCookies("", setCookie, responseCookies) }
 }

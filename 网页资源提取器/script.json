@@ -1,44 +1,45 @@
 {
-  "localizedNames" : {
-    "pt" : "Extrator de Recursos Web",
-    "es" : "Extractor de Recursos Web",
-    "ru" : "Извлечение веб-ресурсов",
-    "zh" : "网页资源提取器",
-    "ja" : "Webリソース抽出",
-    "fr" : "Extracteur de Ressources Web",
-    "it" : "Estrattore Risorse Web",
-    "en" : "Web Resource Extractor",
-    "de" : "Web-Ressourcen Extraktor"
-  },
-  "runInApp" : false,
-  "remoteResource" : null,
   "color" : "rgba(143, 168, 149,1)",
-  "icon" : "rectangle.and.text.magnifyingglass",
-  "description" : "从网页中提取图片、视频、音频、文档等资源，支持资源分类、有效性过滤和缩略图隐藏。",
-  "contributors" : [
-
-  ],
-  "localizedDescriptions" : {
-    "it" : "Estrai immagini, video, audio, documenti e altre risorse dalle pagine web con filtraggio e categorizzazione.",
-    "pt" : "Extraia imagens, videos, audios, documentos e outros recursos de paginas web com filtragem e categorizacao.",
-    "en" : "Extract images, videos, audio, documents and other resources from web pages with filtering and categorization.",
-    "ja" : "ウェブページから画像、動画、音声、ドキュメントなどのリソースを抽出し、フィルタリングと分類をサポートします。",
-    "zh" : "从网页中提取图片、视频、音频、文档等资源，支持资源分类、有效性过滤和缩略图隐藏。",
-    "ru" : "Извлекайте изображения, видео, аудио, документы и другие ресурсы из веб-страниц с фильтрацией и категоризацией.",
-    "fr" : "Extrayez des images, videos, audios, documents et autres ressources des pages web avec filtrage et categorisation.",
-    "de" : "Extrahieren Sie Bilder, Videos, Audios, Dokumente und andere Ressourcen von Webseiten mit Filterung und Kategorisierung.",
-    "es" : "Extrae imagenes, videos, audios, documentos y otros recursos de paginas web con filtrado y categorizacion."
-  },
   "intentInputTypes" : [
     "URLs"
   ],
-  "author" : {
-    "name" : "Waa",
-    "email" : null,
-    "homepage" : "https:\/\/github.com\/iamwaa"
+  "remoteResource" : null,
+  "localizedDescriptions" : {
+    "en" : "Extract images, videos, audio, documents and other resources from web pages with filtering and categorization.",
+    "es" : "Extrae imagenes, videos, audios, documentos y otros recursos de paginas web con filtrado y categorizacion.",
+    "ru" : "Извлекайте изображения, видео, аудио, документы и другие ресурсы из веб-страниц с фильтрацией и категоризацией.",
+    "de" : "Extrahieren Sie Bilder, Videos, Audios, Dokumente und andere Ressourcen von Webseiten mit Filterung und Kategorisierung.",
+    "zh" : "从网页中提取图片、视频、音频、文档等资源，支持资源分类、有效性过滤和缩略图隐藏。",
+    "it" : "Estrai immagini, video, audio, documenti e altre risorse dalle pagine web con filtraggio e categorizzazione.",
+    "fr" : "Extrayez des images, videos, audios, documents et autres ressources des pages web avec filtrage et categorisation.",
+    "ja" : "ウェブページから画像、動画、音声、ドキュメントなどのリソースを抽出し、フィルタリングと分類をサポートします。",
+    "pt" : "Extraia imagens, videos, audios, documentos e outros recursos de paginas web com filtragem e categorizacao."
   },
-  "entry" : "index.tsx",
+  "iconImage" : "",
   "version" : "1.0.0",
+  "icon" : "rectangle.and.text.magnifyingglass",
+  "entry" : "index.tsx",
+  "contributors" : [
+
+  ],
+  "description" : "从网页中提取图片、视频、音频、文档等资源，支持资源分类、有效性过滤和缩略图隐藏。",
   "name" : "网页资源提取器",
-  "iconImage" : ""
+  "localizedNames" : {
+    "zh" : "网页资源提取器",
+    "ru" : "Извлечение веб-ресурсов",
+    "fr" : "Extracteur de Ressources Web",
+    "pt" : "Extrator de Recursos Web",
+    "es" : "Extractor de Recursos Web",
+    "ja" : "Webリソース抽出",
+    "en" : "Web Resource Extractor",
+    "it" : "Estrattore Risorse Web",
+    "de" : "Web-Ressourcen Extraktor"
+  },
+  "permissions" : null,
+  "runInApp" : false,
+  "author" : {
+    "email" : null,
+    "name" : "Waa",
+    "homepage" : "https:\/\/github.com\/iamwaa"
+  }
 }

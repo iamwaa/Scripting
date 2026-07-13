@@ -5,8 +5,9 @@ import { UA } from "../constants"
 import { isSub2ApiAccount, normalizeBaseUrl, quotaFromUsd, localDateString, localMonthString, shortUrl, now } from "../utils/format"
 import { translateErrorMessage, getErrorMessage } from "../utils/error"
 import { mergeCookies, cookiesToHeader, parseCookieHeader, getUrlHostname, isHttpUrl, resolveWebUrl, escapeHTML } from "../utils/cookie"
-import { getSecret, setSecret, loadAccounts, patchAccount } from "./storage"
+import { getSecret, setSecret, removeSecret, loadAccounts, patchAccount } from "./storage"
 import { unwrapSub2ApiJson, sub2ApiRequest, fetchSub2ApiSelf, fetchSub2ApiCheckinStatus, doSub2ApiCheckin, apiRequestWithMeta, apiRequest } from "./api"
+import { presentWebViewWithToolbar } from "../components/WebViewPage"
 
 // 生成 WebView 加载中 HTML
 export function getWebViewLoadingHTML(url: string, title: string) {
@@ -62,14 +63,15 @@ export async function presentWebViewAndLoadURL(webView: WebViewController, url: 
   const openPage = async () => {
     try {
       const loaded = await loadWebUrlWithFallback(webView, url, url)
-      if (!loaded) throw new Error("页面加载失败，请检查站点地址或网络")
+      if (!loaded) throw new Error("页面加载失败")
       await prepareWebLoginPage(webView, url)
     } catch (e: any) {
       await webView.loadHTML(getWebViewLoadingHTML(url, `网页打开失败：${getErrorMessage(e)}`), url)
     }
   }
   setTimeout(() => { void openPage() }, 80)
-  await webView.present(options)
+  // 以原生工具栏模式呈现（右上角刷新按钮）
+  await presentWebViewWithToolbar(webView, options.navigationTitle || "网页")
 }
 
 // 递归从 JSON 中查找 SelfInfo
@@ -113,25 +115,116 @@ export function extractSelfInfoFromStorage(items: Record<string, string>) {
   return undefined
 }
 
+// 已知需要打平跨域 iframe 首页的站点白名单（域名或域名后缀，忽略大小写）
+// 只有账号 host 命中白名单时才启用 flatten，避免误伤其他使用大 iframe 的站点
+const FLATTEN_IFRAME_HOSTS = ["x666.me"]
+
+function shouldEnableFlatten(host: string) {
+  if (!host) return false
+  const h = host.toLowerCase()
+  return FLATTEN_IFRAME_HOSTS.some(rule => h === rule || h.endsWith("." + rule))
+}
+
 // 注入 JS：patch 弹窗、安装进度条
 export async function prepareWebLoginPage(webView: WebViewController, baseUrl = "") {
+  // 提取账号原始站点主机名，作为 flatten iframe 逻辑的守卫：
+  // 只有当前文档仍在这个 host 上时才允许打平，避免打平后跳到 boheapi/qd.x666.me 等子站又被继续打平导致连环跳转
+  const originHost = getUrlHostname(baseUrl)
+  // 只有账号 host 命中白名单时才启用 flatten；其他站点即便有大 iframe 也不打平
+  const flattenEnabled = shouldEnableFlatten(originHost)
   const script = `
+    const __newapiOriginHost = ${JSON.stringify(originHost)};
+    const __newapiFlattenEnabled = ${JSON.stringify(flattenEnabled)};
+    // 同页跳转辅助：忽略空/占位 URL，兼容相对路径
+    const navigate = (url) => {
+      if (!url) return;
+      const s = String(url);
+      if (s === '' || s === 'about:blank') return;
+      try { location.href = new URL(s, location.href).href; }
+      catch { location.href = s; }
+    };
+    // 构造一个假的 window 代理：拦截后续对 location 的赋值 / assign / replace / postMessage 等，都落到当前 WebView
+    const makeFakeWindow = () => {
+      const locationProxy = new Proxy({}, {
+        get: (_, prop) => {
+          if (prop === 'href') return location.href;
+          if (prop === 'assign' || prop === 'replace') return (u) => navigate(u);
+          if (prop === 'reload') return () => location.reload();
+          try { const v = location[prop]; return typeof v === 'function' ? v.bind(location) : v; }
+          catch { return undefined; }
+        },
+        set: (_, prop, value) => { if (prop === 'href') navigate(value); return true; },
+      });
+      const fake = new Proxy({ closed: false }, {
+        get: (target, prop) => {
+          if (prop === 'location') return locationProxy;
+          if (prop === 'close' || prop === 'focus' || prop === 'blur') return () => {};
+          if (prop === 'closed') return false;
+          if (prop === 'opener') return null;
+          if (prop === 'postMessage') return () => {};
+          if (prop === 'document') return { write: () => {}, writeln: () => {}, close: () => {} };
+          if (prop === 'window' || prop === 'self') return target;
+          return undefined;
+        },
+        set: (target, prop, value) => {
+          if (prop === 'location') {
+            if (typeof value === 'string') navigate(value);
+            else if (value && typeof value === 'object' && value.href) navigate(value.href);
+          }
+          return true;
+        },
+      });
+      return fake;
+    };
+    // 打平大面积跨域 iframe：若首页把主要内容放在跨域 iframe 内（例如 new-api 的自定义首页），
+    // shim 无法注入到跨域 iframe，iOS WKWebView 也不响应 iframe 里 target=_blank 弹新窗口。
+    // 检测到跨域 iframe 占据视口 ≥60% 时，直接把主 frame 跳到 iframe URL，让子页的链接落回主 frame 由 shim 接管。
+    // 关键守卫：只允许在账号的原始 host 上打平；打平后当前 host 会变为 iframe 的 host，此时此函数直接跳过，
+    // 避免 boheapi 内又有大 iframe（或后续 qd.x666.me/up.x666.me 有嵌套 iframe）触发链式跳转。
+    const flattenIframe = () => {
+      if (!__newapiFlattenEnabled) return;
+      if (window.__newapiFlattened) return;
+      if (__newapiOriginHost && location.hostname !== __newapiOriginHost) return;
+      const iframes = document.querySelectorAll('iframe[src]');
+      const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+      const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+      const viewportArea = vw * vh;
+      if (viewportArea <= 0) return;
+      for (const iframe of iframes) {
+        const src = iframe.getAttribute('src') || '';
+        if (!/^https?:/i.test(src)) continue;
+        try {
+          const u = new URL(src, location.href);
+          if (u.origin === location.origin) continue;
+          const rect = iframe.getBoundingClientRect();
+          if (rect.width * rect.height < viewportArea * 0.6) continue;
+          window.__newapiFlattened = true;
+          navigate(u.href);
+          return;
+        } catch {}
+      }
+    };
     const patch = () => {
-      window.open = (url) => {
-        if (url) {
-          try { location.href = new URL(url, location.href).href; }
-          catch { location.href = url; }
-        }
-        return window;
-      };
+      // window.open 只覆盖一次；有 URL 立即同页跳，无 URL 时也返回代理，后续给 w.location.href 赋值一样能触发跳转
+      if (!window.__newapiOpenPatched) {
+        window.__newapiOpenPatched = true;
+        window.open = (url) => { navigate(url); return makeFakeWindow(); };
+      }
+      // 已存在的 target=_blank 链接 / 表单改为当前页导航
       document.querySelectorAll('a[target="_blank"], a[target="blank"]').forEach(a => a.setAttribute('target', '_self'));
       document.querySelectorAll('form[target="_blank"], form[target="blank"]').forEach(f => f.setAttribute('target', '_self'));
-      document.addEventListener('click', (event) => {
-        const a = event.target?.closest?.('a[target="_blank"], a[target="blank"]');
-        if (!a || !a.href) return;
-        event.preventDefault();
-        location.href = a.href;
-      }, true);
+      // 兜底：捕获阶段拦截 target=_blank 链接的点击，避免动态 SPA 加载后未及时改写 target
+      if (!window.__newapiClickBound) {
+        window.__newapiClickBound = true;
+        document.addEventListener('click', (event) => {
+          const a = event.target?.closest?.('a[target="_blank"], a[target="blank"]');
+          if (!a || !a.href) return;
+          event.preventDefault();
+          location.href = a.href;
+        }, true);
+      }
+      // 检测并打平跨域大 iframe（新 iframe 可能是 SPA 动态渲染，因此需要每次 tick 都试一下）
+      flattenIframe();
       return true;
     };
     patch();
@@ -196,8 +289,9 @@ export async function installWebNavigationBridge(webView: WebViewController, bas
       const targetUrl = resolveWebUrl(String(url ?? ""), baseUrl)
       if (!isHttpUrl(targetUrl)) return false
       const loaded = await loadWebUrlWithFallback(webView, targetUrl, baseUrl)
-      setTimeout(() => prepareWebLoginPage(webView, targetUrl), 300)
-      setTimeout(() => prepareWebLoginPage(webView, targetUrl), 1200)
+      // 始终传入账号原始 baseUrl，避免 flatten iframe 守卫误判当前 host
+      setTimeout(() => prepareWebLoginPage(webView, baseUrl), 300)
+      setTimeout(() => prepareWebLoginPage(webView, baseUrl), 1200)
       return loaded
     })
   } catch {}
@@ -267,7 +361,7 @@ export async function checkSiteStatus(account: Account): Promise<SiteStatus> {
 export async function loginSub2ApiAccount(account: Account) {
   const password = getSecret(account.passwordKey)
   if (!account.username || !password) {
-    throw new Error("该账号未保存用户名/密码，请编辑账号补充，或使用“网页登录获取 Cookie/令牌”")
+    throw new Error("未保存用户名/密码，请编辑账号或使用网页登录")
   }
 
   const baseUrl = normalizeBaseUrl(account.baseUrl)
@@ -303,7 +397,7 @@ export async function loginSub2ApiAccount(account: Account) {
   if (!response.ok) throw new Error(translateErrorMessage(json?.message || json?.detail || `HTTP ${response.status}`))
 
   const data = unwrapSub2ApiJson<any>(json)
-  if (data?.requires_2fa) throw new Error("该账号需要 2FA，请使用\u201c网页登录获取 Cookie/令牌\u201d")
+  if (data?.requires_2fa) throw new Error("该账号需要 2FA，请使用网页登录")
   const token = data?.access_token
   if (!token) throw new Error("登录成功但未返回 access_token")
   if (account.cookieKey) setSecret(account.cookieKey, token)
@@ -328,16 +422,25 @@ export async function loginAccount(account: Account) {
   // 优先尝试访问令牌认证（需要用户 ID 才能发起请求）
   const accessToken = getSecret(account.accessTokenKey)
   if (accessToken && account.lastSelf?.id) {
-    const self = await apiRequest<SelfInfo>(account, "GET", "/api/user/self")
-    patchAccount(account.id, { lastSelf: self, lastError: "", authSource: "accessToken" })
-    return self
+    try {
+      const self = await apiRequest<SelfInfo>(account, "GET", "/api/user/self")
+      patchAccount(account.id, { lastSelf: self, lastError: "", authSource: "accessToken" })
+      return self
+    } catch (e: any) {
+      // 令牌失效：若该账号同时保存了账号密码，则回退到密码登录后再执行后续操作
+      const password = getSecret(account.passwordKey)
+      if (!account.username || !password) throw e
+      // 清除已过期的访问令牌，避免后续请求继续优先使用失效令牌（否则 apiRequest 仍会用旧令牌覆盖新生成的会话 Cookie）
+      if (account.accessTokenKey) removeSecret(account.accessTokenKey)
+      // 落到下方密码登录逻辑
+    }
   }
   const password = getSecret(account.passwordKey)
   if (!account.username || !password) {
     if (accessToken && !account.lastSelf?.id) {
-      throw new Error("访问令牌登录需要先记录用户 ID，请编辑账号填写用户 ID")
+      throw new Error("访问令牌登录需先填写用户 ID")
     }
-    throw new Error("该账号未保存用户名/密码或访问令牌，请编辑账号补充，或使用“网页登录获取 Cookie/令牌”")
+    throw new Error("未保存用户名/密码或访问令牌，请编辑账号或使用网页登录")
   }
   const result = await apiRequestWithMeta<any>(account, "POST", "/api/user/login", {
     username: account.username,
@@ -345,7 +448,7 @@ export async function loginAccount(account: Account) {
   })
   const data = result.data
   if (data?.require_2fa) {
-    throw new Error("该账号需要 2FA，请使用\u201c网页登录获取 Cookie\u201d")
+    throw new Error("该账号需要 2FA，请使用网页登录")
   }
   const mergedCookie = mergeCookies(getSecret(account.cookieKey), result.cookie)
   if (mergedCookie && account.cookieKey) setSecret(account.cookieKey, mergedCookie)
@@ -371,8 +474,9 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
       const url = request.url || normalizedBaseUrl
       // 允许 http/https，同时允许站点内部跳转和 OAuth 回调
       if (isHttpUrl(url)) {
-        setTimeout(() => prepareWebLoginPage(webView, url), 300)
-        setTimeout(() => prepareWebLoginPage(webView, url), 1200)
+        // 传入账号原始 baseUrl 而非当前 url，让 flatten iframe 守卫按原始 host 判断
+        setTimeout(() => prepareWebLoginPage(webView, normalizedBaseUrl), 300)
+        setTimeout(() => prepareWebLoginPage(webView, normalizedBaseUrl), 1200)
         return true
       }
       // 对于非 HTTP scheme（如 about:, data:, blob:），允许通过以支持 CF 验证
@@ -384,7 +488,7 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
     const openPage = async () => {
       try {
         const loaded = await loadWebUrlWithFallback(webView, normalizedBaseUrl, normalizedBaseUrl)
-        if (!loaded) throw new Error("页面加载失败，请检查站点地址或网络")
+        if (!loaded) throw new Error("页面加载失败")
         await prepareWebLoginPage(webView, normalizedBaseUrl)
         // 页面加载完成，等待 JavaScript 执行后获取标题
         await new Promise<void>(resolve => setTimeout(resolve, 1500))
@@ -399,10 +503,8 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
       }
     }
     setTimeout(() => { void openPage() }, 80)
-    await webView.present({
-      fullscreen: true,
-      navigationTitle: "登录完成后关闭页面",
-    })
+    // 以原生工具栏模式呈现（右上角刷新按钮）
+    await presentWebViewWithToolbar(webView, "登录完成后关闭页面")
 
     const cookies = await webView.getCookies(normalizedBaseUrl)
     const cookieHeader = cookiesToHeader(cookies)
@@ -415,7 +517,7 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
     const storageSelf = extractSelfInfoFromStorage(storageItems)
     const authToken = extractSub2ApiToken(storageItems)
     
-    if (!cookieHeader && !authToken) throw new Error("未获取到 Cookie 或登录令牌，请确认已在网页登录成功后再关闭页面")
+    if (!cookieHeader && !authToken) throw new Error("未获取到 Cookie 或登录令牌")
     return { cookieHeader, authToken, storageSelf, pageTitle: capturedTitle }
   } finally {
     webView.dispose()
@@ -429,9 +531,10 @@ export async function openManualCheckinWebView(account: Account) {
   if (!normalizedBaseUrl.startsWith("http://") && !normalizedBaseUrl.startsWith("https://")) {
     throw new Error("站点地址必须以 http:// 或 https:// 开头")
   }
-  if (!account.cookieKey) throw new Error("账号 Cookie 存储键不存在，请重新保存账号")
+  if (!account.cookieKey) throw new Error("Cookie 存储键缺失，请重新保存账号")
+  // 允许在没有已保存凭据的情况下打开网页签到：让用户在 WebView 内自行登录并完成签到，
+  // 关闭后再从 Cookie / localStorage 中回收最新的登录信息。
   const credential = getSecret(account.cookieKey)
-  if (!credential) throw new Error(isSub2ApiAccount(account) ? "该账号没有保存登录令牌，请先使用\u201c网页登录获取 Cookie\u201d" : "该账号没有保存 Cookie，请先使用\u201c网页登录获取 Cookie\u201d")
 
   if (isSub2ApiAccount(account)) {
     const webView = new WebViewController()
@@ -441,7 +544,8 @@ export async function openManualCheckinWebView(account: Account) {
       webView.shouldAllowRequest = async request => {
         const url = request.url || normalizedBaseUrl
         if (isHttpUrl(url)) {
-          setTimeout(() => prepareWebLoginPage(webView, url), 300)
+          // 始终传入账号原始 baseUrl，flatten iframe 守卫依赖它判断当前 host
+          setTimeout(() => prepareWebLoginPage(webView, normalizedBaseUrl), 300)
           return true
         }
         return /^(about|data|blob):/i.test(url)
@@ -450,16 +554,20 @@ export async function openManualCheckinWebView(account: Account) {
       const openPage = async () => {
         try {
           const loaded = await loadWebUrlWithFallback(webView, normalizedBaseUrl, normalizedBaseUrl)
-          if (!loaded) throw new Error("页面加载失败，请检查站点地址或网络")
-          await webView.evaluateJavaScript(`localStorage.setItem('auth_token', ${JSON.stringify(credential)}); true;`)
-          await loadWebUrlWithFallback(webView, `${normalizedBaseUrl}/home`, normalizedBaseUrl)
+          if (!loaded) throw new Error("页面加载失败")
+          // 有已保存令牌则预置到 localStorage 免登录；没有则直接留在站点首页由用户手动登录
+          if (credential) {
+            await webView.evaluateJavaScript(`localStorage.setItem('auth_token', ${JSON.stringify(credential)}); true;`)
+            await loadWebUrlWithFallback(webView, `${normalizedBaseUrl}/home`, normalizedBaseUrl)
+          }
           await prepareWebLoginPage(webView, normalizedBaseUrl)
         } catch (e: any) {
           await webView.loadHTML(getWebViewLoadingHTML(normalizedBaseUrl, `网页打开失败：${getErrorMessage(e)}`), normalizedBaseUrl)
         }
       }
       setTimeout(() => { void openPage() }, 80)
-      await webView.present({ fullscreen: true, navigationTitle: "网页签到后关闭页面" })
+      // 以原生工具栏模式呈现（右上角刷新按钮）
+      await presentWebViewWithToolbar(webView, "网页签到后关闭页面")
       // 综合读取 localStorage/sessionStorage 中的最新令牌并保存
       try {
         const storage = await readWebLoginStorage(webView)
@@ -489,22 +597,26 @@ export async function openManualCheckinWebView(account: Account) {
     webView.shouldAllowRequest = async request => {
       const url = request.url || normalizedBaseUrl
       if (isHttpUrl(url)) {
-        setTimeout(() => prepareWebLoginPage(webView, url), 300)
-        setTimeout(() => prepareWebLoginPage(webView, url), 1200)
+        // 始终传入账号原始 baseUrl，flatten iframe 守卫依赖它判断当前 host
+        setTimeout(() => prepareWebLoginPage(webView, normalizedBaseUrl), 300)
+        setTimeout(() => prepareWebLoginPage(webView, normalizedBaseUrl), 1200)
         return true
       }
       return /^(about|data|blob):/i.test(url)
     }
-    for (const cookie of parseCookieHeader(cookieHeader)) {
-      await webView.setCookie({
-        name: cookie.name,
-        value: cookie.value,
-        domain: hostname,
-        path: "/",
-        isSecure: secure,
-        isHTTPOnly: false,
-        isSessionOnly: true,
-      })
+    // 有已保存 Cookie 则预置免登录；没有则直接打开网页由用户手动登录
+    if (cookieHeader) {
+      for (const cookie of parseCookieHeader(cookieHeader)) {
+        await webView.setCookie({
+          name: cookie.name,
+          value: cookie.value,
+          domain: hostname,
+          path: "/",
+          isSecure: secure,
+          isHTTPOnly: false,
+          isSessionOnly: true,
+        })
+      }
     }
     await presentWebViewAndLoadURL(webView, normalizedBaseUrl, {
       fullscreen: true,
@@ -522,10 +634,10 @@ export async function openManualCheckinWebView(account: Account) {
 
 // 网页登录完整流程
 export async function loginByWebView(account: Account) {
-  if (!account.cookieKey) throw new Error("账号 Cookie 存储键不存在，请重新保存账号")
+  if (!account.cookieKey) throw new Error("Cookie 存储键缺失，请重新保存账号")
   const { cookieHeader, authToken, storageSelf } = await getWebLoginCookie(account.baseUrl)
   if (isSub2ApiAccount(account)) {
-    if (!authToken) throw new Error("未获取到 Sub2API auth_token，请确认已登录后再关闭页面")
+    if (!authToken) throw new Error("未获取到 Sub2API auth_token")
     setSecret(account.cookieKey, authToken)
     const tempAccount: Account = { ...account, lastSelf: storageSelf }
     const self = await fetchSub2ApiSelf(tempAccount)
@@ -536,8 +648,8 @@ export async function loginByWebView(account: Account) {
 
   const id = storageSelf?.id ?? account.lastSelf?.id
     if (!id) {
-      patchAccount(account.id, { lastError: "已保存 Cookie，但未能自动识别用户 ID。请在网页确认已登录后再试，或先用账号密码登录一次。", authSource: "web" })
-      throw new Error("已保存 Cookie，但未能自动识别用户 ID，暂时无法调用 /api/user/self")
+      patchAccount(account.id, { lastError: "Cookie 已保存，但未识别到用户 ID", authSource: "web" })
+      throw new Error("Cookie 已保存，但未识别到用户 ID")
     }
 
   const tempAccount: Account = { ...account, lastSelf: { ...(account.lastSelf ?? {}), ...(storageSelf ?? {}), id } }
@@ -547,26 +659,17 @@ export async function loginByWebView(account: Account) {
 }
 
 // 检测错误是否为登录状态失效（需要重登）
-function isAuthExpiredError(message: string): boolean {
+// 优先读取 api.ts 附加的 authExpired 元数据；若无（例如本地校验或第三方抛错），回退到消息文本匹配
+function isAuthExpiredError(error: any): boolean {
+  if (error && typeof error === "object" && error.authExpired === true) return true
+  const message = String(error?.message ?? error ?? "")
   return (
-    // 本地校验类
+    // 本地校验类（apiRequestWithMeta 抛出，不带元数据）
     message.includes("缺少用户 ID") ||
     message.includes("缺少 Sub2API 登录令牌") ||
-    // NewAPI 常见中文失效提示
-    message.includes("未登录") ||
-    message.includes("权限不足") ||
-    message.includes("无权进行此操作") ||
-    message.includes("登录状态已过期") ||
-    message.includes("访问令牌") ||
-    message.includes("令牌无效") ||
-    message.includes("令牌已过期") ||
-    // session / token 失效
-    /session\s*(not\s+found|expired|invalid)|no\s+session|session\s+失效/i.test(message) ||
-    /access.?token/i.test(message) ||
-    // HTTP 状态码 401/403
-    /\bHTTP\s*40[13]\b/i.test(message) ||
-    // 非 JSON 响应（通常是触发了验证或登录失效）
-    /响应不是 JSON/.test(message)
+    // 翻译规则输出（如“登录状态已失效”“登录会话已失效”）
+    /登录(状态|会话|令牌).{0,4}(已过期|已失效|无效)/.test(message) ||
+    /访问令牌.{0,4}(已过期|无效)/.test(message)
   )
 }
 
@@ -576,7 +679,7 @@ export async function fetchSelf(account: Account) {
     try {
       return await fetchSub2ApiSelf(account)
     } catch (e: any) {
-      if (isAuthExpiredError(getErrorMessage(e))) {
+      if (isAuthExpiredError(e)) {
         return await loginAccount(account)
       }
       throw e
@@ -585,7 +688,7 @@ export async function fetchSelf(account: Account) {
   try {
     return await apiRequest<SelfInfo>(account, "GET", "/api/user/self")
   } catch (e: any) {
-    if (isAuthExpiredError(getErrorMessage(e))) {
+    if (isAuthExpiredError(e)) {
       await loginAccount(account)
       const latest = loadAccounts().find(a => a.id === account.id) ?? account
       return await apiRequest<SelfInfo>(latest, "GET", "/api/user/self")
@@ -594,34 +697,91 @@ export async function fetchSelf(account: Account) {
   }
 }
 
-// 获取签到状态（根据平台分发，含自动重登录）
+// 获取签到状态（根据平台分发，先验证登录状态再查询）
 export async function fetchCheckinStatus(account: Account, month = localMonthString()) {
+  // 验证登录状态，失效时自动重登，返回刷新后的账号
+  const verified = await verifyLoginStatus(account)
+  if (isSub2ApiAccount(verified)) return await fetchSub2ApiCheckinStatus(verified, month)
+  const checkinPath = `/api/user/checkin?month=${encodeURIComponent(month)}`
   try {
-    if (isSub2ApiAccount(account)) return await fetchSub2ApiCheckinStatus(account, month)
-    return await apiRequest<CheckinStatus>(account, "GET", `/api/user/checkin?month=${encodeURIComponent(month)}`)
+    return await apiRequest<CheckinStatus>(verified, "GET", checkinPath)
   } catch (e: any) {
-    if (isAuthExpiredError(getErrorMessage(e))) {
-      await loginAccount(account)
-      const latest = loadAccounts().find(a => a.id === account.id) ?? account
-      if (isSub2ApiAccount(latest)) return await fetchSub2ApiCheckinStatus(latest, month)
-      return await apiRequest<CheckinStatus>(latest, "GET", `/api/user/checkin?month=${encodeURIComponent(month)}`)
-    }
-    throw e
+    // 校验通过但查询接口仍报登录失效：登录后重试一次
+    if (!isAuthExpiredError(e)) throw e
+    await loginAccount(verified)
+    const latest = loadAccounts().find(a => a.id === account.id) ?? account
+    return await apiRequest<CheckinStatus>(latest, "GET", checkinPath)
   }
 }
 
-// 执行签到（根据平台分发，含自动重登录）
-export async function doCheckin(account: Account) {
-  try {
-    if (isSub2ApiAccount(account)) return await doSub2ApiCheckin(account)
-    return await apiRequest<any>(account, "POST", "/api/user/checkin", {})
-  } catch (e: any) {
-    if (isAuthExpiredError(getErrorMessage(e))) {
-      await loginAccount(account)
-      const latest = loadAccounts().find(a => a.id === account.id) ?? account
-      if (isSub2ApiAccount(latest)) return await doSub2ApiCheckin(latest)
-      return await apiRequest<any>(latest, "POST", "/api/user/checkin", {})
+// 检查账号登录状态是否有效（轻量验证，失效时自动重登，重登失败才抛错）
+async function verifyLoginStatus(account: Account): Promise<Account> {
+  // 重登后返回最新的账号数据
+  const reload = () => loadAccounts().find(a => a.id === account.id) ?? account
+  // 该账号是否可用账号密码重登（决定校验失败后能否无条件回退登录）
+  const hasPassword = !!(account.username && getSecret(account.passwordKey))
+
+  // 统一重登失败抛错
+  const throwReloginFailed = (loginError: any) => {
+    throw new Error("登录状态已失效，自动重登失败")
+  }
+
+  // Sub2API 分支：仅在确认为登录失效时重登
+  if (isSub2ApiAccount(account)) {
+    try {
+      await sub2ApiRequest(account, "GET", "/auth/me")
+      return account
+    } catch (e: any) {
+      if (!isAuthExpiredError(e)) throw e
+      try { await loginAccount(account); return reload() }
+      catch (loginError: any) { throw throwReloginFailed(loginError) }
     }
-    throw e
+  }
+
+  // NewAPI 分支：根据现有凭据做轻量校验
+  const accessToken = getSecret(account.accessTokenKey)
+  const cookie = getSecret(account.cookieKey)
+  const canUseToken = !!(accessToken && account.lastSelf?.id)
+  // 没有任何可用凭据：有账号密码则直接登录，否则提示
+  if (!canUseToken && !cookie) {
+    if (hasPassword) {
+      // 清除残留的失效令牌，避免重登后 apiRequest 仍优先使用旧令牌
+      if (accessToken && account.accessTokenKey) removeSecret(account.accessTokenKey)
+      try { await loginAccount(account); return reload() }
+      catch (loginError: any) { throw throwReloginFailed(loginError) }
+    }
+    throw new Error("缺少 Cookie 或访问令牌")
+  }
+  try {
+    await apiRequest<SelfInfo>(account, "GET", "/api/user/self")
+    return account
+  } catch (e: any) {
+    // 校验失败：有账号密码则无条件重登（与详情页“登录”按钮一致，不依赖错误文案匹配）
+    if (hasPassword) {
+      // 清除已确认失效的访问令牌，避免重登后 apiRequest 仍优先使用旧令牌覆盖新生成的会话 Cookie
+      if (accessToken && account.accessTokenKey) removeSecret(account.accessTokenKey)
+      try { await loginAccount(account); return reload() }
+      catch (loginError: any) { throw throwReloginFailed(loginError) }
+    }
+    // 无账号密码：仅在确认为登录失效时才重登（尝试用现有凭据重登）
+    if (!isAuthExpiredError(e)) throw e
+    try { await loginAccount(account); return reload() }
+    catch (loginError: any) { throw throwReloginFailed(loginError) }
+  }
+}
+
+// 执行签到（根据平台分发，先验证登录状态再签到）
+export async function doCheckin(account: Account) {
+  // 验证登录状态，失效时自动重登，返回刷新后的账号
+  const verified = await verifyLoginStatus(account)
+  if (isSub2ApiAccount(verified)) return await doSub2ApiCheckin(verified)
+  try {
+    return await apiRequest<any>(verified, "POST", "/api/user/checkin", {})
+  } catch (e: any) {
+    // 校验通过但签到接口仍报登录失效：登录后重试一次
+    if (!isAuthExpiredError(e)) throw e
+    await loginAccount(verified)
+    const latest = loadAccounts().find(a => a.id === account.id) ?? account
+    return await apiRequest<any>(latest, "POST", "/api/user/checkin", {})
   }
 }

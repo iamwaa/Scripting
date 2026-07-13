@@ -172,6 +172,7 @@ export function MainView() {
     let skippedExcluded = 0
     let skippedTime = 0
     let skippedSigned = 0
+    let skippedDisabled = 0
     const allAccounts = loadAccounts()
     const total = allAccounts.length
     let processed = 0
@@ -187,6 +188,11 @@ export function MainView() {
         if (shouldSkipBatchCheckinByTime(account)) {
           skipped++
           skippedTime++
+          continue
+        }
+        if (account.lastCheckin?.enabled === false) {
+          skipped++
+          skippedDisabled++
           continue
         }
         if (getTodayCheckinInfo(account).checked) {
@@ -219,6 +225,7 @@ export function MainView() {
         skippedExcluded ? `排除 ${skippedExcluded}` : "",
         skippedTime ? `未到时间 ${skippedTime}` : "",
         skippedSigned ? `已签 ${skippedSigned}` : "",
+        skippedDisabled ? `未开启 ${skippedDisabled}` : "",
       ].filter(Boolean).join("，")
       let resultMessage: string
       if (ok === 0 && fail === 0) {
