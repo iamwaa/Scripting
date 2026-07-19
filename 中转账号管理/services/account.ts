@@ -293,10 +293,18 @@ export async function quickSyncAccount(account: Account) {
 
 // 快速签到并同步状态
 export async function quickCheckinAccount(account: Account) {
+  let siteStatus: SiteStatus | undefined
+  // 连通性检测仅用于更新状态，探测异常不影响后续签到。
+  try {
+    siteStatus = await checkSiteStatus(account)
+    patchAccount(account.id, { lastSiteStatus: siteStatus })
+  } catch (e: any) {
+    siteStatus = getOfflineSiteStatus(e)
+    patchAccount(account.id, { lastSiteStatus: siteStatus })
+  }
   const data = await doCheckin(account)
   let self: SelfInfo | undefined
   let status: CheckinStatus | undefined
-  let siteStatus: SiteStatus | undefined
   try { self = await fetchSelf(account) } catch {}
   try { status = await fetchCheckinStatus(account) } catch {}
   try { siteStatus = await checkSiteStatus(account) } catch {}

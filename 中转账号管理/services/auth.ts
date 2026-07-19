@@ -345,7 +345,17 @@ export async function checkSiteStatus(account: Account): Promise<SiteStatus> {
     const statusCode = Number(response?.status) || undefined
     const latencyMs = Date.now() - startedAt
     const state: SiteStatus["state"] = !statusCode || statusCode < 400 ? "online" : "warning"
-    const message = state === "online" ? "站点可访问" : `站点返回 HTTP ${statusCode}`
+    // 根据常见的 HTTP 状态码给出更友好的 warning 提示
+    const formatWarning = (code?: number) => {
+      if (!code) return "站点访问异常"
+      if (code === 401) return "需要登录（HTTP 401）"
+      if (code === 403) return "站点拒绝访问（HTTP 403）"
+      if (code === 404) return "站点地址可能有误（HTTP 404）"
+      if (code === 429) return "请求过于频繁，请稍后再试（HTTP 429）"
+      if (code >= 500) return `站点服务异常（HTTP ${code}）`
+      return `站点返回 HTTP ${code}`
+    }
+    const message = state === "online" ? "站点可访问" : formatWarning(statusCode)
     return { state, statusCode, message, checkedAt: now(), latencyMs }
   } catch (e: any) {
     return {
@@ -721,8 +731,17 @@ async function verifyLoginStatus(account: Account): Promise<Account> {
   // 该账号是否可用账号密码重登（决定校验失败后能否无条件回退登录）
   const hasPassword = !!(account.username && getSecret(account.passwordKey))
 
+  // 判断是否为服务端明确拒绝访问，用于避免自动重登失败时误报登录失效。
+  const isHttp403Error = (error: any) => {
+    const status = Number(error?.status)
+    const message = String(error?.message ?? error ?? "")
+    return status === 403 || /^(HTTP\s*)?403(\s+Forbidden)?$/i.test(message)
+  }
+
   // 统一重登失败抛错
-  const throwReloginFailed = (loginError: any) => {
+  const throwReloginFailed = (loginError: any, originalError?: any) => {
+    const preferredError = isHttp403Error(originalError) ? originalError : isHttp403Error(loginError) ? loginError : undefined
+    if (preferredError) throw new Error(getErrorMessage(preferredError))
     throw new Error("登录状态已失效，自动重登失败")
   }
 
@@ -734,7 +753,7 @@ async function verifyLoginStatus(account: Account): Promise<Account> {
     } catch (e: any) {
       if (!isAuthExpiredError(e)) throw e
       try { await loginAccount(account); return reload() }
-      catch (loginError: any) { throw throwReloginFailed(loginError) }
+      catch (loginError: any) { throw throwReloginFailed(loginError, e) }
     }
   }
 
@@ -761,12 +780,12 @@ async function verifyLoginStatus(account: Account): Promise<Account> {
       // 清除已确认失效的访问令牌，避免重登后 apiRequest 仍优先使用旧令牌覆盖新生成的会话 Cookie
       if (accessToken && account.accessTokenKey) removeSecret(account.accessTokenKey)
       try { await loginAccount(account); return reload() }
-      catch (loginError: any) { throw throwReloginFailed(loginError) }
+      catch (loginError: any) { throw throwReloginFailed(loginError, e) }
     }
     // 无账号密码：仅在确认为登录失效时才重登（尝试用现有凭据重登）
     if (!isAuthExpiredError(e)) throw e
     try { await loginAccount(account); return reload() }
-    catch (loginError: any) { throw throwReloginFailed(loginError) }
+    catch (loginError: any) { throw throwReloginFailed(loginError, e) }
   }
 }
 

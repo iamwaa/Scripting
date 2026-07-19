@@ -40,6 +40,9 @@ export const ERROR_TRANSLATIONS: Array<[RegExp, string]> = [
 
   // ========== 宽泛的未授权/权限规则（放在业务错误之后，作为兜底） ==========
   [/unauthorized|not\s+logged\s+in|no\s+access\s+token|authentication\s+(is\s+)?required/i, "未登录或权限不足"],
+  [/^(HTTP\s*)?401(\s+Unauthorized)?$/i, "未登录或权限不足（HTTP 401）"],
+  [/^(HTTP\s*)?403(\s+Forbidden)?$/i, "站点拒绝访问（HTTP 403）"],
+  [/^(HTTP\s*)?429(\s+Too\s+Many\s+Requests)?$/i, "请求过于频繁，请稍后再试（HTTP 429）"],
   [/permission\s+denied|access\s+denied|forbidden/i, "无权访问该资源"],
 
   // ========== 资源错误（登录失效相关已在上面拦截，这里只处理真正的路径错误） ==========

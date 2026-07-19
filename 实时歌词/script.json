@@ -1,0 +1,37 @@
+{
+  "description" : "获取当前播放歌曲，调用内置歌词 API，在实时活动与桌面小组件中显示实时歌词。",
+  "localizedNames" : {
+    "zh" : "实时歌词"
+  },
+  "permissions" : null,
+  "iconImage" : "",
+  "name" : "实时歌词",
+  "intentInputTypes" : [
+
+  ],
+  "localizedDescriptions" : {
+    "it" : "",
+    "es" : "",
+    "ru" : "",
+    "pt" : "",
+    "ja" : "",
+    "zh" : "",
+    "en" : "",
+    "de" : "",
+    "fr" : ""
+  },
+  "author" : {
+    "email" : null,
+    "name" : "Waa",
+    "homepage" : "https:\/\/github.com\/iamwaa"
+  },
+  "color" : "rgba(191, 90, 242, 1)",
+  "contributors" : [
+
+  ],
+  "version" : "1.0.0",
+  "entry" : "index.tsx",
+  "icon" : "music.note",
+  "remoteResource" : null,
+  "runInApp" : false
+}

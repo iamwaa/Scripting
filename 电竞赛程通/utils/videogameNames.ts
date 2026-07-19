@@ -24,6 +24,7 @@ export const VIDEOGAMES: VideogameMeta[] = [
   { slug: "r6-siege", label: "彩虹六号", name: "Rainbow Six Siege" },
   { slug: "pubg", label: "绝地求生", name: "PUBG" },
   { slug: "kog", label: "王者荣耀", name: "King of Glory" },
+  { slug: "mlbb", label: "决胜巅峰", name: "Mobile Legends: Bang Bang" },
   { slug: "cod-mw", label: "使命召唤", name: "Call of Duty" },
   { slug: "starcraft-2", label: "星际争霸2", name: "StarCraft 2" },
   { slug: "starcraft-brood-war", label: "星际争霸:母巢之战", name: "StarCraft Brood War" },

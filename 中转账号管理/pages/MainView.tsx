@@ -201,6 +201,13 @@ export function MainView() {
           continue
         }
         try {
+          // 连通性检测只更新状态，不因探测异常阻断签到。
+          try {
+            const siteStatus = await checkSiteStatus(account)
+            patchAccount(account.id, { lastSiteStatus: siteStatus })
+          } catch (e: any) {
+            patchAccount(account.id, { lastSiteStatus: getOfflineSiteStatus(e) })
+          }
           await doCheckin(account)
           let self: SelfInfo | undefined
           let status: CheckinStatus | undefined

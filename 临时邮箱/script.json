@@ -1,0 +1,14 @@
+{
+  "name": "临时邮箱",
+  "icon": "envelope.fill",
+  "color": "rgba(10, 132, 255, 1)",
+  "version": "1.1.0",
+  "runInApp": true,
+  "description": "基于 yx.chybenzun.top 的临时邮箱客户端",
+  "localizedNames": {
+    "zh": "临时邮箱"
+  },
+  "localizedDescriptions": {
+    "zh": "生成临时邮箱地址、查看收件箱、保存最近使用记录并支持后台轮询。"
+  }
+}
