@@ -434,11 +434,12 @@ export const ApiListPage = ({ accounts, setAccounts, groups, setGroups, isSelect
               </ToolbarItem>
             )}
 
-            {!isSelecting && (
+            {!isSelecting && accounts.length > 0 && (
               <ToolbarItem placement="topBarTrailing">
-                <Menu key="add-menu" label={<Image systemName="plus" foregroundStyle="#007AFF" fontWeight="semibold" />}>
-                  <Button action={addAccount}><HStack><Text>新建账号</Text><Image systemName="person.badge.plus" /></HStack></Button>
-                  <Button action={handleCreateGroup}><HStack><Text>创建分组</Text><Image systemName="folder.badge.plus" /></HStack></Button>
+                <Menu key="more-menu" label={<Image systemName={(activeTag || activeFilterType !== "all") ? "line.3.horizontal.decrease.circle.fill" : "ellipsis"} foregroundStyle={(activeTag || activeFilterType !== "all") ? "#FF9500" : "#007AFF"} font="title3" />}>
+                  {filteredAccounts.length > 0 && <Button action={() => { setIsSelecting(true); setSelectedIds(new Set()) }}><HStack><Text>选择</Text><Image systemName="checkmark.circle" /></HStack></Button>}
+                  {groups.length > 0 && <Menu label={<HStack><Text>筛选类型</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveFilterType("all")}><HStack><Text>显示全部</Text>{activeFilterType === "all" && <Image systemName="checkmark" />}</HStack></Button><Button action={() => setActiveFilterType("accounts")}><HStack><Text>账号</Text>{activeFilterType === "accounts" && <Image systemName="checkmark" />}</HStack></Button><Button action={() => setActiveFilterType("groups")}><HStack><Text>分组</Text>{activeFilterType === "groups" && <Image systemName="checkmark" />}</HStack></Button></Menu>}
+                  {allTags.length > 0 && <Menu label={<HStack><Text>筛选标签</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveTag(null)}><HStack><Text>显示全部</Text>{activeTag === null && <Image systemName="checkmark" />}</HStack></Button>{allTags.map(tag => <Button key={tag} action={() => setActiveTag(tag)}><HStack><Text>{tag}</Text>{activeTag === tag && <Image systemName="checkmark" />}</HStack></Button>)}</Menu>}
                 </Menu>
               </ToolbarItem>
             )}
@@ -447,12 +448,11 @@ export const ApiListPage = ({ accounts, setAccounts, groups, setGroups, isSelect
               <ToolbarSpacer placement="topBarTrailing" />
             )}
 
-            {!isSelecting && accounts.length > 0 && (
+            {!isSelecting && (
               <ToolbarItem placement="topBarTrailing">
-                <Menu key="more-menu" label={<Image systemName={(activeTag || activeFilterType !== "all") ? "line.3.horizontal.decrease.circle.fill" : "ellipsis"} foregroundStyle={(activeTag || activeFilterType !== "all") ? "#FF9500" : "#007AFF"} font="title3" />}>
-                  {filteredAccounts.length > 0 && <Button action={() => { setIsSelecting(true); setSelectedIds(new Set()) }}><HStack><Text>选择</Text><Image systemName="checkmark.circle" /></HStack></Button>}
-                  {groups.length > 0 && <Menu label={<HStack><Text>筛选类型</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveFilterType("all")}><HStack><Text>显示全部</Text>{activeFilterType === "all" && <Image systemName="checkmark" />}</HStack></Button><Button action={() => setActiveFilterType("accounts")}><HStack><Text>账号</Text>{activeFilterType === "accounts" && <Image systemName="checkmark" />}</HStack></Button><Button action={() => setActiveFilterType("groups")}><HStack><Text>分组</Text>{activeFilterType === "groups" && <Image systemName="checkmark" />}</HStack></Button></Menu>}
-                  {allTags.length > 0 && <Menu label={<HStack><Text>筛选标签</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveTag(null)}><HStack><Text>显示全部</Text>{activeTag === null && <Image systemName="checkmark" />}</HStack></Button>{allTags.map(tag => <Button key={tag} action={() => setActiveTag(tag)}><HStack><Text>{tag}</Text>{activeTag === tag && <Image systemName="checkmark" />}</HStack></Button>)}</Menu>}
+                <Menu key="add-menu" label={<Image systemName="plus" foregroundStyle="#007AFF" fontWeight="semibold" />}>
+                  <Button action={addAccount}><HStack><Text>新建账号</Text><Image systemName="person.badge.plus" /></HStack></Button>
+                  <Button action={handleCreateGroup}><HStack><Text>创建分组</Text><Image systemName="folder.badge.plus" /></HStack></Button>
                 </Menu>
               </ToolbarItem>
             )}
@@ -921,11 +921,12 @@ export const BookmarkListPage = ({ bookmarks, setBookmarks, groups, setGroups, i
               </ToolbarItem>
             )}
 
-            {!isSelecting && (
+            {!isSelecting && bookmarks.length > 0 && (
               <ToolbarItem placement="topBarTrailing">
-                <Menu key="add-menu" label={<Image systemName="plus" foregroundStyle="#007AFF" fontWeight="semibold" />}>
-                  <Button action={addBookmark}><HStack><Text>新建书签</Text><Image systemName="bookmark" /></HStack></Button>
-                  <Button action={handleCreateGroup}><HStack><Text>创建分组</Text><Image systemName="folder.badge.plus" /></HStack></Button>
+                <Menu key="more-menu" label={<Image systemName={(activeTag || activeFilterType !== "all") ? "line.3.horizontal.decrease.circle.fill" : "ellipsis"} foregroundStyle={(activeTag || activeFilterType !== "all") ? "#FF9500" : "#007AFF"} font="title3" />}>
+                  {filteredBookmarks.length > 0 && <Button action={() => { setIsSelecting(true); setSelectedIds(new Set()) }}><HStack><Text>选择</Text><Image systemName="checkmark.circle" /></HStack></Button>}
+                  {groups.length > 0 && <Menu label={<HStack><Text>筛选类型</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveFilterType("all")}><HStack><Text>显示全部</Text>{activeFilterType === "all" && <Image systemName="checkmark" />}</HStack></Button><Button action={() => setActiveFilterType("accounts")}><HStack><Text>书签</Text>{activeFilterType === "accounts" && <Image systemName="checkmark" />}</HStack></Button><Button action={() => setActiveFilterType("groups")}><HStack><Text>分组</Text>{activeFilterType === "groups" && <Image systemName="checkmark" />}</HStack></Button></Menu>}
+                  {allTags.length > 0 && <Menu label={<HStack><Text>筛选标签</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveTag(null)}><HStack><Text>显示全部</Text>{activeTag === null && <Image systemName="checkmark" />}</HStack></Button>{allTags.map(tag => <Button key={tag} action={() => setActiveTag(tag)}><HStack><Text>{tag}</Text>{activeTag === tag && <Image systemName="checkmark" />}</HStack></Button>)}</Menu>}
                 </Menu>
               </ToolbarItem>
             )}
@@ -934,12 +935,11 @@ export const BookmarkListPage = ({ bookmarks, setBookmarks, groups, setGroups, i
               <ToolbarSpacer placement="topBarTrailing" />
             )}
 
-            {!isSelecting && bookmarks.length > 0 && (
+            {!isSelecting && (
               <ToolbarItem placement="topBarTrailing">
-                <Menu key="more-menu" label={<Image systemName={(activeTag || activeFilterType !== "all") ? "line.3.horizontal.decrease.circle.fill" : "ellipsis"} foregroundStyle={(activeTag || activeFilterType !== "all") ? "#FF9500" : "#007AFF"} font="title3" />}>
-                  {filteredBookmarks.length > 0 && <Button action={() => { setIsSelecting(true); setSelectedIds(new Set()) }}><HStack><Text>选择</Text><Image systemName="checkmark.circle" /></HStack></Button>}
-                  {groups.length > 0 && <Menu label={<HStack><Text>筛选类型</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveFilterType("all")}><HStack><Text>显示全部</Text>{activeFilterType === "all" && <Image systemName="checkmark" />}</HStack></Button><Button action={() => setActiveFilterType("accounts")}><HStack><Text>书签</Text>{activeFilterType === "accounts" && <Image systemName="checkmark" />}</HStack></Button><Button action={() => setActiveFilterType("groups")}><HStack><Text>分组</Text>{activeFilterType === "groups" && <Image systemName="checkmark" />}</HStack></Button></Menu>}
-                  {allTags.length > 0 && <Menu label={<HStack><Text>筛选标签</Text><Image systemName="line.3.horizontal.decrease" /></HStack>}><Button action={() => setActiveTag(null)}><HStack><Text>显示全部</Text>{activeTag === null && <Image systemName="checkmark" />}</HStack></Button>{allTags.map(tag => <Button key={tag} action={() => setActiveTag(tag)}><HStack><Text>{tag}</Text>{activeTag === tag && <Image systemName="checkmark" />}</HStack></Button>)}</Menu>}
+                <Menu key="add-menu" label={<Image systemName="plus" foregroundStyle="#007AFF" fontWeight="semibold" />}>
+                  <Button action={addBookmark}><HStack><Text>新建书签</Text><Image systemName="bookmark" /></HStack></Button>
+                  <Button action={handleCreateGroup}><HStack><Text>创建分组</Text><Image systemName="folder.badge.plus" /></HStack></Button>
                 </Menu>
               </ToolbarItem>
             )}

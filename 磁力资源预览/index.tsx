@@ -28,6 +28,8 @@ import {
   useState,
 } from "scripting";
 
+import { ImageSearchPage } from "./pages/ImageSearchPage";
+
 type WhatsLinkScreenshot = {
   time?: number;
   screenshot: string;
@@ -594,7 +596,7 @@ function EmptyState() {
     <VStack
       spacing={14}
       padding={32}
-      frame={{ maxWidth: "infinity", minHeight: 410 }}
+      frame={{ maxWidth: "infinity", minHeight: 390 }}
       {...glassSurface(28, "card")}
     >
       <ZStack
@@ -782,9 +784,15 @@ function SearchResultRow({ item, loading, loadingDetail, onUseMagnet, onShowDeta
   );
 }
 
-function MagnetSearchPage({ onSelectMagnet }: { onSelectMagnet: (magnet: string) => void }) {
+function MagnetSearchPage({
+  onSelectMagnet,
+  initialKeyword = "",
+}: {
+  onSelectMagnet: (magnet: string) => void;
+  initialKeyword?: string;
+}) {
   const dismiss = Navigation.useDismiss();
-  const [keyword, setKeyword] = useState("");
+  const [keyword, setKeyword] = useState(initialKeyword);
   const [items, setItems] = useState<XciliSearchItem[]>([]);
   const [visibleCount, setVisibleCount] = useState(SEARCH_PAGE_SIZE);
   const [loading, setLoading] = useState(false);
@@ -792,6 +800,7 @@ function MagnetSearchPage({ onSelectMagnet }: { onSelectMagnet: (magnet: string)
   const [loadingDetailUrl, setLoadingDetailUrl] = useState("");
   const [toastMessage, setToastMessage] = useState("");
   const [searchBoxExpanded, setSearchBoxExpanded] = useState(true);
+  const [autoSearched, setAutoSearched] = useState(false);
   const toastPresented = useObservable(false);
 
   const notify = async (message: string, title = "提示") => {
@@ -855,6 +864,14 @@ function MagnetSearchPage({ onSelectMagnet }: { onSelectMagnet: (magnet: string)
     setItems([]);
   }, []);
 
+  useEffect(() => {
+    if (autoSearched) return;
+    const q = initialKeyword.trim();
+    if (!q) return;
+    setAutoSearched(true);
+    void handleSearch();
+  }, [autoSearched, initialKeyword]);
+
   const visibleItems = items.slice(0, visibleCount);
   const hasMoreItems = visibleCount < items.length;
   const loadMoreItems = () => {
@@ -865,14 +882,6 @@ function MagnetSearchPage({ onSelectMagnet }: { onSelectMagnet: (magnet: string)
     <ScrollView
       navigationTitle="磁力搜索"
       navigationBarTitleDisplayMode="inline"
-      navigationBarBackButtonHidden
-      toolbar={
-        <Toolbar>
-          <ToolbarItem placement="topBarLeading">
-            <BackButton action={dismiss} />
-          </ToolbarItem>
-        </Toolbar>
-      }
       toast={{
         message: toastMessage,
         isPresented: toastPresented,
@@ -924,7 +933,7 @@ function MagnetSearchPage({ onSelectMagnet }: { onSelectMagnet: (magnet: string)
           <VStack
             spacing={14}
             padding={32}
-            frame={{ maxWidth: "infinity", minHeight: 480 }}
+            frame={{ maxWidth: "infinity", minHeight: 540 }}
             {...glassSurface(28, "card", false)}
           >
             <ProgressView />
@@ -966,7 +975,7 @@ function MagnetSearchPage({ onSelectMagnet }: { onSelectMagnet: (magnet: string)
           <VStack
             spacing={14}
             padding={32}
-            frame={{ maxWidth: "infinity", minHeight: 480 }}
+            frame={{ maxWidth: "infinity", minHeight: 520 }}
             {...glassSurface(28, "card")}
           >
             <ZStack
@@ -1241,7 +1250,35 @@ function MainApp() {
                       {...glassSurface(18, "control")}
                     >
                       <Image systemName="magnifyingglass.circle" frame={{ width: 20, height: 20 }} foregroundStyle={BLUE} />
-                      <Text font={16} fontWeight="semibold">去 xcili.net 搜索磁力资源</Text>
+                      <Text font={16} fontWeight="semibold">搜索磁力资源</Text>
+                      <Spacer />
+                      <Image systemName="chevron.right" frame={{ width: 12, height: 12 }} foregroundStyle="secondaryLabel" />
+                    </HStack>
+                  </NavigationLink>
+                  <NavigationLink
+                    destination={
+                      <ImageSearchPage
+                        renderMagnetSearch={(code) => (
+                          <MagnetSearchPage
+                            initialKeyword={code}
+                            onSelectMagnet={(magnet) => {
+                              setInput(magnet);
+                              setInputBoxExpanded(false);
+                              void runQuery(magnet);
+                            }}
+                          />
+                        )}
+                      />
+                    }
+                  >
+                    <HStack
+                      spacing={8}
+                      padding={{ vertical: 12, horizontal: 14 }}
+                      frame={{ maxWidth: "infinity" }}
+                      {...glassSurface(18, "control")}
+                    >
+                      <Image systemName="viewfinder" frame={{ width: 20, height: 20 }} foregroundStyle={BLUE} />
+                      <Text font={16} fontWeight="semibold">以图搜片</Text>
                       <Spacer />
                       <Image systemName="chevron.right" frame={{ width: 12, height: 12 }} foregroundStyle="secondaryLabel" />
                     </HStack>
@@ -1315,9 +1352,11 @@ function MainApp() {
 
             <VStack spacing={4} frame={{ maxWidth: "infinity" }}>
               <Text foregroundStyle="secondaryLabel" font={13}>Magnet information by whatslink.info</Text>
-              <Link url="https://whatslink.info/">
-                <Text foregroundStyle={BLUE} font={13}>查看接口与服务说明</Text>
-              </Link>
+              <HStack spacing={12}>
+                <Link url="https://whatslink.info/">
+                  <Text foregroundStyle={BLUE} font={13}>whatslink 说明</Text>
+                </Link>
+              </HStack>
             </VStack>
           </VStack>
         </ZStack>
