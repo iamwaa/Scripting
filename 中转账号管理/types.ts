@@ -28,11 +28,16 @@ export type CheckinStats = {
   records?: CheckinRecord[]
 }
 
+// 签到状态（含部分二开站点扩展的 PoW 签到字段）
 export type CheckinStatus = {
   enabled?: boolean
   min_quota?: number
   max_quota?: number
   stats?: CheckinStats
+  // 二开 new-api（如 huaibao.top）启用的签到签名挑战字段：
+  // checkin_nonce 为当日 nonce，nonce_date 标记其归属日期，签到 POST 需据此计算签名头
+  checkin_nonce?: string
+  nonce_date?: string
 }
 
 export type SiteStatus = {

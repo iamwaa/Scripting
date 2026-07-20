@@ -188,7 +188,7 @@ export async function doSub2ApiCheckin(account: Account) {
   }
 }
 
-export async function apiRequestWithMeta<T = any>(account: Account, method: string, path: string, body?: any): Promise<ApiResult<T>> {
+export async function apiRequestWithMeta<T = any>(account: Account, method: string, path: string, body?: any, extraHeaders?: Record<string, string>): Promise<ApiResult<T>> {
   const baseUrl = normalizeBaseUrl(account.baseUrl)
   if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
     throw new Error("站点地址必须以 http:// 或 https:// 开头")
@@ -207,6 +207,8 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-origin",
   }
+  // 附加调用方传入的额外请求头（如 PoW 签到签名头）
+  if (extraHeaders) Object.assign(headers, extraHeaders)
   if (accessToken) {
     // 使用访问令牌认证
     headers["Authorization"] = accessToken.startsWith("Bearer ") ? accessToken : `Bearer ${accessToken}`
@@ -248,6 +250,6 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
   return { data: json.data as T, cookie: mergeCookies("", setCookie, responseCookies) }
 }
 
-export async function apiRequest<T = any>(account: Account, method: string, path: string, body?: any): Promise<T> {
-  return (await apiRequestWithMeta<T>(account, method, path, body)).data
+export async function apiRequest<T = any>(account: Account, method: string, path: string, body?: any, extraHeaders?: Record<string, string>): Promise<T> {
+  return (await apiRequestWithMeta<T>(account, method, path, body, extraHeaders)).data
 }
