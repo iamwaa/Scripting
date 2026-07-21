@@ -36,6 +36,7 @@ export async function scheduleAdvanceNotification(
     subtitle: notifySubtitle(match),
     body: `${minutesBefore} 分钟后开始`,
     trigger,
+    silent: false,
     userInfo: { matchId: match.id, kind: "advance" },
   })
 }
@@ -57,6 +58,7 @@ export async function scheduleStartNotification(match: Match): Promise<boolean> 
     subtitle: notifySubtitle(match),
     body: "已开始",
     trigger,
+    silent: false,
     userInfo: { matchId: match.id, kind: "start" },
   })
 }

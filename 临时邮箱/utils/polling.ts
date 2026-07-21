@@ -68,6 +68,7 @@ async function pollOnce() {
         title: "临时邮箱",
         subtitle: activeEmail,
         body,
+        silent: false,
         userInfo: { email: activeEmail },
       })
     }

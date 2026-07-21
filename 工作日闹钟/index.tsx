@@ -534,6 +534,10 @@ async function scheduleNotification(
     const notifyEnabled = WorkdayStorage.get<boolean>(KEY_NOTIFY_ENABLED) ?? DEFAULT_NOTIFY_ENABLED
     if (!notifyEnabled) return
 
+    // 快捷指令模式由 intent「明天休息吗」即时推送，不预排 pending，避免占用通知配额
+    const alarmType = WorkdayStorage.get<AlarmType>(KEY_ALARM_TYPE) ?? "builtin"
+    if (alarmType === "shortcut") return
+
     const notifyHour = WorkdayStorage.get<number>(KEY_NOTIFY_HOUR) ?? DEFAULT_NOTIFY_HOUR
     const notifyMinute = WorkdayStorage.get<number>(KEY_NOTIFY_MINUTE) ?? DEFAULT_NOTIFY_MINUTE
     const tomorrow = new Date()
@@ -557,6 +561,7 @@ async function scheduleNotification(
     await Notification.schedule({
       title,
       body,
+      silent: false,
       trigger,
       threadIdentifier: "holiday-alarm",
       userInfo: { source: "holiday-alarm", date: tomorrowStr },
@@ -1834,7 +1839,13 @@ function SettingsPage(props: {
 
         <Section
           header={<Text>通知设置</Text>}
-          footer={<Text>每天在设定时间推送通知，提前告知明天是工作日还是休息日</Text>}
+          footer={
+            <Text>
+              {props.alarmType === "shortcut"
+                ? "开启后，由快捷指令调用「明天休息吗」时即时推送通知"
+                : "每天在设定时间推送通知，提前告知明天是工作日还是休息日"}
+            </Text>
+          }
         >
           <HStack>
             <Label title="启用明日提醒" systemImage="bell.fill" />
@@ -1846,19 +1857,23 @@ function SettingsPage(props: {
               tint="#007AFF"
             />
           </HStack>
-          <DatePicker
-            title="通知时间"
-            displayedComponents={["hourAndMinute"]}
-            value={notifyTime}
-            onChanged={handleNotifyTimeChange}
-          />
-          <HStack>
-            <Text>当前设定</Text>
-            <Spacer />
-            <Text foregroundStyle="#8E8E93">
-              {`每天 ${pad(notifyDate.getHours())}:${pad(notifyDate.getMinutes())} 推送`}
-            </Text>
-          </HStack>
+          {props.alarmType !== "shortcut" ? (
+            <DatePicker
+              title="通知时间"
+              displayedComponents={["hourAndMinute"]}
+              value={notifyTime}
+              onChanged={handleNotifyTimeChange}
+            />
+          ) : null}
+          {props.alarmType !== "shortcut" ? (
+            <HStack>
+              <Text>当前设定</Text>
+              <Spacer />
+              <Text foregroundStyle="#8E8E93">
+                {`每天 ${pad(notifyDate.getHours())}:${pad(notifyDate.getMinutes())} 推送`}
+              </Text>
+            </HStack>
+          ) : null}
         </Section>
 
         <Section

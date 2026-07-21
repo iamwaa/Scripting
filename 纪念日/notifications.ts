@@ -136,6 +136,7 @@ async function scheduleOne(
   return await Notification.schedule({
     title,
     body,
+    silent: false,
     userInfo: { eventId: event.id, personId: person.id, daysBefore, year },
     trigger: new CalendarNotificationTrigger({ dateMatching: dateComponents, repeats: false })
   })

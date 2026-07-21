@@ -1,9 +1,14 @@
-import { Script, Intent } from "scripting"
+import { Script, Intent, Notification } from "scripting"
 import { WorkdayStorage } from "./storage"
 
 const KEY_SUB_CACHE = "alarm_sub_cache"
 const KEY_OVERRIDES = "alarm_overrides"
 const KEY_REST_RULE = "alarm_rest_rule"
+const KEY_NOTIFY_ENABLED = "alarm_notify_enabled"
+const KEY_ALARM_TYPE = "alarm_type"
+const DEFAULT_NOTIFY_ENABLED = true
+
+type AlarmType = "builtin" | "shortcut"
 
 interface DayEntry {
   date: string
@@ -146,40 +151,91 @@ function getShortcutQuery(): string {
   return cleaned.find(isKnownQuery) || cleaned[0] || ""
 }
 
-const query = getShortcutQuery()
+// 明天休息吗：按 是/否 即时推送，不占用 pending 配额
+async function maybeNotifyTomorrowRest(isRest: boolean, tomorrowStr: string) {
+  const notifyEnabled = WorkdayStorage.get<boolean>(KEY_NOTIFY_ENABLED) ?? DEFAULT_NOTIFY_ENABLED
+  if (!notifyEnabled) return
 
-const subDays = WorkdayStorage.get<DayEntry[]>(KEY_SUB_CACHE) || []
-const overrides = WorkdayStorage.get<LocalOverride[]>(KEY_OVERRIDES) || []
-const restRule = loadRestRule()
+  const alarmType = WorkdayStorage.get<AlarmType>(KEY_ALARM_TYPE) ?? "builtin"
+  const body = isRest
+    ? (alarmType === "shortcut" ? "明天是休息日，好好享受假期" : "明天是休息日，闹钟将自动跳过")
+    : "明天是工作日，记得早睡"
 
-function findNextDate(isTargetRest: boolean, startDate: Date): string {
-  const d = new Date(startDate)
-  d.setDate(d.getDate() + 1)
-  for (let i = 0; i < 365; i++) {
-    const key = formatDateObj(d)
-    const type = getDayType(key, subDays, overrides, restRule)
-    if (isRestDay(type) === isTargetRest) return key
-    d.setDate(d.getDate() + 1)
+  await Notification.schedule({
+    title: "工作日闹钟",
+    body,
+    silent: false,
+    threadIdentifier: "holiday-alarm",
+    userInfo: {
+      source: "holiday-alarm-intent",
+      date: tomorrowStr,
+      rest: isRest,
+    },
+  })
+}
+
+function answerTomorrowRest(
+  subDays: DayEntry[],
+  overrides: LocalOverride[],
+  restRule: RestRule
+): { result: string; isRest: boolean; tomorrowStr: string } {
+  const tomorrow = new Date()
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  const tomorrowStr = formatDateObj(tomorrow)
+  const type = getDayType(tomorrowStr, subDays, overrides, restRule)
+  const isRest = isRestDay(type)
+  return {
+    result: isRest ? "是" : "否",
+    isRest,
+    tomorrowStr,
   }
-  return "未找到"
 }
 
-let result: string
+async function main() {
+  const query = getShortcutQuery()
+  const subDays = WorkdayStorage.get<DayEntry[]>(KEY_SUB_CACHE) || []
+  const overrides = WorkdayStorage.get<LocalOverride[]>(KEY_OVERRIDES) || []
+  const restRule = loadRestRule()
 
-if (query.includes("明天") && query.includes("休息")) {
-  const tomorrow = new Date()
-  tomorrow.setDate(tomorrow.getDate() + 1)
-  const type = getDayType(formatDateObj(tomorrow), subDays, overrides, restRule)
-  result = isRestDay(type) ? "是" : "否"
-} else if (query.includes("下一个工作日")) {
-  result = findNextDate(false, new Date())
-} else if (query.includes("下一个休息日")) {
-  result = findNextDate(true, new Date())
-} else {
-  const tomorrow = new Date()
-  tomorrow.setDate(tomorrow.getDate() + 1)
-  const type = getDayType(formatDateObj(tomorrow), subDays, overrides, restRule)
-  result = isRestDay(type) ? "是" : "否"
+  function findNextDate(isTargetRest: boolean, startDate: Date): string {
+    const d = new Date(startDate)
+    d.setDate(d.getDate() + 1)
+    for (let i = 0; i < 365; i++) {
+      const key = formatDateObj(d)
+      const type = getDayType(key, subDays, overrides, restRule)
+      if (isRestDay(type) === isTargetRest) return key
+      d.setDate(d.getDate() + 1)
+    }
+    return "未找到"
+  }
+
+  let result: string
+  let notifyTomorrow: { isRest: boolean; tomorrowStr: string } | null = null
+
+  if (query.includes("明天") && query.includes("休息")) {
+    const answer = answerTomorrowRest(subDays, overrides, restRule)
+    result = answer.result
+    notifyTomorrow = answer
+  } else if (query.includes("下一个工作日")) {
+    result = findNextDate(false, new Date())
+  } else if (query.includes("下一个休息日")) {
+    result = findNextDate(true, new Date())
+  } else {
+    // 默认与「明天休息吗」相同：返回 是/否，并尝试推送通知
+    const answer = answerTomorrowRest(subDays, overrides, restRule)
+    result = answer.result
+    notifyTomorrow = answer
+  }
+
+  if (notifyTomorrow) {
+    try {
+      await maybeNotifyTomorrowRest(notifyTomorrow.isRest, notifyTomorrow.tomorrowStr)
+    } catch {
+      // 通知失败不影响快捷指令返回值
+    }
+  }
+
+  Script.exit(Intent.text(result))
 }
 
-Script.exit(Intent.text(result))
+main()
