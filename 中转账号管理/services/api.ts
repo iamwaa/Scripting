@@ -5,6 +5,7 @@ import { normalizeBaseUrl, quotaFromUsd, localDateString, localMonthString } fro
 import { translateErrorMessage } from "../utils/error"
 import { mergeCookies } from "../utils/cookie"
 import { getSecret, removeSecret } from "./storage"
+import { isWebChallengeResponse, refreshWebChallengeCookies } from "./antiBot"
 
 // 服务端消息中出现这些关键词才认为是登录失效；
 // 单纯的 "forbidden"/"access denied"/"permission denied" 不算，因为 403 常被用作额度/IP/权限等业务错误
@@ -40,7 +41,7 @@ export function unwrapSub2ApiJson<T>(json: any): T {
   return json as T
 }
 
-export async function sub2ApiRequest<T = any>(account: Account, method: string, path: string, body?: any): Promise<T> {
+export async function sub2ApiRequest<T = any>(account: Account, method: string, path: string, body?: any, challengeRetried = false): Promise<T> {
   const baseUrl = normalizeBaseUrl(account.baseUrl)
   if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
     throw new Error("站点地址必须以 http:// 或 https:// 开头")
@@ -80,6 +81,13 @@ export async function sub2ApiRequest<T = any>(account: Account, method: string, 
   try {
     json = raw ? JSON.parse(raw) : {}
   } catch {
+    if (isWebChallengeResponse(response, raw)) {
+      if (!challengeRetried) {
+        await refreshWebChallengeCookies(account)
+        return await sub2ApiRequest<T>(account, method, path, body, true)
+      }
+      throw makeApiError("站点防护验证未通过，请先用网页登录刷新 Cookie 后再试", { authExpired: false })
+    }
     // 非 JSON 响应通常是触发了验证或登录失效，而非真正的 API 路径错误
     throw makeApiError(`响应不是 JSON：${raw.slice(0, 60)}`, { authExpired: !response.ok })
   }
@@ -188,7 +196,7 @@ export async function doSub2ApiCheckin(account: Account) {
   }
 }
 
-export async function apiRequestWithMeta<T = any>(account: Account, method: string, path: string, body?: any, extraHeaders?: Record<string, string>): Promise<ApiResult<T>> {
+export async function apiRequestWithMeta<T = any>(account: Account, method: string, path: string, body?: any, extraHeaders?: Record<string, string>, challengeRetried = false): Promise<ApiResult<T>> {
   const baseUrl = normalizeBaseUrl(account.baseUrl)
   if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
     throw new Error("站点地址必须以 http:// 或 https:// 开头")
@@ -232,6 +240,13 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
   try {
     json = raw ? JSON.parse(raw) : {}
   } catch {
+    if (isWebChallengeResponse(response, raw)) {
+      if (!challengeRetried) {
+        await refreshWebChallengeCookies(account)
+        return await apiRequestWithMeta<T>(account, method, path, body, extraHeaders, true)
+      }
+      throw makeApiError("站点防护验证未通过，请先用网页登录刷新 Cookie 后再试", { authExpired: false })
+    }
     // 非 JSON 响应通常是触发了验证或登录失效，而非真正的 API 路径错误
     throw makeApiError(`响应不是 JSON：${raw.slice(0, 60)}`, { authExpired: true })
   }

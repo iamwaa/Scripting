@@ -15,4 +15,4 @@ export const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleW
 export const QUOTA_PER_USD = 500000
 
 // 连通性自动检测间隔（秒）
-export const SITE_STATUS_AUTO_CHECK_INTERVAL = 60 * 60
+export const SITE_STATUS_AUTO_CHECK_INTERVAL = 360 * 60

@@ -3,7 +3,6 @@ import {
   HStack,
   Image,
   LazyVStack,
-  Link,
   NavigationLink,
   ProgressView,
   RoundedRectangle,
@@ -367,7 +366,7 @@ export function ImageSearchPage({
         ) : undefined}
 
         {loading ? (
-          <VStack spacing={14} padding={85} frame={{ maxWidth: "infinity", minHeight: 280 }} {...glassSurface(28, "card", false)}>
+          <VStack spacing={14} padding={28} frame={{ maxWidth: "infinity", minHeight: 380 }} {...glassSurface(28, "card", false)}>
             <ProgressView />
             <Text foregroundStyle="secondaryLabel">正在上传截图并识别番号…</Text>
           </VStack>
@@ -410,25 +409,18 @@ export function ImageSearchPage({
             ) : undefined}
           </LazyVStack>
         ) : (
-          <VStack spacing={14} padding={85} frame={{ maxWidth: "infinity" }} {...glassSurface(28, "card")}>
+          <VStack spacing={14} padding={28} frame={{ maxWidth: "infinity", minHeight: 380 }} {...glassSurface(28, "card")}>
+            <Spacer />
             <ZStack frame={{ width: 66, height: 66 }} {...glassSurface(24, "icon", false, false)}>
               <Image systemName="viewfinder" resizable frame={{ width: 34, height: 34 }} foregroundStyle={BLUE} />
             </ZStack>
-            <Text font={20} fontWeight="bold">截图找番号</Text>
+            <Text font={20} fontWeight="bold">识图找番号</Text>
             <Text foregroundStyle="secondaryLabel" multilineTextAlignment="center">
               基于 whos.tv 识图。识别成功后可一键复制番号，或跳转磁力搜索。
             </Text>
+            <Spacer />
           </VStack>
         )}
-
-        <VStack spacing={4} frame={{ maxWidth: "infinity", alignment: "center" }}>
-          <Text font={12} foregroundStyle="secondaryLabel" multilineTextAlignment="center" frame={{ maxWidth: "infinity", alignment: "center" }}>
-            Image search by whos.tv
-          </Text>
-          <Link url="https://whos.tv/">
-            <Text font={12} foregroundStyle={BLUE}>查看接口与服务说明</Text>
-          </Link>
-        </VStack>
       </VStack>
     </ScrollView>
   );

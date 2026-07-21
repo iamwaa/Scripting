@@ -17,7 +17,6 @@ import {
   RoundedRectangle,
   ProgressView,
   Spacer,
-  Link,
   NavigationLink,
   MagnifyGesture,
   TabView,
@@ -139,6 +138,28 @@ function shortLink(url: string) {
 function displayFileType(result?: WhatsLinkResponse | null) {
   if (!result) return "-";
   return (result.file_type || result.type || "unknown").toUpperCase();
+}
+
+function extractFanhao(input: string) {
+  const text = decodeHtml(input).trim().toUpperCase();
+  if (!text) return "";
+
+  const normalized = text.replace(/[\s_]+/g, "-");
+  const patterns = [
+    /(?:FC2-PPV-\d{5,8})/i,
+    /(?:[A-Z]{2,6}-?\d{2,5}[A-Z]?)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern)?.[0] ?? "";
+    if (match) return match.replace(/^(?:FC2-PPV|[A-Z]{2,6})-?/, (prefix) => prefix.replace(/-?$/, "-"));
+  }
+
+  return "";
+}
+
+function buildMissavSearchUrl(fanhao: string) {
+  return `https://missav123.com/search/${encodeURIComponent(fanhao)}`;
 }
 
 function getCover(result?: WhatsLinkResponse | null, index = 0) {
@@ -382,7 +403,10 @@ function PreviewCard({
   const cover = getCover(result, screenshotIndex);
   const title = result.name || "未知资源";
   const titleFont = title.length > 90 ? 17 : title.length > 56 ? 19 : title.length > 32 ? 21 : 23;
+  const fanhao = extractFanhao(title || url);
+  const missavSearchUrl = fanhao ? buildMissavSearchUrl(fanhao) : "";
   const [imageHeight, setImageHeight] = useState(() => initialImageHeight ?? getPreviewHeight(undefined, undefined, exportMode));
+
 
   useEffect(() => {
     if (exportMode) {
@@ -506,6 +530,24 @@ function PreviewCard({
         </Text>
       </Button>
 
+      {!exportMode ? (
+        <HStack spacing={8} frame={{ maxWidth: "infinity" }}>
+          <Button action={() => void onCopyUrl?.()} buttonStyle="plain">
+            <Text font={13} fontWeight="semibold" padding={{ vertical: 7, horizontal: 10 }} {...glassSurface(14, "control", true, false)}>
+              复制磁力链接
+            </Text>
+          </Button>
+          {missavSearchUrl ? (
+            <Button action={() => void Safari.present(missavSearchUrl, true)} buttonStyle="plain">
+              <Text font={13} fontWeight="semibold" padding={{ vertical: 7, horizontal: 10 }} {...glassSurface(14, "prominent", true, false)} foregroundStyle="white">
+                在线播放
+              </Text>
+            </Button>
+          ) : null}
+          <Spacer />
+        </HStack>
+      ) : null}
+
       {exportMode ? (
         <Text foregroundStyle="secondaryLabel" font={12} frame={{ maxWidth: "infinity", alignment: "center" }}>
           File information by whatslink.info
@@ -596,7 +638,7 @@ function EmptyState() {
     <VStack
       spacing={14}
       padding={32}
-      frame={{ maxWidth: "infinity", minHeight: 390 }}
+      frame={{ maxWidth: "infinity", minHeight: 420 }}
       {...glassSurface(28, "card")}
     >
       <ZStack
@@ -975,7 +1017,7 @@ function MagnetSearchPage({
           <VStack
             spacing={14}
             padding={32}
-            frame={{ maxWidth: "infinity", minHeight: 520 }}
+            frame={{ maxWidth: "infinity", minHeight: 540 }}
             {...glassSurface(28, "card")}
           >
             <ZStack
@@ -990,15 +1032,6 @@ function MagnetSearchPage({
             </Text>
           </VStack>
         )}
-
-        <VStack spacing={4} frame={{ maxWidth: "infinity", alignment: "center" }}>
-          <Text font={12} foregroundStyle="secondaryLabel" multilineTextAlignment="center" frame={{ maxWidth: "infinity", alignment: "center" }}>
-            Search information by xcili.net
-          </Text>
-          <Link url="https://xcili.net/">
-            <Text font={12} foregroundStyle={BLUE}>查看接口与服务说明</Text>
-          </Link>
-        </VStack>
       </VStack>
     </ScrollView>
   );
@@ -1007,7 +1040,7 @@ function MagnetSearchPage({
 function FavoriteRow({ item, onOpen, onDelete }: { item: FavoriteItem; onOpen: () => void; onDelete: () => void }) {
   return (
     <HStack
-      spacing={12}
+      spacing={6}
       padding={12}
       {...glassSurface(20, "card")}
     >
@@ -1022,9 +1055,88 @@ function FavoriteRow({ item, onOpen, onDelete }: { item: FavoriteItem; onOpen: (
         <Text font={14} fontWeight="semibold" lineLimit={1} truncationMode="middle">{item.name}</Text>
         <Text font={12} foregroundStyle="secondaryLabel">{formatBytes(item.size)} · {item.count} 个文件 · {item.fileType.toUpperCase()}</Text>
       </VStack>
-      <Button title="打开" action={onOpen} buttonStyle="glass" />
-      <Button title="删除" role="destructive" action={onDelete} buttonStyle="glass" foregroundStyle="red"/>
-    </HStack>
+      <Button title="打开" font={16} action={onOpen} buttonStyle="glass" />
+      <Button title="删除" font={16} role="destructive" action={onDelete} buttonStyle="glass" foregroundStyle="red"/>
+      </HStack>
+  );
+}
+
+// 关于页：集中展示三个来源服务信息
+function AboutPage() {
+  const dismiss = Navigation.useDismiss();
+
+  // 三个来源服务的统一描述
+  const sources = [
+    {
+      icon: "link.circle",
+      name: "whatslink.info",
+      desc: "磁力资源预览。粘贴磁力 / ED2K / 下载链接后，获取资源名称、大小、类型与截图。",
+      url: "https://whatslink.info/",
+    },
+    {
+      icon: "magnifyingglass.circle",
+      name: "xcili.net",
+      desc: "磁力搜索。按电影、剧集或资源名称关键词，查找可用磁力链接。",
+      url: "https://xcili.net/"
+    },
+    {
+      icon: "viewfinder",
+      name: "whos.tv",
+      desc: "以图搜片。上传影片截图识别番号，再跳转磁力搜索。",
+      url: "https://whos.tv/",
+    },
+  ];
+
+  return (
+    <ScrollView
+      navigationTitle="关于"
+      navigationBarTitleDisplayMode="inline"
+    >
+      <VStack alignment="leading" spacing={16} padding={18} frame={{ maxWidth: "infinity" }}>
+        {/* 应用简介 */}
+        <VStack alignment="center" spacing={12} padding={30} frame={{ maxWidth: "infinity" }} {...glassSurface(28, "card", false)}>
+          <ZStack frame={{ width: 60, height: 60 }} {...glassSurface(22, "icon", false, false)}>
+            <Image systemName="link" resizable frame={{ width: 30, height: 30}} foregroundStyle={BLUE} />
+          </ZStack>
+          <Text font={22} fontWeight="bold" frame={{ maxWidth: "infinity", alignment: "center" }}>磁力资源预览</Text>
+          <Text font={16} foregroundStyle="secondaryLabel" multilineTextAlignment="center" frame={{ maxWidth: "infinity", alignment: "center" }}>
+            集成磁力预览、磁力搜索与以图搜片，聚合三个外部服务。
+          </Text>
+        </VStack>
+
+        {/* 来源信息列表 */}
+        <VStack alignment="leading" spacing={12} frame={{ maxWidth: "infinity" }}>
+          <Text font={20} fontWeight="bold" padding={{ horizontal: 4 }}>数据来源</Text>
+          {sources.map((src) => (
+            <VStack key={src.name} alignment="leading" spacing={10} padding={16} frame={{ maxWidth: "infinity" }} {...glassSurface(22, "card")}>
+              <HStack spacing={12} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+                <ZStack frame={{ width: 40, height: 40 }} {...glassSurface(14, "icon", false, false)}>
+                  <Image systemName={src.icon} frame={{ width: 20, height: 20 }} foregroundStyle={BLUE} />
+                </ZStack>
+                <Text font={16} fontWeight="semibold">{src.name}</Text>
+              </HStack>
+              <Text font={14} foregroundStyle="secondaryLabel" multilineTextAlignment="leading" frame={{ maxWidth: "infinity", alignment: "leading" }}>
+                {src.desc}
+              </Text>
+              <HStack spacing={10} frame={{ maxWidth: "infinity", alignment: "center" }}>
+                <Button
+                  action={() => void Safari.present(src.url, true)}
+                  buttonStyle="plain"
+                >
+                  <Text font={13} fontWeight="semibold" padding={{ vertical: 8, horizontal: 12 }} {...glassSurface(14, "control", true, false)} foregroundStyle={BLUE}>
+                    查看接口与服务说明
+                  </Text>
+                </Button>
+              </HStack>
+            </VStack>
+          ))}
+        </VStack>
+
+        <Text font={12} foregroundStyle="secondaryLabel" multilineTextAlignment="center" frame={{ maxWidth: "infinity", alignment: "center" }}>
+          本应用仅聚合展示以上公开服务的数据，不存储任何资源。
+        </Text>
+      </VStack>
+    </ScrollView>
   );
 }
 
@@ -1201,7 +1313,14 @@ function MainApp() {
       <ScrollView
         navigationTitle="磁力资源预览"
         navigationBarTitleDisplayMode="inline"
-        toolbar={{ cancellationAction: <CloseButton action={dismiss} /> }}
+        toolbar={{
+          cancellationAction: <CloseButton action={dismiss} />,
+          topBarTrailing: (
+            <NavigationLink destination={<AboutPage />}>
+              <Image systemName="info.circle" frame={{ width: 22, height: 22 }} foregroundStyle={BLUE} />
+            </NavigationLink>
+          ),
+        }}
       >
         <ZStack
           frame={{ maxWidth: "infinity" }}
@@ -1328,7 +1447,7 @@ function MainApp() {
                   </HStack>
                 ) : undefined}
               </VStack>
-            ) : (
+            ) : favorites.length > 0 ? undefined : (
               <EmptyState />
             )}
 
@@ -1349,15 +1468,6 @@ function MainApp() {
                 ))}
               </VStack>
             ) : undefined}
-
-            <VStack spacing={4} frame={{ maxWidth: "infinity" }}>
-              <Text foregroundStyle="secondaryLabel" font={13}>Magnet information by whatslink.info</Text>
-              <HStack spacing={12}>
-                <Link url="https://whatslink.info/">
-                  <Text foregroundStyle={BLUE} font={13}>whatslink 说明</Text>
-                </Link>
-              </HStack>
-            </VStack>
           </VStack>
         </ZStack>
       </ScrollView>
