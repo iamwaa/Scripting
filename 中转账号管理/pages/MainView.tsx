@@ -104,6 +104,7 @@ export function MainView() {
           body: `正常 ${ok} 个，异常 ${fail} 个`,
           threadIdentifier: "batch-operations",
           tapAction: "none",
+          silent: false,
         })
       }
     }
@@ -152,6 +153,7 @@ export function MainView() {
         body: `成功 ${ok} 个，失败 ${fail} 个`,
         threadIdentifier: "batch-operations",
         tapAction: "none",
+        silent: false,
       })
     }
   }
@@ -247,6 +249,7 @@ export function MainView() {
         body: resultMessage,
         threadIdentifier: "batch-operations",
         tapAction: "none",
+        silent: false,
       })
     }
   }
