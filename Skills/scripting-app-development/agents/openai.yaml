@@ -1,4 +1,0 @@
-interface:
-  display_name: "Scripting App 项目开发"
-  short_description: "编写和审查 Scripting TypeScript/TSX 项目"
-  default_prompt: "使用 $scripting-app-development 根据官方文档帮我开发一个 Scripting App 项目。"
