@@ -107,7 +107,8 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
       await task(account)
       patchAccount(account.id, { lastError: "" })
       refreshLocal()
-      notify(`${label}完成`)
+      const successMessage = label === "签到状态" ? "签到状态已更新" : label === "网页登录" ? "网页登录成功" : label === "登录" ? "登录成功" : `${label}完成`
+      notify(successMessage)
     } catch (e: any) {
       const message = getErrorMessage(e)
       patchAccount(account.id, { lastError: message, ...(checkinAware ? getCheckinDisabledPatch(message) : {}) })
@@ -177,14 +178,19 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
       notify("删除失败：账号不存在或已被删除")
       return
     }
-    const ok = await showConfirm({ title: "删除账号？", message: `确定删除 ${account.name} 吗？`, confirmLabel: "删除", cancelLabel: "取消" })
+    const ok = await showConfirm({
+      title: "删除账号？",
+      message: `确定删除“${account.name}”吗？\n\n该操作只删除本机记录，但保存的密码、Cookie/令牌和缓存数据也会一并清除，且无法撤销。`,
+      confirmLabel: "删除",
+      cancelLabel: "取消",
+    })
     if (!ok) return
     const deletedName = account.name
     setBusy(true)
     try {
       deleteAccount(account.id)
       onChanged()
-      notify(`"${deletedName}"已删除`)
+      notify(`“${deletedName}”已删除`)
       setTimeout(() => dismiss(), 700)
     } finally {
       setBusy(false)

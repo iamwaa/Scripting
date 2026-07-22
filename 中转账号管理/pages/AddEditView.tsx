@@ -66,7 +66,7 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
       if (!name) {
         setName(result.pageTitle || shortUrl(normalizedBaseUrl))
       }
-      setToastMessage(platform === "sub2api" ? "已获取登录令牌，保存后生效" : "已获取 Cookie，保存后生效")
+      setToastMessage(platform === "sub2api" ? "登录令牌已获取，保存账号后生效" : "Cookie 已获取，保存账号后生效")
       setShowToast(true)
     } catch (e: any) {
       setToastMessage(`网页登录失败：${getErrorMessage(e)}`)
@@ -104,7 +104,7 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
         lastSelf: webSelf,
         authSource: accessToken.trim() ? "accessToken" : cookie.trim() ? (cookieAuthSource ?? "cookie") : undefined,
       })
-      let balanceMessage = "，余额已更新"
+      let balanceMessage = "，余额信息已更新"
       try {
         const self = await fetchSelf(saved)
         patchAccount(saved.id, { lastSelf: self, lastError: "" })
@@ -113,7 +113,7 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
         patchAccount(saved.id, { lastError: getErrorMessage(e) })
       }
       onSaved()
-      setToastMessage(`"${saved.name}"已保存${balanceMessage}`)
+      setToastMessage(`“${saved.name}”已保存${balanceMessage}`)
       setShowToast(true)
       setTimeout(() => dismiss(), 900)
     } catch (e: any) {

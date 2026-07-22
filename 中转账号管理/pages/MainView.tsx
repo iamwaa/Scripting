@@ -2,7 +2,7 @@ import { useState, useEffect, Navigation, NavigationStack, List, Section, Text, 
 import type { Account, AccountSortKey, SortDirection, SelfInfo, CheckinStatus } from "../types"
 import { SITE_STATUS_AUTO_CHECK_INTERVAL } from "../constants"
 import { isSub2ApiAccount, localDateString, now, shouldSkipBatchCheckinByTime } from "../utils/format"
-import { getErrorMessage } from "../utils/error"
+import { getErrorMessage, showConfirm } from "../utils/error"
 import { loadAccounts, saveAccounts, loadAccountSortPreference, saveAccountSortPreference, patchAccount } from "../services/storage"
 import { checkSiteStatus, fetchSelf, fetchCheckinStatus, doCheckin, openManualCheckinWebView } from "../services/auth"
 import { sortAccounts, getAccountSortTitle, getTodayCheckinPatch, getManualTodayCheckinPatch, getCheckinCount, getCheckinRecords, getTodayCheckinInfo, getOfflineSiteStatus, getCheckinDisabledPatch, deleteAccount, runQuickAccountAction, quickSyncAccount, quickCheckinAccount } from "../services/account"
@@ -258,7 +258,7 @@ export function MainView() {
     setBusy(true)
     try {
       await runQuickAccountAction(account, "快捷查询", quickSyncAccount)
-      setToastMessage(`"${account.name}"余额已更新`)
+      setToastMessage(`“${account.name}”余额信息已更新`)
     } catch (e: any) {
       setToastMessage(`查询失败：${getErrorMessage(e)}`)
     } finally {
@@ -272,7 +272,7 @@ export function MainView() {
     setBusy(true)
     try {
       await runQuickAccountAction(account, "快捷签到", quickCheckinAccount, true)
-      setToastMessage(`"${account.name}"签到完成`)
+      setToastMessage(`“${account.name}”签到成功`)
     } catch (e: any) {
       setToastMessage(`签到失败：${getErrorMessage(e)}`)
     } finally {
@@ -289,7 +289,7 @@ export function MainView() {
       patchAccount(account.id, { lastSiteStatus: status })
       const stateText = status.state === "online" ? "在线" : status.state === "warning" ? "异常" : "离线"
       const latencyText = status.state === "online" && status.latencyMs !== undefined ? `，${status.latencyMs}ms` : ""
-      setToastMessage(`"${account.name}"${stateText}${latencyText}`)
+      setToastMessage(`“${account.name}”${stateText}${latencyText}`)
     } catch (e: any) {
       patchAccount(account.id, { lastSiteStatus: getOfflineSiteStatus(e) })
       setToastMessage(`连通性检测失败：${getErrorMessage(e)}`)
@@ -302,7 +302,7 @@ export function MainView() {
 
   async function quickOpenSite(account: Account) {
     setBusy(true)
-    setToastMessage(`正在打开"${account.name}"网页签到...`)
+    setToastMessage(`正在打开“${account.name}”的签到页面…`)
     setShowToast(true)
     try {
       await openManualCheckinWebView(account)
@@ -320,12 +320,12 @@ export function MainView() {
         patch.lastCheckin = statusResult.value
         patch.lastError = ""
         Object.assign(patch, getTodayCheckinPatch(statusResult.value))
-        setToastMessage(`"${account.name}"签到状态已更新`)
+        setToastMessage(`“${account.name}”签到状态已更新`)
       } else {
         const message = getErrorMessage(statusResult.reason)
         patch.lastError = message
         Object.assign(patch, getCheckinDisabledPatch(message))
-        setToastMessage(`网页已关闭，签到接口不可用`)
+        setToastMessage(`网页已关闭，签到状态刷新失败：${message}`)
       }
       patchAccount(latest.id, patch)
     } catch (e: any) {
@@ -339,10 +339,17 @@ export function MainView() {
     }
   }
 
-  function quickDelete(account: Account) {
+  async function quickDelete(account: Account) {
+    const confirmed = await showConfirm({
+      title: "删除账号？",
+      message: `确定删除“${account.name}”吗？\n\n该操作只删除本机记录，但保存的密码、Cookie/令牌和缓存数据也会一并清除，且无法撤销。`,
+      confirmLabel: "删除",
+      cancelLabel: "取消",
+    })
+    if (!confirmed) return
     deleteAccount(account.id)
     reload()
-    setToastMessage(`"${account.name}"已删除`)
+    setToastMessage(`“${account.name}”已删除`)
     setShowToast(true)
   }
 
@@ -350,7 +357,7 @@ export function MainView() {
     const nextChecked = !getTodayCheckinInfo(account).checked
     patchAccount(account.id, getManualTodayCheckinPatch(account, nextChecked))
     reload()
-    setToastMessage(nextChecked ? `"${account.name}"已标注为已签` : `"${account.name}"已标注为未签`)
+    setToastMessage(nextChecked ? `“${account.name}”已标记为今日已签到` : `“${account.name}”已标记为今日未签到`)
     setShowToast(true)
   }
 
@@ -358,7 +365,7 @@ export function MainView() {
     patchAccount(account.id, { excludeFromBatchCheckin: !account.excludeFromBatchCheckin })
     reload()
     const newState = !account.excludeFromBatchCheckin
-    setToastMessage(newState ? `"${account.name}"已排除批量签到` : `"${account.name}"已加入批量签到`)
+    setToastMessage(newState ? `“${account.name}”已从批量签到中排除` : `“${account.name}”已加入批量签到`)
     setShowToast(true)
   }
 

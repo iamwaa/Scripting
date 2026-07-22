@@ -47,3 +47,16 @@
 - Liquid Glass 仅用于 iOS 26+；更低版本必须使用 `Material` 等回退，不得裸用未做版本保护的 `UIGlass`、`glassEffect`、`GlassEffectContainer`。
 - 复用 skill 提供的版本感知 surface props、页面骨架和标准目录，不自行复制双套玻璃分支。
 - 交付前核对 Light/Dark 与 iOS 26+/<26；避免不透明白卡、grouped List 灰底残留、圆角混乱和过度厚重材质。
+
+## Scripting 对话框调用提醒
+
+Scripting 页面脚本中的原生对话框，采用运行时注入的全局 `Dialog` 命名空间：`Dialog.alert(...)`、`Dialog.confirm(...)`、`Dialog.prompt(...)`、`Dialog.actionSheet(...)`。不要改写为独立的全局 `alert/confirm/prompt/actionSheet`，也不要从 `"scripting"` 导入 `Dialog`；当前 SDK 类型可能未导出该运行时命名空间。类型检查缺少声明时，可在项目中按实际使用范围添加 `declare const Dialog: ...`（旧项目也可暂用 `any`），但调用仍必须保留 `Dialog.` 前缀。
+
+- `Dialog.confirm` 返回 `Promise<boolean>`；只有严格为 `true` 才执行确认操作。
+- `Dialog.prompt` 返回输入字符串或 `null`；必须先判断 `result == null` 处理取消，空字符串是否有效由业务自行决定。
+- `Dialog.actionSheet` 返回所选 `actions` 的从 `0` 开始索引，取消返回 `null`。必须按数组实际顺序判断，不要凭按钮文案或经验猜测。
+- 同时在 `actions` 中提供“取消”项时，设置 `cancelButton: false`，避免系统额外添加取消按钮并导致索引或交互与预期不一致。
+- 调用后先保存并明确判断返回值，再执行删除、覆盖、清空、还原、提交等后续操作；取消或未知返回值默认不执行。
+- 仅危险操作按钮设置 `destructive: true`，普通确认按钮不要滥用危险样式。
+- 封装通用确认函数时，由 helper 自己构造并维护 actions 与索引映射，或显式返回语义化结果。
+- 对话框只负责收集用户选择；实际操作、异常处理、Toast 和数据刷新留给调用方。

@@ -9,7 +9,7 @@ import { isWebChallengeResponse, refreshWebChallengeCookies } from "./antiBot"
 
 // 服务端消息中出现这些关键词才认为是登录失效；
 // 单纯的 "forbidden"/"access denied"/"permission denied" 不算，因为 403 常被用作额度/IP/权限等业务错误
-const AUTH_EXPIRED_MESSAGE_RE = /unauthorized|not\s+logged\s+in|no\s+access\s+token|authentication\s+(is\s+)?required|token\s+(has\s+)?expired|session\s+(has\s+)?expired|cookie\s+(has\s+)?expired|login\s+expired|invalid\s+token|malformed\s+token|missing\s+token|access.?token|session\s*(not\s+found|expired|invalid)|no\s+session|无权进行此操作|未登录|登录状态已过期|登录已过期|令牌无效|令牌已过期/i
+const AUTH_EXPIRED_MESSAGE_RE = /unauthorized|not\s+logged\s+in|not\s+authenticated|user\s+not\s+authenticated|authorization\s+(header\s+)?is\s+required|authorization\s+required|no\s+access\s+token|authentication\s+(is\s+)?required|token\s+(has\s+)?expired|token\s+has\s+been\s+revoked|session\s+(has\s+)?expired|cookie\s+(has\s+)?expired|login\s+expired|invalid\s+token|malformed\s+token|missing\s+token|access.?token\s+(无效|invalid|expired|已过期)|session\s*(not\s+found|expired|invalid)|no\s+session|无权进行此操作，(未登录且未提供\s*access\s*token|access\s*token\s*无效|用户信息无效|未提供\s*New-Api-User)|未登录|登录状态已过期|登录已过期|令牌无效|令牌已过期/i
 
 // 构造带 HTTP 状态和 authExpired 元数据的错误，供上层判断是否需要重登
 function makeApiError(message: string, opts?: { status?: number, authExpired?: boolean }) {
@@ -102,6 +102,11 @@ export async function sub2ApiRequest<T = any>(account: Account, method: string, 
   return unwrapSub2ApiJson<T>(json)
 }
 
+function isRouteUnavailable(error: any) {
+  const status = Number(error?.status)
+  return status === 404 || status === 405
+}
+
 export function firstFiniteNumber(...values: any[]) {
   for (const value of values) {
     const n = Number(value)
@@ -141,11 +146,13 @@ export async function fetchSub2ApiCheckinStatus(account: Account, month = localM
   try {
     status = await sub2ApiRequest<any>(account, "GET", "/check-in/status")
     isNewApi = true
-  } catch {
+  } catch (newRouteError) {
+    if (!isRouteUnavailable(newRouteError)) throw newRouteError
     try {
       status = await sub2ApiRequest<any>(account, "GET", "/user/check-in")
-    } catch {
-      // 两种 API 都失败，返回禁用状态
+    } catch (legacyRouteError) {
+      if (!isRouteUnavailable(legacyRouteError)) throw legacyRouteError
+      // Sub2API 官方仓库当前未提供签到接口，兼容部署可继续返回禁用状态。
       return { enabled: false, min_quota: undefined, max_quota: undefined, stats: { total_quota: undefined, total_checkins: 0, checkin_count: 0, records: [] } } as CheckinStatus
     }
   }
@@ -188,11 +195,17 @@ export async function fetchSub2ApiCheckinStatus(account: Account, month = localM
 }
 
 export async function doSub2ApiCheckin(account: Account) {
-  // 先尝试新版 API（POST /check-in），失败则回退旧版（POST /user/check-in）
+  // Sub2API 官方仓库当前未提供签到；仅在兼容站点的新路由不存在时尝试旧路由。
   try {
     return await sub2ApiRequest<any>(account, "POST", "/check-in", {})
-  } catch (e) {
-    return await sub2ApiRequest<any>(account, "POST", "/user/check-in", {})
+  } catch (newRouteError) {
+    if (!isRouteUnavailable(newRouteError)) throw newRouteError
+    try {
+      return await sub2ApiRequest<any>(account, "POST", "/user/check-in", {})
+    } catch (legacyRouteError) {
+      if (!isRouteUnavailable(legacyRouteError)) throw legacyRouteError
+      throw new Error("该 Sub2API 站点未提供签到接口")
+    }
   }
 }
 
