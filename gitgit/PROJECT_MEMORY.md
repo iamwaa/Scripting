@@ -1,0 +1,105 @@
+# MEMORY.md
+
+## 项目：gitgit（口袋版 GitHub Desktop）
+
+- 路径：`scripts/gitgit`
+- 定位：本地 Git GUI（isomorphic-git）+ GitHub 远端浏览（A+B 融合）
+- 关键架构决策：
+  - **Git 引擎（项目内置）**：`vendor/index.umd.min.js`（isomorphic-git UMD）+ `vendor/buffer-bundle.js`，由 `services/gitCore.ts` 的 `loadGitEngine()` eval 包装加载。**不依赖** `scripting-skills/isomorphic-git` skill，也不通过 `scripting-ts run .../git.ts` 调外部脚本；skill 可删，gitgit 仍可独立运行。HTTP 传输 `createHttpTransport` 同样在 gitCore 内。
+  - **自定义仓库存储位置**：用 `DocumentPicker.pickDirectory()` 取得普通目录路径，并把路径保存到 `Storage` private 域；不再创建书签。旧仓库记录仍可通过 `FileManager.bookmarkedPath()` 兼容读取。`.git` 仍分离存于 App Group `git-repos/<safeName>/`。
+  - **fs 适配器**：createFS(gitdir, workdir) 把 .git 内部路径映射到 App Group，工作区文件映射到用户授权目录。自定义 FileManager FS 下，非 `force` 的 `git.checkout` 常不完整删除/覆盖文件，分支切换必须 force（见 P2.20）。`stat` 并行 `FileManager.stat + isDirectory`（真机 `FileStat.type` 对目录也可能是 `file`，不能只靠 type；见 P2.21）。
+  - **设置/元数据持久化**：仓库列表、同步快照、Git 身份统一走 `services/storage.ts` 封装的 `Storage` API（**private 域**，键名前缀 `gitgit.`）。Token 仍存 Keychain。旧实现是 App Group 下的 repos.json/snapshots.json/git-identity.json 文件，已废弃（不兼容旧数据）。真正的 .git 内部文件与工作区文件仍走 FileManager。private 域同样能被 widget 读取（widget 与主脚本同属一个脚本，共享 private 域）。
+- 已完成阶段：
+  - **P0 骨架**（gitCore + repoStore + gitService + 仓库列表页 + 仓库详情页[改动/历史 Tab + commit] + widget + 通知封装）。已验证 Git 链路跑通（init/add/commit/log/branch）。
+  - **P1 远端同步闭环**（token 管理 authStore + gitCore 加 createHttpTransport + gitService push/pull/clone/remote + githubApi REST + SettingsPage + ClonePage + 详情页 push/pull 按钮）。HTTP 传输适配器移植自 isomorphic-git 技能（只读 ArrayBuffer 复制修复）。
+  - **P2 本地增强**（工作区 vs HEAD 行级 diff + DiffViewer/DiffPage、分支创建/切换、文件级暂存/撤销、部分提交）。`FileChange` 包含 staged/unstaged；提交仅提交索引内容；大文件 diff 超过 100 万 LCS 单元时退化为整段增删。RepoDetailPage 子组件已提取为 ChangesTab/HistoryTab。
+  - **P2.5 持久化迁移**：设置/路径/数据从 App Group JSON 文件改用 `Storage` 持久化 API（新增 `services/storage.ts`）。repoStore/authStore 改走 storage；constants/auth.ts 移除 `GIT_IDENTITY_FILE` 路径常量。
+  - **P2.6 持久化修复**：① Storage 改用 **private 域**（shared 域在 `keys()` 不可见，private 域 widget 同样可读）；② RepoListPage 改 `useState(listRepos())` 同步初始化，去掉异步 loading；③ SettingsPage Token **保存与验证分离**——先写 Keychain 再验证，验证失败不清 token（修复「网络抖动误清 token」）；④ 清除 Token 改用**声明式 alert**（`alert` prop + `isPresented`/`actions`），不用命令式 `confirm()`。
+  - **P2.7 路径与远端修复**：目录选择改为 `pickDirectory()` + Storage 保存普通路径；保存后直接用返回的 `RepoMeta` 更新页面，避免 Storage 异步落盘后立即回读旧值；Storage 写入检查布尔返回值；在线仓库拉取失败不再静默，GitHub API 增加 20 秒超时与调试标签。
+  - **P2.8 交互改造**：① 加号 `Menu` 合并「添加本地仓库 / 克隆仓库」；② 仓库列表左滑「移除」（仅元数据，不删工作区）；③ 改动文件「暂存 / 撤销」改左滑；④ Diff 页去掉自定义顶栏，改用 `navigationTitle` + plain List，修复顶部留白与标题重叠。
+  - **P2.9 六项修复**：① `lastPulledAt` 持久化并在同步区显示最近拉取时间；② 提交对齐 GitHub（标题必填 + 描述选填，`buildCommitMessage`）；③ 关键页面提示改声明式 `List.alert`，减少命令式弹窗不显示；④ 克隆落到「父目录/仓库名/」子目录；⑤ Diff 去掉内容区重复标题，header 显示 `+N / -M`；⑥ 状态误判：`readdir` 强制 basename、安全访问书签、`getChanges` 校验工作区。
+  - **P2.10 路径/缓存/列表**：① 仓库用短 `repoId` 作主键与 gitdir 名，不再把完整路径当目录名；② 访问优先 `pickDirectoryBookmark` / `accessBookmarkName` + `bookmarkedPath`（克隆保留父目录书签，workdir 可为子目录）；③ **移除仓库时删除** App Group `git-repos/<repoId>/`、访问书签与快照，避免旧 index 污染；④ clone 前若 gitdir 残留先清掉；⑤ 列表显示来源（本地/克隆）+ 改动数 + 待推送数。
+  - **P2.11 上传/历史/身份**：① 本地仓库「上传到 GitHub」（`createRepo` + `setOriginAndPush`，成功后 `source=clone`）；② 历史标识待推送/远端/本地 + 复制完整 commit；③ HEAD 撤销（revert 提交）、未推送 soft reset / amend；④ `resolveAuthor` 默认 `gitgit/gitgit@local`，修复 pull「No name was provided」；⑤ 设置页注明默认身份；⑥ 列表改动摘要移到 `>` 左侧居中。`gitService` 因 getCtx/远端/历史强内聚暂未拆分（约 970 行）。
+  - **P2.12–P2.13 UI 细化**：复制按钮贴 shortOid、只复制完整 oid；新建分支用 `Dialog.prompt`；输入行用 `TextField title`；Section 有备注时用 header+footer。
+  - **P2.14 TabView + 历史徽标**：入口改为 `TabView`（仓库 / 设置各包 `NavigationStack`）；仓库列表左上角原设置齿轮改为 `xmark` 关闭（`Navigation.useDismiss`）；历史行同步徽标（待推送/远端/本地）用 `Spacer` 顶到右上角。
+  - **P2.15 设置关闭 + 子页隐藏 Tab**：设置页同步左上角 `xmark` 关闭；详情/克隆/Diff/上传等子页 `tabBarVisibility="hidden"`，进入后不显示底部 Tab 栏。
+  - **P2.16 本地默认分支 main**：`DEFAULT_BRANCH=main`；`initRepo` 用 `defaultBranch` + 空仓写 `HEAD → refs/heads/main`；空仓 legacy `master` 迁 main；添加本地仓后立刻 init；`getBranches` 可读 unborn；空仓新建/切换分支改写 HEAD；详情/上传提示需首次提交；上传前 `getLog` 校验。
+  - **P2.17 刷新/通知/撤销/左滑**：仓库列表与详情用 `onAppear` 重读 Storage 元数据和 Git 状态，上传/返回后来源与摘要及时刷新；完成通知从 `timeSensitive` 改普通 `active`；远端 HEAD 允许 revert（生成待推送反向提交），soft reset/amend 仍仅未推送 HEAD；仅打开确认框的左滑按钮移除 destructive role、改红色 tint，修复行先消失再出现。
+- **P2.18 文件与历史详情**：仓库详情新增“文件”视图，基于当前 `HEAD` 展示已跟踪文件；历史提交行可进入详情页，展示完整 OID、作者、时间、父提交和相对第一父提交的新增/修改/删除文件，并支持单文件行级 Diff（根提交、删除文件、二进制文件均有对应处理）。当前文件与历史变更都通过 `buildFileTree()` 按可展开目录树显示，目录优先并支持任意深度；历史叶子保留 A/M/D 和 Diff 跳转。`getTrackedFiles()` 只将明确缺少 HEAD 视为空仓，其它读取错误继续抛出；测试覆盖 A/M/D、未变化、根提交及多级文件树排序。
+- **代码审查三阶段**（详见 `CODE_REVIEW_PROGRESS.md`）：
+  - 第一阶段数据安全、第二阶段可靠性与失败恢复：已完成。
+  - **第三阶段进行中**：M1–M6 已完成（含 stash 可靠性修复、合并到当前、Pull 读 Upstream、远程进度与取消）。下一步可选 M7（3.3/3.4）；结构债在写路径稳定后渐进拆分。
+  - **M4 Remote/upstream**：`utils/remote.ts` + `setRemoteUrl`/`deleteRemote`/`getBranchUpstream`/`setBranchUpstream`；`pages/RemotesPage.tsx`；详情页「远端管理」入口；测试 `testRemoteHelpers`。
+  - **M5 冲突**：`utils/mergeConflict.ts`；pull=fetch+merge(abortOnConflict:false)；状态文件 `gitgit-merge-state.json`；`resolveConflictFile`/`completeMerge`/`abortMerge`；`pages/ConflictsPage.tsx`；测试 `testMergeConflictHelpers`。
+  - **列表冲突摘要**：`RepoListStatus.conflictCount/mergeInProgress`；`getRepoListStatus` 读 merge-state；列表右侧优先显示「N 冲突」/「待完成合并」（`formatRepoListMergeSummary`）。
+  - **合并到当前 + Pull 文案**：`utils/branchMerge.ts`；`mergeBranchIntoCurrent`；详情页分支区「合并到当前」Menu，冲突复用 ConflictsPage；测试 `testBranchMergeHelpers`。
+  - **Pull 读 Upstream**：`resolvePullTarget`；有 `branch.*.remote/merge` 则当前←remote/merge，无则 origin/同名；Push 仍 origin/同名；RemotesPage/详情 footer 已说明。
+  - **M6 远程进度与取消**：`utils/remoteProgress.ts`；push/pull/clone 的 `onProgress` + `RemoteCancelToken`（无 AbortSignal，协作式抛 `RemoteOperationCancelled`）；ClonePage/详情同步区进度与取消；clone 取消仍走 `cleanupCloneAttempt`；测试 `testRemoteProgressHelpers`。
+  - **历史搜索与分页**（2026-07-22）：`utils/history.ts` 提供查询规范化、提交标题/描述/作者/邮箱/OID 匹配与页切分；`getLogPage()` 接入详情页固定页大小加载；历史 Tab 支持显式搜索、匹配总数、空结果和加载更多。完整仓库提交状态与筛选结果分离，避免搜索无结果误判空仓库；独立测试 `tests/history.test.ts`。
+  - **P2.19 Stash 可靠性修复**（UI + 写入/解析 + drop）：
+    - **独立于 skill**：运行期只依赖项目内 `vendor/index.umd.min.js`（`gitCore.ts`），不调用 `scripting-skills/isomorphic-git` 脚本；删掉 skill 不影响 gitgit。
+    - **UI**：`StashTab` 列表只显示 `entry.message`，不显示 `stash@{N}`；应用/删除提示也用 message。`key` 用 `entry.index`。
+    - **幽灵项**：message 为空或字面 `undefined`（底层 reflog 缺 tab 时 `split("\t")[1]` 拼出）视为未真实保存；`parseStashEntries` 过滤不展示，`listStashes` 用安全 drop 从仓库清除。
+    - **message 必须单行**：`sanitizeStashMessage` 在 push 前压平换行。多行（如 `This reverts commit ...`）会拆坏 `logs/refs/stash`，导致 drop 收尾把续行第二词（`reverts`）当 OID → `Expected a 40-char hex object id but saw "reverts"`（删除往往已成功，仅收尾误报）。
+    - **安全 drop / 修复**：不走 isomorphic-git `stash drop` 收尾写 tip；自实现 `safeDropStash` + `repairStashReflog`：只认合法行 `oldOid newOid ...\tmessage`（两 OID 均为 40 hex），清洗脏续行，并同步 `refs/stash` tip。list/apply/push 前也会 repair。
+    - **关键文件**：`utils/stash.ts`、`services/gitService.ts`（create/list/apply/drop）、`pages/StashTab.tsx`、`pages/RepoDetailPage.tsx`；测试在 `tests/reliability.test.ts` 的 `testStashHelpers`。
+  - **P2.20 克隆后切分支假改动修复**：
+    - **现象**：克隆后切换分支，改动列表把上一分支独占文件当成 *added/*deleted；重新运行项目（或再次 materialize）后消失。
+    - **根因**：`checkoutBranch` / 从远端建本地跟踪分支时用非 `force` 的 `git.checkout`（以及 `branch({ checkout: true })`）。在分离式 FileManager FS 上，checkout 常跳过删除/覆盖，工作区与新 HEAD 不一致，`statusMatrix` 报假改动。
+    - **修复**：`assertWorktreeCleanForCheckout`（脏树拒绝切换）+ `forceCheckoutRef`（`checkout({ force: true })`）。本地已有分支与「仅 origin 存在」两条路径均 force；`createBranch` 需切换时同样先干净校验再 force。远端建分支改为 `branch({ checkout: false })` 再 force checkout。
+    - **测试**：`tests/reliability.test.ts` 的 `testForceCheckoutCleansWorktree`（两分支独占文件，force 来回切换后 matrix 必须干净）。
+  - **P2.21 大仓库状态加载优化**（克隆大仓后列表/详情「正在更新状态」过久）：
+    - **根因**：① `statusMatrix` 扫全树时 `createFS.stat` 曾串行 `stat+isFile+isDirectory`；② `getSyncTopology` / `getLog` unpushed 用全量 `collectReachableCommits`，深历史极慢；③ 列表对每个仓库串 `getChanges+getBranches+listRemotes+topology` 且并行扫多仓；④ 详情首屏一次拉改动/Stash/文件/历史等。
+    - **FS**：`createFS.stat` 改为并行 `stat + isDirectory`，去掉多余 `isFile`；`FileStat.type` 不可单独信任。
+    - **拓扑**：`findMergeBase` + 沿第一父 `countCommitsUntil` 算 ahead/behind；`getLog` unpushed 只走到 merge-base；失败再回退全量可达差集。纯逻辑：`utils/gitSync.ts` 的 `topologyFromCounts` / `repoListStatusFromSnapshot`。
+    - **列表**：`getRepoListStatus` 单次 `getCtx`（直接 statusMatrix + currentBranch + listRemotes，不做 materialize/完整分支表）；`RepoListPage` 首屏用 `storage.readSnapshots` 即时展示，再**串行**刷新各仓，有快照时不挡全屏遮罩。
+    - **返回列表旧改动数**：列表组件常不卸载，`statusMap` 会残留进详情前的 uncommitted；详情写操作虽在 `runRepoMutation` finally 里 `writeSnapshot`，但 `onAppear→refreshAll` 原先只开 live 刷新、未先盖快照，大仓 live 慢时会长时间显示旧改动。修复：`refreshAll` 先 `applySnapshotsToStatusMap` 再 `getRepoListStatus`。
+    - **详情**：首屏改动 + 历史 + 分支/远端/合并态；Stash、文件 Tab 懒加载（`handleTabChange`）。
+    - **测试**：`tests/status-perf-helpers.test.ts`（轻量探针，优先跑）；`reliability.test.ts` 补 topologyFromCounts/快照映射与 stat 语义。完整 reliability 集成段可能很久。
+    - **备份**：`backup/gitgit/gitgit_优化大仓库状态加载_20260721_170453`；返回列表旧改动另备 `gitgit_修复列表返回仍显示旧改动数_20260721_211655`。
+  - **P2.22 Diff 省略行样式**（折叠区原先仅 `context`+`…`，不明显）：
+    - `DiffLineType` 增加 `skip`；`trimContext` 插入 `{ type: "skip", content: "省略未改动的行" }`。
+    - `DiffViewer` 独立 `DiffSkipLineView`：浅灰底、居中 `⋯ 省略未改动的行 ⋯`，明暗模式各有 skipBg/skipFg。
+    - 测试：`reliability.test.ts` 断言多处变更之间存在 `skip`。备份：`gitgit_增强diff省略行样式_20260721_212628`。
+  - **P2.23 历史点不同行却同一详情**：
+    - **根因**：① `CommitDetailPage`/`CommitDiffPage` 的 `useEffect([])` 在 `navigationDestination` content 复用时不随 oid 重载；② 受控导航未按提交重建实例；③ 历史行 Button 闭包可能串 entry。
+    - **修复**：加载依赖 `[bookmarkName, oid]`（Diff 另含 parentOid/filepath），切换时清空并带 cancel 防竞态；`<CommitDetailPage key={selectedCommitOid} />`；选中时清上传/远端/冲突子页状态；`HistoryTab` 拆 `HistoryRow`，点击只回传 `onSelectOid(oid)` 再在 log 中查找。
+    - **备份**：`gitgit_修复提交详情oid复用_20260721_213734`。
+  - **P2.24 历史搜索框样式优化**（2026-07-22）：
+    - 搜索框抽为 `components/HistorySearchBar.tsx`（query state 下移组件内部）：胶囊内前导灰色放大镜 + 输入框 + 清空 ✕（有输入时出现），去掉 0.75pt 描边只留填充底色（原生 UISearchBar 观感），占位文案「提交信息、作者或 OID」对应实际匹配字段。
+    - 显式搜索仅由键盘 return 提交（无独立搜索按钮；`submitLabel="search"` 让回车键显示「搜索」），清空 ✕ 重置筛选；交互行为（显式搜索/清空重置/busy 禁用）不变。keyboardType 保持 default（需输中文/自然语言）。
+    - 备份：`gitgit_优化历史搜索框样式_20260722_122002`、`gitgit_历史搜索改为回车触发_20260722_123140`。
+  - **P2.25 Pull 删除文件后的空目录与假删除修复**（2026-07-22）：
+    - **原始现象**：远端删除最后一个文件（如 `sub/sub.txt`）后，本地文件会消失但空目录仍残留；Git 不跟踪目录，底层 checkout 只执行文件 `unlink`，不会自动清理空父目录。
+    - **二次问题根因**：最初在每次 `createFS().unlink()` 后立即递归删空父目录；isomorphic-git 批量删除同目录文件（如 `1/2/1.txt`、`1/2/2.txt`）时，父目录可能在后续文件/index 操作前被提前移除，导致 merge/checkout 部分完成，HEAD 与磁盘已更新但 index 仍保留旧条目，改动列表出现假 `*deleted`，点击暂存后才消失。
+    - **最终修复**：`services/gitCore.ts` 的 `unlink` 只记录由成功文件删除产生的工作区父目录候选，不立即删目录；`services/gitService.ts` 用 `runWithEmptyDirCleanup` 包装 merge，并由 `checkoutWithEmptyDirCleanup` 包装所有生产 checkout。每次 Git 操作开始前清旧候选，完整成功后才逐级删除空目录，失败则丢弃候选并原样抛错；严格止于工作区根，Git 内部路径不参与。
+    - **测试**：`tests/reliability.test.ts` 覆盖连续删除同目录两个文件期间不提前清目录、成功收尾后删除 `1/2`、父目录非空时保留、Git 内部路径排除，以及真实 force checkout 后 statusMatrix 保持干净并可切回恢复文件。
+    - **备份**：`gitgit_修复拉取后残留空目录_20260722_151452`、`gitgit_修复拉取后出现假删除改动_20260722_153906`。
+  - **P2.26 最近拉取时间按分支管理**（2026-07-22）：
+    - **根因**：`RepoMeta.lastPulledAt` 是仓库级单值，详情页切换分支后直接复用，导致不同分支共用“最近拉取”时间。
+    - **修复**：`RepoMeta.lastPulledAtByBranch` 以本地分支名保存毫秒时间戳；`services/repoStore.ts` 的 `getBranchLastPulledAt` 读取指定分支，`updateBranchLastPulledAt` 合并指定分支且保留其它分支。详情页在 `loadBranches()` 得到真实当前分支后刷新；手动 pull 按 `PullResult.branch` 写入，push 前自动 pull 按正在推送的分支写入。
+    - **兼容策略**：不保留旧仓库级 `lastPulledAt` 字段，也不提供读取或迁移逻辑。升级后未拉取过的分支显示“尚未拉取”，首次成功拉取后建立自己的时间。
+    - **测试**：`tests/reliability.test.ts` 的 `testBranchLastPulledAt` 覆盖 main/feature 隔离、更新一个分支时保留其它分支和非法输入。完整 reliability 测试及项目 TypeScript 诊断通过。
+    - **备份**：`gitgit_最近拉取时间改为按分支管理_20260722_155408`、`gitgit_移除旧仓库级拉取时间_20260722_160028`。
+  - 第四阶段及以后：交互式 Widget、富通知、Issues/PR、多仓库批量同步等。
+- 待做（旧 P3 标签，已并入第四阶段及以后）：
+  - 交互式 widget、富通知 UI（notification.tsx）、远端 Issues/PR 浏览
+- Scripting UI API 要点（避免再踩坑）：
+  - `Color`/`Font` 是字符串联合类型，不是对象。用 `foregroundStyle="label"`、`font="body"`。
+  - `Font` 枚举只有 caption，无 caption1。
+  - `Image` 系统图标用 `systemName`（非 systemImage）。
+  - `Section`：`title` 接受字符串；`header`/`footer` 需 VirtualNode（`<Text>`）；title 与 header/footer 互斥。
+  - `NavigationLink`：仅 `{destination, title|children}`，无 swipeActions。列表内大量 `NavigationLink` 曾出现空白行复用问题，历史详情改父页受控 `navigationDestination` + `selectedCommitOid`；**content 必须 `key={oid}`**，子页 `useEffect` 依赖 oid，否则会一直显示首次打开的提交。
+  - Toolbar：`<Toolbar><ToolbarItem placement=...><Button/></ToolbarItem></Toolbar>`，挂在 List 的 toolbar prop。ToolbarItem 里可放 NavigationLink 做跳转。
+  - 全局函数 `alert`/`confirm`/`prompt` 无需 import，但需在 `types/globals.d.ts` 声明类型。alert 的 message 是必填。
+  - Picker：children 用 `tag` 标记值，`pickerStyle="segmented"` 做 Tab 切换。
+  - `SecureField` 用于密码/token 输入，props 与 TextField 一致。
+  - `Keychain` 是全局命名空间无需 import，set/get/remove 同步 API。
+  - `Storage` 持久化 KV 存储也是全局命名空间无需 import。默认 private 域（仅当前脚本可见，但 widget 与主脚本同属一个脚本共享 private 域）；跨脚本才需 shared 域（`{ shared: true }`，注意 `keys()` 不列 shared 域键）。支持 string/number/boolean/JSON（自动序列化）；二进制用 setData/getData。写入是异步落盘但方法立即返回。设置数据用 private 域 + 同步初始化（`useState(loadXxx())`）最稳。
+  - **声明式 alert/确认框**（推荐，优于命令式 confirm）：挂到容器组件（List/TabView 等）的 `alert` prop，结构 `{ title, message?, isPresented, onChanged, actions }`，`actions` 用 `<>...</>` 包多个 `<Button role="cancel"|"destructive">`。用 state 控制 `isPresented`，`onChanged` 里同步关闭。
+  - 动态颜色变量需显式断言为 `ShapeStyle` / `Color`，否则会被推断成宽泛 `string`。
+  - `ProgressView` 是加载指示器组件；没有 `Spinner` 导出。
+  - isomorphic-git 远端操作（push/pull/clone）必须传 `http` 传输适配器（createHttpTransport）+ `onAuth`。
+  - **Fork 克隆远端约定**：从 GitHub「我的仓库」选择 fork 时，先查询 `/repos/{owner}/{repo}` 详情；克隆地址写入 `origin`，`parent.clone_url` 写入 `upstream`。普通仓库与手动 URL 克隆不添加 upstream。克隆后不自动写 `branch.*.remote/merge`，默认 Pull 仍使用 origin；用户在「远端管理」手动选择 upstream 并保存后，Pull 才使用源仓库。
+  - **同步区提示位置**：远端管理页只维护远端地址与当前分支跟踪设置；`拉取：当前分支 ← 远端/分支` 与 `最近拉取：时间` 均显示在仓库详情同步区页脚，且拉取目标提示位于最近拉取下一行。远端配置变更后详情页需刷新 `loadRemote`、`loadBranches`、`loadUpstream`。
+  - **后台远端操作**：Scripting 没有独立后台线程；`services/gitService.ts` 用全局 `BackgroundKeeper` 包装 `push`、`pull`、`fetch`、`clone`，操作开始调用 `keepAlive()`，结束在 `finally` 调用 `stopKeepAlive()`。仅请求有限后台保活，系统仍可能因资源或电量策略终止进程；尚未改造成 `BackgroundURLSession` 可恢复任务。

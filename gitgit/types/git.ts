@@ -1,0 +1,202 @@
+/**
+ * types/git.ts - 全局类型定义
+ * 贯穿 services / pages / components 的数据契约
+ */
+
+/** Git 提交身份（user.name / user.email） */
+export interface GitIdentity {
+  name: string
+  email: string
+}
+
+/** 仓库来源 */
+export type RepoSource = "local" | "clone"
+
+/** 仓库元数据（持久化于 repoStore） */
+export interface RepoMeta {
+  /** 用户给仓库起的别名 */
+  name: string
+  /** 仓库列表主键；新数据用短 repoId，旧数据可能是路径 */
+  bookmarkName: string
+  /** 稳定短 ID，用于 gitdir 目录名与访问书签名，避免路径混淆 */
+  repoId?: string
+  /** 用户选择的实际工作目录路径（展示/回退用） */
+  workdir?: string
+  /** 克隆仓库相对于访问书签目录的子路径 */
+  workdirRelative?: string
+  /** 安全范围书签名：解析真实路径必须优先走它 */
+  accessBookmarkName?: string
+  /** 远端地址（可选，clone/push/pull 使用） */
+  remoteUrl?: string
+  /** 默认分支（可选，仅做展示记忆） */
+  defaultBranch?: string
+  /** 上传已创建但尚未推送的远端地址，可用于失败后重试 */
+  pendingRemoteUrl?: string
+  pendingRemoteName?: string
+  /** 仓库来源：本地添加 / 克隆 */
+  source?: RepoSource
+  /** 各本地分支最近一次拉取成功时间（ms 时间戳） */
+  lastPulledAtByBranch?: Record<string, number>
+  /** 创建时间（ms 时间戳） */
+  createdAt: number
+}
+
+export type RepoSyncState = "upToDate" | "ahead" | "behind" | "diverged" | "unknown"
+
+/** 仓库列表行状态（改动 / 待推送 / 合并冲突） */
+export interface RepoListStatus {
+  branch: string | null
+  uncommitted: number
+  ahead: number
+  behind: number
+  syncState: RepoSyncState
+  hasRemote: boolean
+  workdirOk: boolean
+  /** 未解决冲突文件数（无进行中合并为 0） */
+  conflictCount: number
+  /** 是否存在 gitgit-merge-state（含冲突已清但待完成提交） */
+  mergeInProgress: boolean
+  error?: string
+}
+
+/** 文件改动状态（对齐 isomorphic-git statusMatrix 语义） */
+export type FileChangeStatus =
+  | "added" // 新增且已暂存
+  | "*added" // 新增未暂存 / 暂存后又被改
+  | "modified" // 已修改且已暂存
+  | "*modified" // 已修改未暂存
+  | "deleted" // 已删除且已暂存
+  | "*deleted" // 已删除未暂存
+  | "unmodified" // 无变化
+
+/** 单个文件的改动信息 */
+export interface FileChange {
+  filepath: string
+  status: FileChangeStatus
+  /** 索引与 HEAD 不同，可被提交 */
+  staged: boolean
+  /** 工作区与索引不同，可继续暂存 */
+  unstaged: boolean
+}
+
+/** Stash 列表项，index 对应 stash@{index} */
+export interface StashEntry {
+  index: number
+  ref: string
+  message: string
+}
+
+/** 冲突类型：双方改 / 我方删对方改 / 对方删我方改 */
+export type ConflictKind = "bothModified" | "deleteByUs" | "deleteByTheirs"
+
+/** 单个冲突文件 */
+export interface ConflictFile {
+  filepath: string
+  kind: ConflictKind
+}
+
+/** 仓库进行中的合并状态（供 UI 展示） */
+export interface MergeConflictState {
+  oursOid: string
+  theirsOid: string
+  oursLabel: string
+  theirsLabel: string
+  message: string
+  conflicts: ConflictFile[]
+  startedAt: number
+}
+
+/** 提交在历史中的同步状态 */
+export type CommitSyncStatus = "unpushed" | "remote" | "local"
+
+/** commit 历史条目 */
+export interface CommitEntry {
+  oid: string
+  message: string
+  author: { name: string; email: string }
+  date: string
+  /**
+   * unpushed=已提交未推送；remote=已在 origin 跟踪分支上；
+   * local=无远端或无跟踪分支
+   */
+  syncStatus?: CommitSyncStatus
+  /** 是否为当前 HEAD（用于未推送的撤销/重编） */
+  isHead?: boolean
+}
+
+/** 提交相对第一父提交的文件状态 */
+export type CommitFileStatus = "added" | "modified" | "deleted"
+
+export interface CommitFileChange {
+  filepath: string
+  status: CommitFileStatus
+}
+
+/** 提交详情 */
+export interface CommitDetail {
+  oid: string
+  message: string
+  author: { name: string; email: string }
+  committer: { name: string; email: string }
+  date: string
+  parentOid: string | null
+  parentCount: number
+  files: CommitFileChange[]
+}
+
+/** 分支列表结果 */
+export interface BranchInfo {
+  branches: string[]
+  current: string | null
+}
+
+/** Git 操作结果（统一返回结构） */
+export interface GitResult<T = unknown> {
+  ok: boolean
+  result?: T
+  error?: string
+}
+
+/** 仓库同步状态快照（供 Widget / 通知使用） */
+export interface RepoSnapshot {
+  name: string
+  branch: string | null
+  uncommitted: number
+  ahead: number
+  behind: number
+  updatedAt: number
+}
+
+// === GitHub REST API 类型 ===
+
+/** GitHub 用户信息 */
+export interface GitHubUser {
+  login: string
+  name: string | null
+  avatarUrl: string
+  bio: string | null
+  publicRepos: number
+  followers: number
+}
+
+/** GitHub fork 的直接上游仓库 */
+export interface GitHubRepoParent {
+  fullName: string
+  url: string
+  defaultBranch: string
+}
+
+/** GitHub 仓库（精简） */
+export interface GitHubRepo {
+  name: string
+  fullName: string
+  url: string // clone 地址
+  private: boolean
+  description: string | null
+  defaultBranch: string
+  updatedAt: string
+  stargazersCount: number
+  fork: boolean
+  /** 仓库详情接口才返回；列表中的 fork 需按需补查 */
+  parent?: GitHubRepoParent
+}

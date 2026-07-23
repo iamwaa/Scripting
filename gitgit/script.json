@@ -1,0 +1,45 @@
+{
+  "color" : "rgba(88, 166, 255, 1)",
+  "runInApp" : true,
+  "remoteResource" : null,
+  "localizedDescriptions" : {
+    "pt" : "",
+    "it" : "",
+    "en" : "",
+    "zh" : "",
+    "ru" : "",
+    "es" : "",
+    "ja" : "",
+    "fr" : "",
+    "de" : ""
+  },
+  "entry" : "index.tsx",
+  "version" : "1.0.0",
+  "localizedNames" : {
+    "de" : "",
+    "es" : "",
+    "zh" : "",
+    "ru" : "",
+    "en" : "",
+    "ja" : "",
+    "fr" : "",
+    "pt" : "",
+    "it" : ""
+  },
+  "contributors" : [
+
+  ],
+  "description" : "本地 Git 图形界面 + GitHub 远端浏览",
+  "icon" : "point.topleft.down.to.point.bottomright.curvepath",
+  "permissions" : null,
+  "iconImage" : "",
+  "author" : {
+    "email" : null,
+    "homepage" : "https:\/\/github.com\/iamwaa",
+    "name" : "Waa"
+  },
+  "name" : "gitgit",
+  "intentInputTypes" : [
+
+  ]
+}

@@ -1,0 +1,403 @@
+/**
+ * pages/RepoListPage.tsx - 仓库列表页
+ *
+ * 展示仓库来源（本地/克隆）与改动/待推送/合并冲突摘要。
+ * 移除仓库时会清理 gitdir 缓存与访问书签（见 repoStore.removeRepo）。
+ */
+
+import {
+  List,
+  Section,
+  Text,
+  HStack,
+  VStack,
+  Spacer,
+  Image,
+  Navigation,
+  NavigationLink,
+  Toolbar,
+  ToolbarItem,
+  Button,
+  Menu,
+  useState,
+} from "scripting"
+import type { RepoMeta, RepoListStatus } from "../types/git"
+import {
+  listRepos,
+  addRepoByPicker,
+  removeRepo,
+  sourceLabel,
+} from "../services/repoStore"
+import { readSnapshots } from "../services/storage"
+import { getRepoListStatus, initRepo } from "../services/gitService"
+import { BusyOverlay } from "../components/BusyOverlay"
+import { RepoDetailPage } from "./RepoDetailPage"
+import { ClonePage } from "./ClonePage"
+import {
+  COLOR_LABEL,
+  COLOR_SECONDARY_LABEL,
+  COLOR_ACCENT,
+  COLOR_ORANGE,
+  COLOR_GREEN,
+  COLOR_RED,
+} from "../constants/colors"
+import { formatRepoListMergeSummary } from "../utils/mergeConflict"
+import { repoListStatusFromSnapshot } from "../utils/gitSync"
+
+export function RepoListPage() {
+  // 关闭 present 的根界面（设置已独立为 Tab）
+  const dismiss = Navigation.useDismiss()
+  const [repos, setRepos] = useState<RepoMeta[]>(listRepos())
+  const [showClone, setShowClone] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<RepoMeta | null>(null)
+  const [alertState, setAlertState] = useState<{
+    title: string
+    message: string
+  } | null>(null)
+  // bookmarkName → 列表状态；优先用上次写操作后的快照做首屏
+  const [statusMap, setStatusMap] = useState<Record<string, RepoListStatus>>(
+    () => {
+      // storage.readSnapshots 同步，可作 useState 初始值
+      const snaps = readSnapshots()
+      const map: Record<string, RepoListStatus> = {}
+      for (const repo of listRepos()) {
+        const snap = snaps[repo.bookmarkName]
+        if (snap) map[repo.bookmarkName] = repoListStatusFromSnapshot(snap)
+      }
+      return map
+    }
+  )
+  // 仅当没有任何可展示状态时显示全屏遮罩；有快照则渐进刷新
+  const [statusLoading, setStatusLoading] = useState(() => {
+    const list = listRepos()
+    if (list.length === 0) return false
+    const snaps = readSnapshots()
+    return !list.some((repo) => snaps[repo.bookmarkName] != null)
+  })
+
+  /**
+   * 用 Storage 快照覆盖内存状态。
+   * 详情页 commit/push 等写操作会在 runRepoMutation finally 里 writeSnapshot；
+   * 列表页组件常不卸载，statusMap 仍是进详情前的旧改动数，返回时必须先盖掉再 live 刷新。
+   */
+  function applySnapshotsToStatusMap(list: RepoMeta[]) {
+    const snaps = readSnapshots()
+    setStatusMap((current) => {
+      const next = { ...current }
+      for (const repo of list) {
+        const snap = snaps[repo.bookmarkName]
+        if (!snap) continue
+        const fromSnap = repoListStatusFromSnapshot(snap)
+        const prev = current[repo.bookmarkName]
+        // 快照无冲突字段：暂保留上次 live，随后 getRepoListStatus 会纠正
+        next[repo.bookmarkName] = prev
+          ? {
+              ...fromSnap,
+              conflictCount: prev.conflictCount,
+              mergeInProgress: prev.mergeInProgress,
+              hasRemote: prev.hasRemote || fromSnap.hasRemote,
+              workdirOk: prev.workdirOk !== false,
+            }
+          : fromSnap
+      }
+      return next
+    })
+  }
+
+  async function refreshAll() {
+    const latest = listRepos()
+    setRepos(latest)
+    // 先同步快照（含详情页刚写的 uncommitted/ahead），避免返回列表仍闪旧改动数
+    applySnapshotsToStatusMap(latest)
+    await refreshStatuses(latest)
+  }
+
+  function showAlert(title: string, message: string) {
+    setAlertState({ title, message })
+  }
+
+  function appendRepo(repo: RepoMeta) {
+    setRepos((current) => {
+      const next = current.some((item) => item.bookmarkName === repo.bookmarkName)
+        ? current
+        : [...current, repo]
+      refreshStatuses(next)
+      return next
+    })
+  }
+
+  async function refreshStatuses(list: RepoMeta[]) {
+    // 全无状态时才遮罩；已有快照/状态时后台逐个刷新，避免大仓库并行打爆 FS
+    const needsBlocking = list.some((repo) => statusMap[repo.bookmarkName] == null)
+    if (needsBlocking) setStatusLoading(true)
+    try {
+      for (const repo of list) {
+        const status = await getRepoListStatus(repo.bookmarkName)
+        setStatusMap((current) => ({
+          ...current,
+          [repo.bookmarkName]: status,
+        }))
+      }
+    } finally {
+      setStatusLoading(false)
+    }
+  }
+
+  async function handleAddLocal() {
+    try {
+      const repo = await addRepoByPicker()
+      if (!repo) return
+      // 添加后立刻 init，默认分支 main，避免上传 GitHub 时无分支
+      try {
+        await initRepo(repo.bookmarkName)
+      } catch (initErr: any) {
+        // init 失败仍保留列表项，进入详情可再试
+        showAlert(
+          "已添加，但初始化失败",
+          String(initErr?.message || initErr)
+        )
+      }
+      appendRepo(repo)
+    } catch (e: any) {
+      showAlert("添加失败", String(e?.message || e))
+    }
+  }
+
+  async function doDelete() {
+    const repo = pendingDelete
+    setPendingDelete(null)
+    if (!repo) return
+    try {
+      // removeRepo 会清元数据 + gitdir 缓存 + 访问书签 + 快照
+      await removeRepo(repo.bookmarkName)
+      setRepos((current) => {
+        const next = current.filter(
+          (item) => item.bookmarkName !== repo.bookmarkName
+        )
+        return next
+      })
+      setStatusMap((current) => {
+        const next = { ...current }
+        delete next[repo.bookmarkName]
+        return next
+      })
+    } catch (e: any) {
+      showAlert("删除失败", String(e?.message || e))
+    }
+  }
+
+  const activeAlert =
+    pendingDelete != null
+      ? {
+          title: "移除仓库？",
+          message: `将从列表移除「${pendingDelete.name}」，并清除本地 Git 缓存；不会删除工作区文件。`,
+          isConfirm: true as const,
+        }
+      : alertState
+        ? {
+            title: alertState.title,
+            message: alertState.message,
+            isConfirm: false as const,
+          }
+        : null
+
+  // 任何状态刷新（初次 / 返回主页 / 新增仓库）都显示遮罩
+  const showStatusOverlay = repos.length > 0 && statusLoading
+
+  return (
+    <List
+      navigationTitle="仓库"
+      navigationBarTitleDisplayMode="large"
+      overlay={
+        showStatusOverlay
+          ? {
+              alignment: "center",
+              content: (
+                <BusyOverlay
+                  title="正在更新状态"
+                  message="同步仓库改动与推送摘要…"
+                />
+              ),
+            }
+          : undefined
+      }
+      onAppear={() => {
+        refreshAll()
+      }}
+      navigationDestination={{
+        isPresented: showClone,
+        onChanged: setShowClone,
+        content: (
+          <ClonePage
+            onCloned={(repo) => {
+              appendRepo(repo)
+              setShowClone(false)
+            }}
+          />
+        ),
+      }}
+      alert={{
+        title: activeAlert?.title ?? "",
+        message: <Text>{activeAlert?.message ?? ""}</Text>,
+        isPresented: activeAlert != null,
+        onChanged: (presented: boolean) => {
+          if (!presented) {
+            setPendingDelete(null)
+            setAlertState(null)
+          }
+        },
+        actions: activeAlert?.isConfirm ? (
+          <>
+            <Button
+              title="取消"
+              role="cancel"
+              action={() => setPendingDelete(null)}
+            />
+            <Button title="移除" role="destructive" action={doDelete} />
+          </>
+        ) : (
+          <Button title="好" role="cancel" action={() => setAlertState(null)} />
+        ),
+      }}
+      toolbar={
+        <Toolbar>
+          <ToolbarItem placement="topBarLeading">
+            <Button action={dismiss}>
+              <Image systemName="xmark" fontWeight="semibold" foregroundStyle="red" />
+            </Button>
+          </ToolbarItem>
+          <ToolbarItem placement="primaryAction">
+            <Menu title="添加" fontWeight="semibold" systemImage="plus">
+              <Button
+                title="添加本地仓库"
+                systemImage="folder.badge.plus"
+                action={handleAddLocal}
+              />
+              <Button
+                title="克隆仓库"
+                systemImage="square.and.arrow.down"
+                action={() => setShowClone(true)}
+              />
+            </Menu>
+          </ToolbarItem>
+        </Toolbar>
+      }
+    >
+      {repos.length === 0 ? (
+        <Section>
+          <Text font="callout" foregroundStyle={COLOR_SECONDARY_LABEL}>
+            还没有仓库，点击右上角「+」添加本地目录或克隆远端。
+          </Text>
+        </Section>
+      ) : (
+        <Section>
+          {repos.map((repo) => (
+            <HStack
+              key={repo.bookmarkName}
+              alignment="center"
+              trailingSwipeActions={{
+                allowsFullSwipe: true,
+                actions: [
+                  <Button
+                    title="移除"
+                    tint="systemRed"
+                    systemImage="trash"
+                    action={() => setPendingDelete(repo)}
+                  />,
+                ],
+              }}
+            >
+              <NavigationLink
+                destination={
+                  <RepoDetailPage
+                    bookmarkName={repo.bookmarkName}
+                    name={repo.name}
+                  />
+                }
+              >
+                <RepoRow
+                  repo={repo}
+                  status={statusMap[repo.bookmarkName]}
+                  statusLoading={statusLoading}
+                />
+              </NavigationLink>
+            </HStack>
+          ))}
+        </Section>
+      )}
+    </List>
+  )
+}
+
+/** 单行：左侧名称/来源，右侧（> 左边）改动标识上下居中 */
+function RepoRow({
+  repo,
+  status,
+  statusLoading,
+}: {
+  repo: RepoMeta
+  status?: RepoListStatus
+  statusLoading: boolean
+}) {
+  const source = sourceLabel(repo)
+  const isClone = source === "克隆"
+  const uncommitted = status?.uncommitted ?? 0
+  const ahead = status?.ahead ?? 0
+  const workdirOk = status?.workdirOk !== false
+
+  // 有状态（含快照）立即展示；仅在阻塞加载且尚无该行状态时留空
+  let trailing: { text: string; color: string } | null = null
+  if (!status && statusLoading) {
+    trailing = null
+  } else if (!workdirOk) {
+    trailing = { text: "路径失效", color: COLOR_RED }
+  } else if (status) {
+    // 合并冲突优先于普通改动/待推送摘要
+    const mergeSummary = formatRepoListMergeSummary({
+      conflictCount: status.conflictCount ?? 0,
+      mergeInProgress: status.mergeInProgress ?? false,
+    })
+    if (mergeSummary) {
+      trailing = {
+        text: mergeSummary,
+        color: (status.conflictCount ?? 0) > 0 ? COLOR_RED : COLOR_ORANGE,
+      }
+    } else if (uncommitted > 0 || ahead > 0) {
+      const parts: string[] = []
+      if (uncommitted > 0) parts.push(`${uncommitted} 改动`)
+      if (ahead > 0) parts.push(`${ahead}推送`)
+      // 本地改动与待推送均用橙色，与历史列表「待推送」一致
+      trailing = {
+        text: parts.join(" · "),
+        color: COLOR_ORANGE,
+      }
+    } else {
+      trailing = { text: "无改动", color: COLOR_SECONDARY_LABEL }
+    }
+  }
+
+  return (
+    <HStack alignment="center" spacing={10}>
+      <Image
+        systemName={isClone ? "cloud.fill" : "folder.fill"}
+        foregroundStyle={isClone ? COLOR_ACCENT : COLOR_GREEN}
+      />
+      <VStack alignment="leading" spacing={2}>
+        <Text font="headline" foregroundStyle={COLOR_LABEL}>
+          {repo.name}
+        </Text>
+        <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
+          {source}
+          {status?.branch ? ` · ${status.branch}` : ""}
+        </Text>
+      </VStack>
+      <Spacer />
+      {/* 放在 NavigationLink 自带 > 的左侧，整行垂直居中 */}
+      {trailing ? (
+        <Text font="caption" foregroundStyle={trailing.color as any}>
+          {trailing.text}
+        </Text>
+      ) : null}
+    </HStack>
+  )
+}
