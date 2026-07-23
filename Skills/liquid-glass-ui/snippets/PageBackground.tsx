@@ -1,7 +1,8 @@
 /**
  * 按时段变化的液态玻璃页面背景
  * 用法：作为 List / ZStack 底层，配合 scrollContentBackground="hidden"
- * 注意：pageBackground 在模块导入时按当前小时固化（含随机方向/锚点），非整点自动刷新
+ * 可选：通过 config 传入固定的浅色/深色渐变；未传时使用时段背景
+ * 注意：默认 pageBackground 在模块导入时按当前小时固化（含随机方向/锚点），非整点自动刷新
  */
 
 import {
@@ -14,6 +15,13 @@ import {
 type HourGradient = {
   light: Color[][]
   dark: Color[][]
+}
+
+export type PageBackgroundConfig = {
+  lightColors: Color[]
+  darkColors: Color[]
+  startPoint: KeywordPoint
+  endPoint: KeywordPoint
 }
 
 const gradientPairs: [KeywordPoint, KeywordPoint][] = [
@@ -79,7 +87,7 @@ const tuneLightColor = (color: Color): Color => {
 const createBackground = (date = new Date()): DynamicShapeStyle => {
   const hourBucket = Math.floor(date.getHours() / 4) % hourlyGradients.length
   const variants = hourlyGradients[hourBucket]
-  const lightColors = [...variants.light[0].map(tuneLightColor), pick(warmLightAnchors)]
+  const lightColors = [...pick(variants.light).map(tuneLightColor), pick(warmLightAnchors)]
   const darkColors = pick(variants.dark)
   const [startPoint, endPoint] = pick(gradientPairs)
 
@@ -91,10 +99,27 @@ const createBackground = (date = new Date()): DynamicShapeStyle => {
 
 export const pageBackground = createBackground()
 
-export function PageBackground() {
+const backgroundFromConfig = (
+  config: PageBackgroundConfig
+): DynamicShapeStyle => ({
+  light: {
+    colors: config.lightColors,
+    startPoint: config.startPoint,
+    endPoint: config.endPoint,
+  },
+  dark: {
+    colors: config.darkColors,
+    startPoint: config.startPoint,
+    endPoint: config.endPoint,
+  },
+})
+
+export function PageBackground(
+  { config }: { config?: PageBackgroundConfig } = {}
+) {
   return (
     <Rectangle
-      fill={pageBackground}
+      fill={config ? backgroundFromConfig(config) : pageBackground}
       ignoresSafeArea={true}
       allowsHitTesting={false}
     />

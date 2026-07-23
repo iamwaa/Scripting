@@ -79,7 +79,7 @@ export const supportsLiquidGlass = (() => {
 | 文件 | 作用 |
 |------|------|
 | `snippets/tokens.tsx` | 圆角、间距、阴影、描边、徽章色板、`surfaceFill`、组合 props |
-| `snippets/PageBackground.tsx` | 按时段变化的渐变背景（模块导入时固化，非整点刷新） |
+| `snippets/PageBackground.tsx` | 按时段变化的渐变背景；`PageBackground` 可选接收固定 Light/Dark 渐变配置（默认在模块导入时固化，非整点刷新） |
 | `snippets/components.tsx` | AnimText、GlassBadge、GlassTag、GlassInput、GlassCard、Toast… |
 | `snippets/page-shell.tsx` | 完整页面骨架示例 |
 
@@ -175,6 +175,25 @@ background: {
 | error | 失败 |
 | teal | 已暂停 / 次级状态 |
 | neutral | 计数、默认标签 |
+
+## 可选背景配置
+
+`PageBackground` 默认使用按时段生成的渐变。需要固定品牌色或页面专属背景时，传入 `PageBackgroundConfig`；背景仍必须同时提供 Light/Dark 色组：
+
+```tsx
+import { PageBackground, type PageBackgroundConfig } from "./PageBackground"
+
+const backgroundConfig: PageBackgroundConfig = {
+  lightColors: ["#e8edf0", "#dde7e2", "#efe2d2"],
+  darkColors: ["#070914", "#11162a", "#20162d"],
+  startPoint: "topLeading",
+  endPoint: "bottomTrailing",
+}
+
+<PageBackground config={backgroundConfig} />
+```
+
+不传 `config` 时继续使用默认时段背景。每个页面根层只挂载一个 `PageBackground`，子组件、卡片和列表行不得重复挂载。
 
 # 页面架构
 
@@ -344,7 +363,7 @@ import { PageBackground } from "./PageBackground"
 
 **推荐**
 
-- 每个全屏玻璃页底层放 `PageBackground`
+- 每个全屏玻璃页底层放一个 `PageBackground`；需要固定背景时传入 `PageBackgroundConfig`，不要在子组件重复挂载
 - 复用 `supportsLiquidGlass` / `surfaceFill` / `glass*Props` / `plainListChrome`，不要在页面手写双套表面
 - 隐藏列表分割线与系统背景
 - 表面一定搭配描边 + 阴影
