@@ -48,6 +48,53 @@
 - 复用 skill 提供的版本感知 surface props、页面骨架和标准目录，不自行复制双套玻璃分支。
 - 交付前核对 Light/Dark 与 iOS 26+/<26；避免不透明白卡、grouped List 灰底残留、圆角混乱和过度厚重材质。
 
+### FormRow（List 表单文本输入）
+
+List / 设置页里的文本输入默认用 **FormRow**（左标签 + 右输入 + 有内容可清空），不要用 `TextField title="..."` 内置行。搜索胶囊、工具栏搜索等非表单布局除外。
+
+布局：`HStack` 拉满 → 左 `Text` 固定宽（默认 72）→ 中 `TextField` 或 `SecureField`（用 `label={<Text>{label}</Text>}`，不要再传 `title`）→ 右清空按钮（`xmark.circle.fill` / `tertiaryLabel`，`onChanged("")`）。
+
+落到 `components/FormRow.tsx`（小项目可写在 `components.tsx`）：
+
+```tsx
+import { HStack, Text, TextField, SecureField, Button, Image } from "scripting"
+
+export function FormRow({
+  label,
+  value,
+  prompt,
+  onChanged,
+  secure = false,
+  labelWidth = 72,
+}: {
+  label: string
+  value: string
+  prompt?: string
+  onChanged: (value: string) => void
+  secure?: boolean
+  labelWidth?: number
+}) {
+  const field = secure ? (
+    <SecureField label={<Text>{label}</Text>} value={value} prompt={prompt} onChanged={onChanged} />
+  ) : (
+    <TextField label={<Text>{label}</Text>} value={value} prompt={prompt} onChanged={onChanged} />
+  )
+  return (
+    <HStack alignment="center" spacing={12} frame={{ maxWidth: Infinity }}>
+      <Text frame={{ width: labelWidth, alignment: "leading" }}>{label}</Text>
+      {field}
+      {value.length > 0 ? (
+        <Button action={() => onChanged("")} buttonStyle="plain">
+          <Image systemName="xmark.circle.fill" font={16} foregroundStyle="tertiaryLabel" />
+        </Button>
+      ) : null}
+    </HStack>
+  )
+}
+```
+
+调用：`<FormRow label="姓名" value={name} prompt="可选提示" onChanged={setName} />`；Token 等加 `secure`。标签宜短；过长调 `labelWidth`。
+
 ## Scripting 对话框调用提醒
 
 Scripting 页面脚本中的原生对话框，采用运行时注入的全局 `Dialog` 命名空间：`Dialog.alert(...)`、`Dialog.confirm(...)`、`Dialog.prompt(...)`、`Dialog.actionSheet(...)`。不要改写为独立的全局 `alert/confirm/prompt/actionSheet`，也不要从 `"scripting"` 导入 `Dialog`；当前 SDK 类型可能未导出该运行时命名空间。类型检查缺少声明时，可在项目中按实际使用范围添加 `declare const Dialog: ...`（旧项目也可暂用 `any`），但调用仍必须保留 `Dialog.` 前缀。
