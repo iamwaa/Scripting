@@ -84,6 +84,8 @@ export interface StashEntry {
   index: number
   ref: string
   message: string
+  /** stash commit oid，用于查看该次暂存的文件改动 */
+  oid?: string
 }
 
 /** 冲突类型：双方改 / 我方删对方改 / 对方删我方改 */

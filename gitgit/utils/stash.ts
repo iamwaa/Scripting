@@ -141,3 +141,30 @@ export function isStatusMatrixClean(
 ): boolean {
   return matrix.every((row) => row[1] === row[2] && row[2] === row[3])
 }
+
+/**
+ * 从文件序（旧→新）reflog 行提取 stash commit oid，返回 newest-first
+ *（与 stash@{0}、stash@{1} … 索引对齐）。
+ */
+export function stashOidsNewestFirst(
+  chronologicalLines: readonly string[]
+): string[] {
+  const oids: string[] = []
+  for (const line of chronologicalLines) {
+    const oid = oidFromStashReflogLine(line)
+    if (oid) oids.push(oid)
+  }
+  return oids.reverse()
+}
+
+/** 把 list 解析结果与 newest-first oid 列表按 index 配对 */
+export function pairStashEntriesWithOids(
+  entries: StashEntry[],
+  newestFirstOids: readonly string[]
+): StashEntry[] {
+  return entries.map((entry) => {
+    const oid = newestFirstOids[entry.index]
+    if (!oid || !isValidOid(oid)) return entry
+    return { ...entry, oid }
+  })
+}

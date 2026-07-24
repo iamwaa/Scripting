@@ -3,6 +3,7 @@
  *
  * isomorphic-git 不内置行级 diff，这里实现一个轻量 LCS 算法，
  * 对比 HEAD 版本与工作区当前版本，输出逐行增删改。
+ * 对配对的 del/add 行附加字符级行内片段，供 DiffViewer 高亮。
  *
  * 数据源：
  *  - HEAD 版本：git.readBlob({ fs, dir, gitdir, oid }) 取 blob 内容
@@ -11,6 +12,10 @@
 
 import { loadGitEngine, createFS } from "./gitCore"
 import { resolveWorkdir, findRepo, getGitdirPath } from "./repoStore"
+import { attachInlineHighlights } from "../utils/inlineDiff"
+import type { InlineSegment } from "../utils/inlineDiff"
+
+export type { InlineSegment }
 
 const MAX_LCS_CELLS = 1_000_000
 const MAX_CONTEXT_LINES = 3
@@ -24,6 +29,10 @@ export interface DiffLine {
   content: string
   oldLineNo?: number
   newLineNo?: number
+  /** 行内片段；仅配对成功的 del/add 行有 */
+  segments?: InlineSegment[]
+  /** skip 行携带被折叠的原始上下文行，供展开使用 */
+  hiddenLines?: DiffLine[]
 }
 
 /** 一个文件的完整 diff */
@@ -96,7 +105,7 @@ export function lineDiff(oldLines: string[], newLines: string[]): DiffLine[] {
     oldLineNo: oldLines.length - suffixLength + index + 1,
     newLineNo: newLines.length - suffixLength + index + 1,
   }))
-  return trimContext([...prefix, ...middle, ...suffix])
+  return attachInlineHighlights(trimContext([...prefix, ...middle, ...suffix]))
 }
 
 /** 只保留变更附近的少量上下文，避免大文件一次性创建和渲染全部行 */
@@ -116,14 +125,35 @@ function trimContext(lines: DiffLine[]): DiffLine[] {
     }
   }
   const result: DiffLine[] = []
-  let previous = -2
-  for (const index of Array.from(keep).sort((a, b) => a - b)) {
+  // previous=-1：表示「文件开头之前」；slice(previous+1, index) 即从 0 起
+  // 旧值 -2 会让 slice(-1, …) 从数组末尾取，首行空 skip 且点击无内容
+  let previous = -1
+  const sorted = Array.from(keep).sort((a, b) => a - b)
+  for (const index of sorted) {
     if (index > previous + 1) {
-      // 独立类型，UI 可做成分隔条，避免与普通上下文行混淆
-      result.push({ type: "skip", content: "省略未改动的行" })
+      const hiddenLines = lines.slice(previous + 1, index)
+      // 无实际隐藏行则不插入 skip（文件开头紧挨保留区时不应出现）
+      if (hiddenLines.length > 0) {
+        result.push({
+          type: "skip",
+          content: `省略 ${hiddenLines.length} 行未改动代码`,
+          hiddenLines,
+        })
+      }
     }
     result.push(lines[index])
     previous = index
+  }
+  // 末尾可能还有剩余 context
+  if (previous < lines.length - 1) {
+    const hiddenLines = lines.slice(previous + 1)
+    if (hiddenLines.length > 0) {
+      result.push({
+        type: "skip",
+        content: `省略 ${hiddenLines.length} 行未改动代码`,
+        hiddenLines,
+      })
+    }
   }
   return result
 }

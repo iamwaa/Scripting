@@ -34,9 +34,11 @@ import {
   dropStashReflogAtIndex,
   isStatusMatrixClean,
   isValidOid,
+  pairStashEntriesWithOids,
   parseStashEntries,
   repairStashReflogLines,
   sanitizeStashMessage,
+  stashOidsNewestFirst,
 } from "../utils/stash"
 import {
   assertCanAddRemote,
@@ -483,19 +485,30 @@ async function createStashInternal(
   }
   const resolvedAuthor = await resolveAuthor()
   await ensureGitConfigAuthor(git, fs, dir, gitdir, resolvedAuthor)
+  // isomorphic-git stash 对比 workdir 时不收集「仅工作区存在」的未跟踪文件；
+  // 先把全部改动（未暂存 / 未跟踪 / 删除）写入索引，再 push，保证未暂存也能保存。
+  await addFilesInternal(bookmarkName, ".")
   // 1) message 必须单行，否则 logs/refs/stash 会被拆坏
   // 2) 空 message 兜底，避免底层写出字面 undefined
   const branch = await safeCurrentBranch(git, fs, dir, gitdir)
   const safeMessage =
     sanitizeStashMessage(message) ||
     (branch ? `WIP on ${branch}` : "WIP")
-  await git.stash({
-    fs,
-    dir,
-    gitdir,
-    op: "push",
-    message: safeMessage,
-  })
+  try {
+    await git.stash({
+      fs,
+      dir,
+      gitdir,
+      op: "push",
+      message: safeMessage,
+    })
+  } catch (e: any) {
+    const msg = String(e?.message || e)
+    if (/nothing to stash/i.test(msg) || /Could not find changes/i.test(msg)) {
+      throw new Error("没有可保存的改动")
+    }
+    throw e
+  }
   // push 后顺手清洗可能已有的脏续行
   await repairStashReflog(fs)
 }
@@ -581,16 +594,32 @@ async function safeDropStash(fs: any, index: number): Promise<void> {
   await writeStashReflogAndTip(fs, lines, tipOid)
 }
 
+/** 为解析后的 Stash 列表附上 commit oid（供查看改动） */
+async function withStashOids(
+  fs: any,
+  entries: StashEntry[]
+): Promise<StashEntry[]> {
+  if (entries.length === 0) return entries
+  const raw = await readStashReflogRaw(fs)
+  if (!raw.trim()) return entries
+  const chronological = raw
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+  return pairStashEntriesWithOids(entries, stashOidsNewestFirst(chronological))
+}
+
 /**
  * 读取 Stash 列表。
- * 先修复脏 reflog，再过滤/清理幽灵条目。
+ * 先修复脏 reflog，再过滤/清理幽灵条目，并附带 stash commit oid。
  */
 export async function listStashes(bookmarkName: string): Promise<StashEntry[]> {
   const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
   await repairStashReflog(fs)
   const entries = await git.stash({ fs, dir, gitdir, op: "list" })
   const ghostIndices = collectGhostStashIndices(entries)
-  if (ghostIndices.length === 0) return parseStashEntries(entries)
+  if (ghostIndices.length === 0) {
+    return withStashOids(fs, parseStashEntries(entries))
+  }
 
   // 从大到小 drop，避免索引前移导致误删有效项
   for (const refIdx of ghostIndices) {
@@ -601,7 +630,7 @@ export async function listStashes(bookmarkName: string): Promise<StashEntry[]> {
     }
   }
   const cleaned = await git.stash({ fs, dir, gitdir, op: "list" })
-  return parseStashEntries(cleaned)
+  return withStashOids(fs, parseStashEntries(cleaned))
 }
 
 /** 应用 Stash；保留列表项，且拒绝覆盖现有改动 */

@@ -35,9 +35,11 @@ import {
   dropStashReflogAtIndex,
   isStatusMatrixClean,
   isValidOid,
+  pairStashEntriesWithOids,
   parseStashEntries,
   repairStashReflogLines,
   sanitizeStashMessage,
+  stashOidsNewestFirst,
 } from "../utils/stash"
 import {
   assertCanAddRemote,
@@ -1050,6 +1052,34 @@ function testStashHelpers(): void {
   assert(
     !isStatusMatrixClean([["a.txt", 1, 1, 2]]),
     "存在暂存改动时不得应用 Stash"
+  )
+
+  // reflog → newest-first oid 列表，再与 list 条目配对
+  const oidsNewest = stashOidsNewestFirst(repaired.lines)
+  assert(
+    oidsNewest.length === 3 &&
+      oidsNewest[0] === oidC &&
+      oidsNewest[1] === oidB &&
+      oidsNewest[2] === oidA,
+    "stashOidsNewestFirst 应与 stash@{0..} 索引对齐"
+  )
+  const paired = pairStashEntriesWithOids(
+    [
+      { index: 0, ref: "stash@{0}", message: "最新" },
+      { index: 2, ref: "stash@{2}", message: "最早" },
+    ],
+    oidsNewest
+  )
+  assert(
+    paired[0].oid === oidC && paired[1].oid === oidA,
+    "pairStashEntriesWithOids 应按 index 写入 oid"
+  )
+  assert(
+    pairStashEntriesWithOids(
+      [{ index: 9, ref: "stash@{9}", message: "越界" }],
+      oidsNewest
+    )[0].oid === undefined,
+    "越界 index 不应伪造 oid"
   )
 }
 

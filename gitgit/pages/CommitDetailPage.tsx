@@ -96,9 +96,12 @@ function CommitFileTreeNode({
 export function CommitDetailPage({
   bookmarkName,
   oid,
+  title = "提交详情",
 }: {
   bookmarkName: string
   oid: string
+  /** 导航栏标题，Stash 详情可传「Stash 详情」 */
+  title?: string
 }) {
   const [detail, setDetail] = useState<CommitDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -129,7 +132,7 @@ export function CommitDetailPage({
 
   return (
     <List
-      navigationTitle="提交详情"
+      navigationTitle={title}
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
     >

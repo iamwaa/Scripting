@@ -42,7 +42,9 @@
     - **幽灵项**：message 为空或字面 `undefined`（底层 reflog 缺 tab 时 `split("\t")[1]` 拼出）视为未真实保存；`parseStashEntries` 过滤不展示，`listStashes` 用安全 drop 从仓库清除。
     - **message 必须单行**：`sanitizeStashMessage` 在 push 前压平换行。多行（如 `This reverts commit ...`）会拆坏 `logs/refs/stash`，导致 drop 收尾把续行第二词（`reverts`）当 OID → `Expected a 40-char hex object id but saw "reverts"`（删除往往已成功，仅收尾误报）。
     - **安全 drop / 修复**：不走 isomorphic-git `stash drop` 收尾写 tip；自实现 `safeDropStash` + `repairStashReflog`：只认合法行 `oldOid newOid ...\tmessage`（两 OID 均为 40 hex），清洗脏续行，并同步 `refs/stash` tip。list/apply/push 前也会 repair。
-    - **关键文件**：`utils/stash.ts`、`services/gitService.ts`（create/list/apply/drop）、`pages/StashTab.tsx`、`pages/RepoDetailPage.tsx`；测试在 `tests/reliability.test.ts` 的 `testStashHelpers`。
+    - **未暂存也能保存**（2026-07-24）：isomorphic-git stash 的 workdir 对比不收集未跟踪文件；`createStash` 在 push 前先 `addFiles(".")` 把未暂存/未跟踪/删除写入索引，再 stash。
+    - **查看改动**：`listStashes` 从 reflog 附带 `entry.oid`；`StashTab` 点进 `CommitDetailPage`（title=`Stash 详情`）复用提交文件树与 diff。
+    - **关键文件**：`utils/stash.ts`、`services/gitService.ts`（create/list/apply/drop）、`pages/StashTab.tsx`、`pages/RepoDetailPage.tsx`、`pages/CommitDetailPage.tsx`；测试在 `tests/reliability.test.ts` 的 `testStashHelpers`。
   - **P2.20 克隆后切分支假改动修复**：
     - **现象**：克隆后切换分支，改动列表把上一分支独占文件当成 *added/*deleted；重新运行项目（或再次 materialize）后消失。
     - **根因**：`checkoutBranch` / 从远端建本地跟踪分支时用非 `force` 的 `git.checkout`（以及 `branch({ checkout: true })`）。在分离式 FileManager FS 上，checkout 常跳过删除/覆盖，工作区与新 HEAD 不一致，`statusMatrix` 报假改动。

@@ -1390,6 +1390,7 @@ export function RepoDetailPage({
         />
       ) : tab === 1 ? (
         <StashTab
+          bookmarkName={bookmarkName}
           changes={changes}
           stashes={stashes}
           loading={loading}
