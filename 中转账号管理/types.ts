@@ -63,6 +63,8 @@ export type Account = {
   lastCheckin?: CheckinStatus
   lastTodayCheckin?: CheckinRecord
   lastTodayCheckinDate?: string
+  // 本地记录的签到奖励（日期 -> 金额美元），仅用于无签到历史接口的旧版 sub2api 站点补充月历金额
+  checkinRewards?: Record<string, number>
   lastError?: string
   lastSiteStatus?: SiteStatus
   authSource?: "password" | "web" | "cookie" | "accessToken"

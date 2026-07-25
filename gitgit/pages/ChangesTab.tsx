@@ -88,7 +88,7 @@ export function ChangesTab({
       <Section
         header={
           <HStack alignment="center">
-            <Text>改动文件</Text>
+            <Text>改动文件{changes.length > 0 ? `（${changes.length}）` : "" }</Text>
             <Spacer />
             <Button
               action={bulkAction}

@@ -88,8 +88,10 @@ export async function sub2ApiRequest<T = any>(account: Account, method: string, 
       }
       throw makeApiError("站点防护验证未通过，请先用网页登录刷新 Cookie 后再试", { authExpired: false })
     }
-    // 非 JSON 响应通常是触发了验证或登录失效，而非真正的 API 路径错误
-    throw makeApiError(`响应不是 JSON：${raw.slice(0, 60)}`, { authExpired: !response.ok })
+    // 非 JSON 响应：附上 HTTP 状态，便于上层 isRouteUnavailable 识别 404/405 触发路由回退
+    // authExpired 仅在非 2xx 时附带（2xx 非 JSON 多为网关/防护异常页）
+    const status = Number(response.status) || 0
+    throw makeApiError(`响应不是 JSON：${raw.slice(0, 60)}`, { status, authExpired: !response.ok })
   }
   if (!response.ok) {
     // 保留服务端原始消息让翻译规则正确分类（额度不足/被封禁/限流等），auth-expired 只作为元数据附带
@@ -156,39 +158,79 @@ export async function fetchSub2ApiCheckinStatus(account: Account, month = localM
       return { enabled: false, min_quota: undefined, max_quota: undefined, stats: { total_quota: undefined, total_checkins: 0, checkin_count: 0, records: [] } } as CheckinStatus
     }
   }
+  // 今日预期奖励金额（用于未签到时的预览与本地记录回退）：
+  // 新版 status.today_reward（失败回退 reward_amount），旧版 status.reward_amount
+  const previewRewardAmount = isNewApi ? (status?.today_reward ?? status?.reward_amount) : status?.reward_amount
   let records: CheckinRecord[] = []
+  // 本地记录的签到奖励（仅旧版无历史接口时用于补充月历金额）
+  const localRewards = account.checkinRewards ?? {}
+  // 新版：拉取签到历史，用每条真实奖励金额填充记录（类似 newapi 签到信息）
+  let historyItems: any[] = []
+  if (isNewApi) {
+    try {
+      const history = await sub2ApiRequest<any>(account, "GET", "/check-in/history?page=1&page_size=100")
+      historyItems = Array.isArray(history?.items) ? history.items : []
+    } catch {}
+  }
+  // 历史记录按日期索引，便于用真实奖励金额覆盖日历记录
+  const rewardByDate: Record<string, number | undefined> = {}
+  for (const item of historyItems) {
+    const date = item?.check_in_date
+    const amount = Number(item?.reward_amount)
+    if (date && Number.isFinite(amount)) rewardByDate[date] = amount
+  }
+  // 日历返回的当月累计天数（用于旧版 totalDays 回退，避免日历失败时丢失累计数）
+  let calendarCheckedInDays: number | undefined
+  // 当月签到日历：新版走 /check-in/calendar?month=YYYY-MM，旧版走 /user/check-in/calendar?year=Y&month=M
   try {
-    // 获取签到日历记录
     const calendar = isNewApi
       ? await sub2ApiRequest<any>(account, "GET", `/check-in/calendar?month=${year}-${String(monthIndex).padStart(2, "0")}`)
       : await sub2ApiRequest<any>(account, "GET", `/user/check-in/calendar?year=${year}&month=${monthIndex}`)
     // 新版 API 返回 signed_dates 数组，旧版返回 checked_in_dates 数组
     const dates = calendar?.signed_dates ?? calendar?.checked_in_dates ?? []
-    const rewardAmount = isNewApi ? (status?.today_reward ?? status?.reward_amount) : status?.reward_amount
+    calendarCheckedInDays = calendar?.checked_in_days ?? calendar?.total_check_in_days
     records = dates.map((date: string) => ({
       checkin_date: date,
-      quota_awarded: quotaFromUsd(rewardAmount),
+      // 金额优先级：新版历史真实金额 > 本地记录金额 > 单次预览金额（旧版 reward_amount 为固定单次奖励，作兜底）
+      quota_awarded: quotaFromUsd(rewardByDate[date] ?? localRewards[date] ?? previewRewardAmount),
     }))
   } catch {}
-  const rewardAmount = isNewApi ? (status?.today_reward ?? status?.reward_amount) : status?.reward_amount
-  const checkedToday = isNewApi ? status?.checked_in_today : status?.checked_in_today
+  const checkedToday = status?.checked_in_today
   if (checkedToday && !records.some(record => record.checkin_date === localDateString())) {
-    records.push({ checkin_date: localDateString(), quota_awarded: quotaFromUsd(rewardAmount) })
+    records.push({
+      checkin_date: localDateString(),
+      quota_awarded: quotaFromUsd(rewardByDate[localDateString()] ?? localRewards[localDateString()] ?? previewRewardAmount),
+    })
   }
-  // 新版 API 使用 rewards 数组（连续签到奖励），旧版使用 min/max_quota
+  // 奖励区间：新版用 rewards 数组（连续签到奖励序列），旧版仅单一值
   const rewards = isNewApi ? (status?.rewards ?? []) : []
-  const minQuota = isNewApi ? (rewards.length > 0 ? quotaFromUsd(rewards[0]) : undefined) : quotaFromUsd(status?.min_quota)
-  const maxQuota = isNewApi ? (rewards.length > 0 ? quotaFromUsd(rewards[rewards.length - 1]) : undefined) : quotaFromUsd(status?.max_quota)
-  const totalDays = isNewApi ? (status?.total_check_in_days ?? records.length) : (status?.check_in_days ?? records.length)
-  const totalQuota = isNewApi ? quotaFromUsd(status?.total_reward) : (quotaFromUsd(rewardAmount) !== undefined ? records.length * (quotaFromUsd(rewardAmount) as number) : undefined)
+  const previewRewardQuota = quotaFromUsd(previewRewardAmount)
+  const minQuota = isNewApi
+    ? (rewards.length > 0 ? quotaFromUsd(rewards[0]) : previewRewardQuota)
+    : (quotaFromUsd(status?.min_quota) ?? previewRewardQuota)
+  const maxQuota = isNewApi
+    ? (rewards.length > 0 ? quotaFromUsd(rewards[rewards.length - 1]) : previewRewardQuota)
+    : (quotaFromUsd(status?.max_quota) ?? previewRewardQuota)
+  // 累计签到天数优先取服务端字段，日历失败时仍可用
+  const totalDays = isNewApi ? (status?.total_check_in_days ?? records.length) : (status?.check_in_days ?? calendarCheckedInDays ?? records.length)
+  // 累计奖励总额：
+  // - 新版优先服务端 total_reward；否则按历史记录的 reward_amount 求和（含本月外历史）
+  // - 旧版按累计天数 × 本地单次奖励估算（records 仅含当月，不可作累计基数）
+  const historyTotalQuota = historyItems.length > 0
+    ? historyItems.reduce((sum, item) => sum + (Number(item?.reward_amount) || 0), 0)
+    : undefined
+  const totalQuota = isNewApi
+    ? (quotaFromUsd(status?.total_reward) ?? (historyTotalQuota !== undefined ? quotaFromUsd(historyTotalQuota) : undefined))
+    : (previewRewardQuota !== undefined ? totalDays * previewRewardQuota : undefined)
   return {
     enabled: status?.enabled ?? true,
     min_quota: minQuota,
     max_quota: maxQuota,
     stats: {
       total_quota: totalQuota,
+      // 累计签到天数取服务端字段；本月签到次数以当月日历记录数为准，避免复用累计值
       total_checkins: totalDays,
-      checkin_count: totalDays,
+      checkin_count: records.length,
       records,
     },
   } as CheckinStatus
@@ -260,8 +302,9 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
       }
       throw makeApiError("站点防护验证未通过，请先用网页登录刷新 Cookie 后再试", { authExpired: false })
     }
-    // 非 JSON 响应通常是触发了验证或登录失效，而非真正的 API 路径错误
-    throw makeApiError(`响应不是 JSON：${raw.slice(0, 60)}`, { authExpired: true })
+    // 非 JSON 响应：附上 HTTP 状态，便于上层识别 404/405；authExpired 仅在非 2xx 时附带
+    const status = Number(response?.status) || 0
+    throw makeApiError(`响应不是 JSON：${raw.slice(0, 60)}`, { status, authExpired: true })
   }
 
   const setCookie = getHeader(response, "set-cookie")

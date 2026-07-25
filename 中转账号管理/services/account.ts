@@ -221,6 +221,17 @@ export function getTodayCheckinPatch(status?: CheckinStatus): Partial<Account> {
   return {}
 }
 
+// 构造本地签到奖励记录 patch：签到响应含 reward_amount 时，按今天日期记入 checkinRewards。
+// 仅用于无签到历史接口的旧版 sub2api 站点补充月历金额；新版有历史接口时不依赖此记录。
+export function getCheckinRewardPatch(account: Account, checkinResult: any): Partial<Account> {
+  const amount = Number(checkinResult?.reward_amount)
+  if (!Number.isFinite(amount) || amount <= 0) return {}
+  const today = localDateString()
+  const existing = account.checkinRewards ?? {}
+  if (existing[today] === amount) return {}
+  return { checkinRewards: { ...existing, [today]: amount } }
+}
+
 // 获取手动签到 patch
 export function getManualTodayCheckinPatch(account: Account, checked: boolean): Partial<Account> {
   const today = localDateString()
@@ -308,6 +319,8 @@ export async function quickCheckinAccount(account: Account) {
   try { self = await fetchSelf(account) } catch {}
   try { status = await fetchCheckinStatus(account) } catch {}
   try { siteStatus = await checkSiteStatus(account) } catch {}
-  patchAccount(account.id, { lastSelf: self, lastCheckin: status, lastSiteStatus: siteStatus, lastError: "", ...getTodayCheckinPatch(status) })
+  // 本地记录本次签到奖励金额（仅旧版 sub2api 无签到历史时用于补充月历金额）
+  const checkinRewardsPatch = getCheckinRewardPatch(account, data)
+  patchAccount(account.id, { lastSelf: self, lastCheckin: status, lastSiteStatus: siteStatus, lastError: "", ...getTodayCheckinPatch(status), ...checkinRewardsPatch })
   return data
 }

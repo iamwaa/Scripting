@@ -46,6 +46,8 @@ export const ERROR_TRANSLATIONS: Array<[RegExp, string]> = [
   [/ip.*(not\s+allowed|not\s+in\s+(the\s+)?(allow|white)list|banned|blocked|restricted|forbidden)|ip.*(限制|不允许|未在.*白名单|白名单|封禁|拉黑)|invalid\s+ip/i, "IP 未在白名单或已被限制"],
   // 限流和配额
   [/too\s+many\s+requests|rate\s+limit(ed|\s+exceeded)?|请求.*频繁|达到(总)?请求数限制/i, "请求过于频繁，请稍后再试"],
+  // 重复签到（当日已签）
+  [/check[-\s]?in.*(already|has\s+been).*(completed|done|checked)|already.*(checked|signed|completed).*(in|today)|today.*(already|has).*(checked|signed)|每日.*已签|今日.*已签|已经.*签到/i, "今日已签到，无需重复签到"],
   [/quota\s+exceeded|额度.*不足|余额不足|insufficient\s+(balance|quota)/i, "账号额度不足"],
   [/daily\s+limit|daily\s+quota/i, "已达到每日请求限制"],
   [/concurrency\s+limit/i, "并发请求超限"],

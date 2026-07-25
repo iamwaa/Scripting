@@ -43,7 +43,7 @@ export function FilesTab({
 
   return (
     <Section
-      header={<Text>当前 HEAD 文件（{files.length}）</Text>}
+      header={<Text>当前 HEAD 文件{files.length > 0 ? `（${files.length}）` : "" }</Text>}
     >
       {loading ? (
         <Text foregroundStyle={COLOR_SECONDARY_LABEL}>加载中…</Text>
