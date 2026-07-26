@@ -50,7 +50,7 @@ export const supportsLiquidGlass = (() => {
 2. 统一通过 `surfaceFill(...)` / `glass*Props` / `plainListChrome` 等版本感知 props，**不要**在业务页手写双套分支。
 3. `buttonBorder` 形状按 iOS 26 处理；旧系统回退为 `capsule`。
 4. 主按钮、语义徽章本就不依赖 Liquid Glass，两端共用同一套 `background` + 描边。
-5. 页面骨架（`PageBackground` + plain List + 负行距 + 阴影描边）两端一致。
+5. 页面骨架（`PageBackground` + plain List + 按场景的行距 + 阴影描边）两端一致。
 
 ### Material 回退映射
 
@@ -70,7 +70,7 @@ export const supportsLiquidGlass = (() => {
 4. **描边 + 阴影成对出现。** 卡片需要细描边 *和* 柔和阴影，才能读出悬浮玻璃感。
 5. **语义双色。** 所有自定义颜色提供 `{ light, dark }`。正文优先系统语义色（`label`、`secondaryLabel`）。
 6. **动效克制。** 数字/状态变化用 `AnimText` / `contentTransition`；避免喧闹动画。
-7. **负行距叠卡。** 玻璃列表行使用 `listRowSpacing={-15}`（`spacing.listRow` / `plainListChrome`），形成紧凑软叠层。
+7. **负行距按场景用。** 矮列表行可用 `listRowSpacing={-15}`（`spacing.listRow` / `plainListChrome`）做轻叠；**高大内容卡**（天气、详情）负行距收到约 `-8`，或 `0` 取消叠卡——**不要**为了叠层硬套 `-15`。
 
 # Tokens（唯一真相源）
 
@@ -106,14 +106,15 @@ export const supportsLiquidGlass = (() => {
 | 导出 | 用途 |
 |------|------|
 | `surfaceFill({ material, shape })` | 版本感知表面（glassEffect 或 Material） |
-| `glassRowProps` | 列表玻璃行 |
+| `glassRowProps` | 矮列表玻璃行（含 `maxHeight: infinity`，勿用于高大卡） |
+| `glassContentCardProps` | 高大内容卡：无 `maxHeight infinity`，避免撑穿导航栏 |
 | `glassControlProps` | 输入框等控件 |
 | `glassSectionProps` | 设置分区容器 |
 | `glassChipProps` | 行内小标签 |
 | `glassElevatedBarProps` | 顶部筛选条等加强 chrome |
 | `glassToastProps` | Toast 面板 |
 | `primaryButtonSurface` | 主操作按钮（不依赖 Liquid Glass） |
-| `plainListChrome` | List 隐藏系统底 + 负行距等 |
+| `plainListChrome` | List 隐藏系统底 + 默认负行距（矮行）；高大卡页可覆盖 `listRowSpacing` |
 | `textColor` | 语义文字色（primary / secondary / onPrimary…） |
 | `badgeTokens` | 语义徽章色板 |
 | `supportsLiquidGlass` | 版本能力探测 |
@@ -222,27 +223,76 @@ import { PageBackground } from "./PageBackground"
 
 ### 硬性要求
 
-- List 使用 `{...plainListChrome}`（等价于 `scrollContentBackground="hidden"`、`listStyle="plain"`、`listRowSeparator="hidden"`、清空 `listRowBackground`、`listRowSpacing={-15}`）
+- List 使用 `{...plainListChrome}`（`scrollContentBackground="hidden"`、`listStyle="plain"`、清行底/分割线；默认 `listRowSpacing={-15}` 适合**矮行**）
+- 高大内容卡页：覆盖 `listRowSpacing={-8}` 或 `0`，行用 `glassContentCardProps`（不要用带 `maxHeight: infinity` 的 `glassRowProps`）
 - 关闭按钮：`systemImage="xmark"` + `Navigation.useDismiss()`
 - 呈现：`await Navigation.present({ element: <Page /> })`，结束后调用 `Script.exit()`
 
-## 玻璃行
+### List 系统底与玻璃双层底（常见陷阱）
 
-复用 tokens 中的 `glassRowProps`（已含版本回退）：
+玻璃要叠在 `PageBackground` 上，不要叠在系统 List 灰/白底上。
+
+| 现象 | 原因 | 做法 |
+|------|------|------|
+| 搜索胶囊外多一层底 | 行有玻璃，List 默认行底未清 | List 用 `plainListChrome`；行上再带 `listRowBackground={<></>}`、`listRowSeparator="hidden"`（`glassRowProps` 已含） |
+| 清除/操作行不透明白底 | `Button` 包住整张玻璃卡，按钮自带底 | **外** `HStack {...glassRowProps}`，**内** `Button buttonStyle="plain"` |
+| Section 下方条带底 | `Section footer` 系统页脚样式 | 说明文案放玻璃卡片内，少用 `footer` |
 
 ```tsx
-// 推荐：直接展开版本感知 props
+// 可点玻璃行：卡在外，按钮在内
+<HStack {...glassRowProps}>
+  <Button action={onClear} buttonStyle="plain">
+    <HStack spacing={10} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+      {/* 图标 + 文案 */}
+    </HStack>
+  </Button>
+</HStack>
+```
+
+## 玻璃行
+
+复用 tokens 中的 `glassRowProps`（矮行；已含版本回退）：
+
+```tsx
+// 矮列表行
 <VStack alignment="leading" spacing={8} {...glassRowProps}>
   {/* 内容 */}
+</VStack>
+
+// 高大内容卡（天气/详情）：去掉 maxHeight infinity
+<VStack spacing={14} {...glassContentCardProps}>
+  {/* 大块内容 */}
 </VStack>
 
 // glassRowProps 内部等价逻辑：
 // iOS 26+ → glassEffect + UIGlass.clear().interactive(true)
 // iOS <26 → background ultraThinMaterial + continuous radius 20
 // 两端都带 shadow.card、隐藏 listRow 分割线
+// glassRowProps 另含 maxHeight: infinity —— 仅适合矮行
 ```
 
 可选：若有主题主色（如图标主色），可用 `background={<AccentBackground color={...} />}` 做轻微着色强调；圆角仍保持 `20`，并保留明暗外轮廓描边。
+
+### 高大卡与负行距（常见陷阱）
+
+| 现象 | 原因 | 做法 |
+|------|------|------|
+| 大卡叠穿导航栏 | `glassRowProps.maxHeight: infinity` 把 List 行撑高，再叠 `-15` 负行距 | 用 `glassContentCardProps`；List 上 `listRowSpacing={-8}` 或 `0` |
+| 空态/chips 写了居中仍偏左 | `{...glassRowProps}` 的 `frame.alignment: "leading"` 后写覆盖了居中 | 展开后再设 `frame={{ maxWidth: "infinity", alignment: "center" }}`，文案可加 `multilineTextAlignment="center"` |
+
+```tsx
+// 居中空态：先展开，再覆盖 frame
+<VStack
+  alignment="center"
+  spacing={10}
+  {...glassContentCardProps}
+  frame={{ maxWidth: "infinity", alignment: "center" }}
+>
+  <Text multilineTextAlignment="center">暂无内容</Text>
+</VStack>
+```
+
+**负行距要不要？** 不整条去掉：矮行列表可保留轻叠；高大卡页减弱或取消。以不挡导航、不严重叠穿为准。
 
 ## 表单 / 登录风格页
 
@@ -374,7 +424,10 @@ import { PageBackground } from "./PageBackground"
 - 在 iOS < 26 调用 `UIGlass` / `glassEffect` / `GlassEffectContainer`
 - 默认使用不透明纯白卡片
 - 同一屏混用随意圆角（如 8 / 12 / 24）
-- 在玻璃背后保留系统 grouped List 灰底
+- 在玻璃背后保留系统 grouped List 灰底（未清 `listRowBackground` / 未 `plainListChrome`）
+- 高大内容卡仍用 `glassRowProps.maxHeight: infinity` 或整页死用 `listRowSpacing: -15` 叠穿导航栏
+- 用 `Button` 包住整张玻璃卡导致双层不透明底；应卡在外、`buttonStyle="plain"` 在内
+- 依赖 `Section footer` 做说明却引入系统页脚条带底
 - 只硬编码浅色 hex
 - 在 clear glass / ultraThinMaterial 已足够时，过度使用厚重材质
 
@@ -401,7 +454,7 @@ import { PageBackground } from "./PageBackground"
 
 需要多选 / 排序 / 滑动删除时：
 
-- 在现有玻璃视觉 tokens 上叠加编辑能力（圆角 20、阴影、`listRowSpacing -15`、`PageBackground` 保持不变）
+- 在现有玻璃视觉 tokens 上叠加编辑能力（圆角 20、阴影、行距按矮/高卡场景、`PageBackground` 保持不变）
 - 不要为了视觉效果重写整套编辑管线；仅在用户明确需要编辑行为时再引入
 
 # 相关 skills

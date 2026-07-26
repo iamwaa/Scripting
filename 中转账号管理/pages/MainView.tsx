@@ -2,10 +2,10 @@ import { useState, useEffect, Navigation, NavigationStack, List, Section, Text, 
 import type { Account, AccountSortKey, SortDirection, SelfInfo, CheckinStatus } from "../types"
 import { SITE_STATUS_AUTO_CHECK_INTERVAL } from "../constants"
 import { isSub2ApiAccount, localDateString, now, shouldSkipBatchCheckinByTime } from "../utils/format"
-import { getErrorMessage, showConfirm } from "../utils/error"
+import { getErrorMessage, showConfirm, isAlreadyCheckedInError } from "../utils/error"
 import { loadAccounts, saveAccounts, loadAccountSortPreference, saveAccountSortPreference, patchAccount } from "../services/storage"
 import { checkSiteStatus, fetchSelf, fetchCheckinStatus, doCheckin, openManualCheckinWebView } from "../services/auth"
-import { sortAccounts, getAccountSortTitle, getTodayCheckinPatch, getManualTodayCheckinPatch, getCheckinCount, getCheckinRecords, getTodayCheckinInfo, getOfflineSiteStatus, getCheckinDisabledPatch, deleteAccount, runQuickAccountAction, quickSyncAccount, quickCheckinAccount } from "../services/account"
+import { sortAccounts, getAccountSortTitle, getTodayCheckinPatch, getManualTodayCheckinPatch, getCheckinCount, getCheckinRecords, getTodayCheckinInfo, getOfflineSiteStatus, getCheckinDisabledPatch, getCheckinRewardPatch, deleteAccount, runQuickAccountAction, quickSyncAccount, quickCheckinAccount } from "../services/account"
 import { AccountSummary, AccountRowContent, AccountRowMenu, AccountListHeader, BatchActionButton } from "../components/AccountRow"
 import { AccountDetailView } from "./AccountDetailView"
 import { AddEditView } from "./AddEditView"
@@ -35,6 +35,9 @@ export function MainView() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [busy, setBusy] = useState(false)
   const [busyLabel, setBusyLabel] = useState("")
+  // 批量操作的确定性进度（当前/总数）与正在处理的账号（行内转圈）
+  const [busyProgress, setBusyProgress] = useState({ current: 0, total: 0 })
+  const [busyAccountId, setBusyAccountId] = useState<string | undefined>(undefined)
   const [toastMessage, setToastMessage] = useState("")
   const [showToast, setShowToast] = useState(false)
   const initialSort = loadAccountSortPreference()
@@ -81,6 +84,8 @@ export function MainView() {
       for (let i = 0; i < targetAccounts.length; i++) {
         const account = targetAccounts[i]
         setBusyLabel(`检测连通性中 (${i + 1}/${total})...`)
+        setBusyProgress({ current: i + 1, total })
+        setBusyAccountId(account.id)
         try {
           const status = await checkSiteStatus(account)
           patchAccount(account.id, { lastSiteStatus: status })
@@ -97,6 +102,8 @@ export function MainView() {
       if (canBackground) await BackgroundKeeper.stopKeepAlive()
       setBusy(false)
       setBusyLabel("")
+      setBusyProgress({ current: 0, total: 0 })
+      setBusyAccountId(undefined)
       // 发送通知，点击时不需要打开脚本
       if (targetAccounts.length > 0) {
         await Notification.schedule({
@@ -129,6 +136,8 @@ export function MainView() {
       for (let i = 0; i < allAccounts.length; i++) {
         const account = allAccounts[i]
         setBusyLabel(`批量查余额中 (${i + 1}/${total})...`)
+        setBusyProgress({ current: i + 1, total })
+        setBusyAccountId(account.id)
         try {
           const siteStatus = await checkSiteStatus(account)
           patchAccount(account.id, { lastSiteStatus: siteStatus })
@@ -147,6 +156,8 @@ export function MainView() {
       if (canBackground) await BackgroundKeeper.stopKeepAlive()
       setBusy(false)
       setBusyLabel("")
+      setBusyProgress({ current: 0, total: 0 })
+      setBusyAccountId(undefined)
       // 发送通知，点击时不需要打开脚本
       await Notification.schedule({
         title: "批量查余额完成",
@@ -182,6 +193,8 @@ export function MainView() {
       for (const account of allAccounts) {
         processed++
         setBusyLabel(`批量签到中 (${processed}/${total})...`)
+        setBusyProgress({ current: processed, total })
+        setBusyAccountId(account.id)
         if (account.excludeFromBatchCheckin) {
           skipped++
           skippedExcluded++
@@ -210,13 +223,33 @@ export function MainView() {
           } catch (e: any) {
             patchAccount(account.id, { lastSiteStatus: getOfflineSiteStatus(e) })
           }
-          await doCheckin(account)
+          // 服务端提示今日已签时按已签处理：继续刷新状态并本地标记，避免每次批量签到重复尝试并报失败
+          const checkinResult = await doCheckin(account).catch((e: any) => {
+            if (!isAlreadyCheckedInError(e)) throw e
+            return { already_checked: true }
+          })
+          const alreadyChecked = checkinResult?.already_checked === true
           let self: SelfInfo | undefined
           let status: CheckinStatus | undefined
           try { self = await fetchSelf(account) } catch {}
           try { status = await fetchCheckinStatus(account) } catch {}
-          patchAccount(account.id, { lastSelf: self, lastCheckin: status, lastError: "", ...getTodayCheckinPatch(status) })
-          ok++
+          // 仅写入成功获取的字段，避免刷新失败时用 undefined 覆盖已有缓存；
+          // checkinRewards 记录本次真实奖励金额（旧版 sub2api 无历史接口时用于补充月历金额）
+          const patch: Partial<Account> = { lastError: "", ...getTodayCheckinPatch(status), ...getCheckinRewardPatch(account, checkinResult) }
+          if (self) patch.lastSelf = self
+          if (status) patch.lastCheckin = status
+          // 已签但状态刷新失败时用本地记录兜底，保证下次批量签到跳过该账号
+          if (alreadyChecked && !patch.lastTodayCheckinDate) {
+            patch.lastTodayCheckinDate = localDateString()
+            patch.lastTodayCheckin = { checkin_date: localDateString() }
+          }
+          patchAccount(account.id, patch)
+          if (alreadyChecked) {
+            skipped++
+            skippedSigned++
+          } else {
+            ok++
+          }
         } catch (e: any) {
           const message = getErrorMessage(e)
           patchAccount(account.id, { lastError: message, ...getCheckinDisabledPatch(message) })
@@ -229,6 +262,8 @@ export function MainView() {
       if (canBackground) await BackgroundKeeper.stopKeepAlive()
       setBusy(false)
       setBusyLabel("")
+      setBusyProgress({ current: 0, total: 0 })
+      setBusyAccountId(undefined)
       // 构建结果消息
       const skippedParts = [
         skippedExcluded ? `排除 ${skippedExcluded}` : "",
@@ -256,6 +291,7 @@ export function MainView() {
 
   async function quickSync(account: Account) {
     setBusy(true)
+    setBusyAccountId(account.id)
     try {
       await runQuickAccountAction(account, "快捷查询", quickSyncAccount)
       setToastMessage(`“${account.name}”余额信息已更新`)
@@ -264,26 +300,30 @@ export function MainView() {
     } finally {
       reload()
       setBusy(false)
+      setBusyAccountId(undefined)
       setShowToast(true)
     }
   }
 
   async function quickCheckin(account: Account) {
     setBusy(true)
+    setBusyAccountId(account.id)
     try {
-      await runQuickAccountAction(account, "快捷签到", quickCheckinAccount, true)
-      setToastMessage(`“${account.name}”签到成功`)
+      const data = await runQuickAccountAction(account, "快捷签到", quickCheckinAccount, true)
+      setToastMessage(data?.already_checked ? `“${account.name}”今日已签到，无需重复签到` : `“${account.name}”签到成功`)
     } catch (e: any) {
       setToastMessage(`签到失败：${getErrorMessage(e)}`)
     } finally {
       reload()
       setBusy(false)
+      setBusyAccountId(undefined)
       setShowToast(true)
     }
   }
 
   async function quickCheckSiteStatus(account: Account) {
     setBusy(true)
+    setBusyAccountId(account.id)
     try {
       const status = await checkSiteStatus(account)
       patchAccount(account.id, { lastSiteStatus: status })
@@ -296,12 +336,14 @@ export function MainView() {
     } finally {
       reload()
       setBusy(false)
+      setBusyAccountId(undefined)
       setShowToast(true)
     }
   }
 
   async function quickOpenSite(account: Account) {
     setBusy(true)
+    setBusyAccountId(account.id)
     setToastMessage(`正在打开“${account.name}”的签到页面…`)
     setShowToast(true)
     try {
@@ -335,6 +377,7 @@ export function MainView() {
     } finally {
       reload()
       setBusy(false)
+      setBusyAccountId(undefined)
       setShowToast(true)
     }
   }
@@ -405,9 +448,9 @@ export function MainView() {
       <AccountSummary accounts={accounts} />
 
       <Section header={<Text>批量操作</Text>} footer={<Text>如果站点开启 Turnstile/2FA，请使用浏览器登录后的 Cookie。脚本不会绕过验证码。</Text>}>
-        <BatchActionButton title="查询余额" busyTitle={busyLabel} systemImage="arrow.clockwise" active={busy && busyLabel.startsWith("批量查余额")} disabled={busy} action={syncAll} />
-        <BatchActionButton title="签到" busyTitle={busyLabel} systemImage="checkmark.seal.fill" active={busy && busyLabel.startsWith("批量签到")} disabled={busy} action={checkinAll} />
-        <BatchActionButton title="连通性检测" busyTitle={busyLabel} systemImage="network" active={busy && busyLabel.startsWith("检测连通性")} disabled={busy} action={() => checkSiteStatuses(true)} />
+        <BatchActionButton title="查询余额" busyTitle={busyLabel} systemImage="arrow.clockwise" active={busy && busyLabel.startsWith("批量查余额")} disabled={busy} action={syncAll} progress={busyProgress} />
+        <BatchActionButton title="签到" busyTitle={busyLabel} systemImage="checkmark.seal.fill" active={busy && busyLabel.startsWith("批量签到")} disabled={busy} action={checkinAll} progress={busyProgress} />
+        <BatchActionButton title="连通性检测" busyTitle={busyLabel} systemImage="network" active={busy && busyLabel.startsWith("检测连通性")} disabled={busy} action={() => checkSiteStatuses(true)} progress={busyProgress} />
       </Section>
 
       <Section header={<AccountListHeader sortKey={sortKey} sortDirection={sortDirection} onSelectSort={selectSort} />}>
@@ -417,7 +460,7 @@ export function MainView() {
           destination={<AccountDetailView key={`detail-${account.id}`} accountId={account.id} onChanged={reload} />}
           contextMenu={{ menuItems: <AccountRowMenu account={account} onDelete={quickDelete} onQuickSync={quickSync} onQuickCheckin={quickCheckin} onOpenSite={quickOpenSite} onCheckSiteStatus={quickCheckSiteStatus} onToggleManualCheckin={quickToggleManualCheckin} onToggleExclude={quickToggleExclude} disabled={busy} /> }}
         >
-          <AccountRowContent account={account} />
+          <AccountRowContent account={account} busy={busyAccountId === account.id} />
         </NavigationLink>)}
       </Section>
     </List>

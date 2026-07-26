@@ -3,7 +3,7 @@ import type { Account, CheckinStatus } from "../types"
 import { isSub2ApiAccount, fmtQuota, fmtRawQuotaForAccount, localMonthString, getSelfQuotaValue, getSelfUsedQuotaValue, getSelfDisplayName, localDateString, fmtTime, getPlatformText, fmtCheckinAward, isCheckinTimeReached } from "../utils/format"
 import { getErrorMessage, showConfirm } from "../utils/error"
 import { loadAccounts, getSecret } from "../services/storage"
-import { fetchSelf, fetchCheckinStatus, doCheckin, checkSiteStatus, loginAccount, loginByWebView, openManualCheckinWebView } from "../services/auth"
+import { fetchSelf, fetchCheckinStatus, checkSiteStatus, loginAccount, loginByWebView } from "../services/auth"
 import { patchAccount, deleteAccount, getAuthSourceText, getSiteStatusView, getSiteStatusDetail, getTodayCheckinInfo, getTodayCheckinPatch, getCheckinDisabledPatch } from "../services/account"
 import { CheckinCalendar } from "../components/CheckinCalendar"
 import { AddEditView } from "./AddEditView"
@@ -15,6 +15,8 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
   const [account, setAccount] = useState<Account | undefined>(initialAccount)
   const [refreshKey, setRefreshKey] = useState(0)
   const [busy, setBusy] = useState(false)
+  // 当前执行中的操作名，用于进度提示
+  const [busyLabel, setBusyLabel] = useState("")
   const [checkinMonth, setCheckinMonth] = useState(localMonthString())
   const [toastMessage, setToastMessage] = useState("")
   const [showToast, setShowToast] = useState(false)
@@ -45,6 +47,7 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     const latest = target ?? loadAccounts().find(item => item.id === accountId) ?? account
     if (!latest) return
     setBusy(true)
+    setBusyLabel("刷新账号信息中...")
     const patch: Partial<Account> = {}
     // 并行刷新余额、签到状态、站点状态
     const [selfResult, statusResult, siteResult] = await Promise.allSettled([
@@ -103,6 +106,7 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
       return
     }
     setBusy(true)
+    setBusyLabel(label === "签到状态" ? "更新签到状态中..." : `${label}中...`)
     try {
       await task(account)
       patchAccount(account.id, { lastError: "" })
@@ -131,6 +135,7 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
   async function changeCheckinMonth(nextMonth: string) {
     setCheckinMonth(nextMonth)
     setBusy(true)
+    setBusyLabel("加载签到日历...")
     try {
       const latest = loadAccounts().find(item => item.id === accountId) ?? account
       if (!latest) {
@@ -187,6 +192,7 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     if (!ok) return
     const deletedName = account.name
     setBusy(true)
+    setBusyLabel("删除账号...")
     try {
       deleteAccount(account.id)
       onChanged()
@@ -206,6 +212,12 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
   }
 
   const todayCheckin = getTodayCheckinInfo(account)
+  // 奖励范围：min/max 不同才显示区间（新版 sub2api 连签奖励递增；单一奖励站点只显示单值）
+  const minCheckinQuota = account.lastCheckin?.min_quota
+  const maxCheckinQuota = account.lastCheckin?.max_quota
+  const checkinRewardRangeText = minCheckinQuota !== undefined && maxCheckinQuota !== undefined && maxCheckinQuota !== minCheckinQuota
+    ? `${fmtQuota(minCheckinQuota)} ~ ${fmtQuota(maxCheckinQuota)}`
+    : fmtQuota(minCheckinQuota ?? maxCheckinQuota)
 
   return <List
     navigationTitle={account.name}
@@ -226,7 +238,7 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     toast={{ message: toastMessage, isPresented: showToast, onChanged: setShowToast, position: "top" }}
   >
     <Section title="状态">
-      {busy ? <HStack spacing={8}><ProgressView /><Text>处理中...</Text></HStack> : null}
+      {busy ? <HStack spacing={8}><ProgressView /><Text>{busyLabel || "处理中..."}</Text></HStack> : null}
       <Text>平台：{getPlatformText(account)}</Text>
       <Text>站点：{account.baseUrl}</Text>
       <Text>站点状态：{getSiteStatusDetail(account.lastSiteStatus)}</Text>
@@ -274,7 +286,7 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
         return checkinTime && !checkinTimeReached ? `未签到（签到时间 ${checkinTime}）` : "未签到"
       })()}</Text>
       <Text>功能启用：{account.lastCheckin?.enabled === undefined ? "未知" : account.lastCheckin.enabled ? "是" : "否"}</Text>
-      <Text>奖励范围：{isSub2ApiAccount(account) ? fmtQuota(account.lastCheckin?.min_quota) : `${fmtQuota(account.lastCheckin?.min_quota)} ~ ${fmtQuota(account.lastCheckin?.max_quota)}`}</Text>
+      <Text>奖励范围：{checkinRewardRangeText}</Text>
       <CheckinCalendar
         month={checkinMonth}
         status={account.lastCheckin}

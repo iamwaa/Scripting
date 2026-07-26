@@ -9,6 +9,9 @@ declare const Dialog: {
 
 export const CHECKIN_DISABLED_PATTERN = /签到功能未(开启|启用)|签到.*未(开启|启用)|check-?in.*(disabled|not\s+enabled)|sign-?in.*(disabled|not\s+enabled)/i
 
+// 重复签到（当日已签）识别：需同时覆盖服务端英文原文与翻译后的中文
+export const ALREADY_CHECKED_IN_PATTERN = /check[-\s]?in.*(already|has\s+been).*(completed|done|checked)|already.*(checked|signed|completed).*(in|today)|today.*(already|has).*(checked|signed)|每日.*已签|今日.*已签|已经.*签到/i
+
 // 错误消息中文翻译规则（按顺序匹配，先具体后宽泛）
 export const ERROR_TRANSLATIONS: Array<[RegExp, string]> = [
   // API 兼容性
@@ -47,7 +50,7 @@ export const ERROR_TRANSLATIONS: Array<[RegExp, string]> = [
   // 限流和配额
   [/too\s+many\s+requests|rate\s+limit(ed|\s+exceeded)?|请求.*频繁|达到(总)?请求数限制/i, "请求过于频繁，请稍后再试"],
   // 重复签到（当日已签）
-  [/check[-\s]?in.*(already|has\s+been).*(completed|done|checked)|already.*(checked|signed|completed).*(in|today)|today.*(already|has).*(checked|signed)|每日.*已签|今日.*已签|已经.*签到/i, "今日已签到，无需重复签到"],
+  [ALREADY_CHECKED_IN_PATTERN, "今日已签到，无需重复签到"],
   [/quota\s+exceeded|额度.*不足|余额不足|insufficient\s+(balance|quota)/i, "账号额度不足"],
   [/daily\s+limit|daily\s+quota/i, "已达到每日请求限制"],
   [/concurrency\s+limit/i, "并发请求超限"],
@@ -106,6 +109,11 @@ export function translateErrorMessage(message: any) {
   const hit = ERROR_TRANSLATIONS.find(([pattern]) => pattern.test(text))
   if (hit) return hit[1]
   return text
+}
+
+// 判断错误是否为“今日已签到”（服务端拒绝重复签到），供签到链路按已签收敛
+export function isAlreadyCheckedInError(e: any) {
+  return ALREADY_CHECKED_IN_PATTERN.test(String(e?.message ?? e ?? ""))
 }
 
 export function getErrorMessage(e: any) {

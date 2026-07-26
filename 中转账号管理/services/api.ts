@@ -304,7 +304,7 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
     }
     // 非 JSON 响应：附上 HTTP 状态，便于上层识别 404/405；authExpired 仅在非 2xx 时附带
     const status = Number(response?.status) || 0
-    throw makeApiError(`响应不是 JSON：${raw.slice(0, 60)}`, { status, authExpired: true })
+    throw makeApiError(`响应不是 JSON：${raw.slice(0, 60)}`, { status, authExpired: !response.ok })
   }
 
   const setCookie = getHeader(response, "set-cookie")

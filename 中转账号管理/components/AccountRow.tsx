@@ -28,7 +28,7 @@ export function AccountSummary({ accounts }: { accounts: Account[] }) {
 }
 
 // 账户列表行内容
-export function AccountRowContent({ account }: { account: Account }) {
+export function AccountRowContent({ account, busy = false }: { account: Account, busy?: boolean }) {
   const authText = getAuthSourceText(account)
   const siteStatus = getSiteStatusView(account)
   const latencyText = getSiteStatusLatencyText(account.lastSiteStatus)
@@ -43,7 +43,10 @@ export function AccountRowContent({ account }: { account: Account }) {
 
   return <HStack spacing={12}>
     <VStack alignment="center" spacing={2} frame={{ width: 52 }}>
-      <Image systemName={siteStatus.icon} foregroundStyle={siteStatus.color as any} />
+      {/* 该账号正在执行操作时用转圈替代站点图标，提供行内进度反馈 */}
+      {busy
+        ? <HStack alignment="center" frame={{ height: 18 }}><ProgressView /></HStack>
+        : <Image systemName={siteStatus.icon} foregroundStyle={siteStatus.color as any} />}
       <Text font="caption2" foregroundStyle={siteStatus.color as any}>{siteStatus.text}</Text>
       {latencyText ? <Text font="caption2" foregroundStyle={getSiteStatusLatencyColor(account.lastSiteStatus) as any}>{latencyText}</Text> : null}
     </VStack>
@@ -128,10 +131,14 @@ export function AccountListHeader({ sortKey, sortDirection, onSelectSort }: { so
 }
 
 // 批量操作按钮
-export function BatchActionButton({ title, busyTitle, systemImage, active, disabled, action }: { title: string, busyTitle: string, systemImage: string, active: boolean, disabled: boolean, action: () => void }) {
+export function BatchActionButton({ title, busyTitle, systemImage, active, disabled, action, progress }: { title: string, busyTitle: string, systemImage: string, active: boolean, disabled: boolean, action: () => void, progress?: { current: number, total: number } }) {
   if (active) {
     return <Button action={() => {}} disabled={false}>
-      <HStack spacing={8}><ProgressView /><Text>{busyTitle}</Text></HStack>
+      <VStack alignment="leading" spacing={6} frame={{ maxWidth: "infinity" }}>
+        <HStack spacing={8}><ProgressView /><Text>{busyTitle}</Text></HStack>
+        {/* 有总量信息时显示确定性进度条，随处理进度动画推进 */}
+        {progress && progress.total > 0 ? <ProgressView value={progress.current} total={progress.total} /> : null}
+      </VStack>
     </Button>
   }
   const color = disabled ? "systemGray4" : "tintColor"

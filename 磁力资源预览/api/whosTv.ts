@@ -81,7 +81,7 @@ export async function loginWhosAndCaptureCookie(existingCookie = loadWhosCookie(
     await seedWhosCookies(webView, existingCookie);
     await webView.loadURL(WHOS_BASE);
     await webView.present({
-      fullscreen: true,
+      fullscreen: false,
       navigationTitle: "登录 whos.tv",
     });
     const cookies = await webView.getCookies(WHOS_BASE);

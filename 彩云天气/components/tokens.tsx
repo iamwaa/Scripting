@@ -38,10 +38,8 @@ export const spacing = {
   chip: 6,
   /** 标签内文案间距 */
   tight: 4,
-  /** 矮列表行负行距（轻叠）；高大内容卡页请用 contentListRow 或 0 */
+  /** 列表负行距（玻璃卡片重叠视觉） */
   listRow: -15,
-  /** 高大内容卡列表建议行距，减弱叠穿导航栏 */
-  contentListRow: -8,
 } as const
 
 // ── 字号 / 字重 ───────────────────────────────────────
@@ -321,7 +319,7 @@ export function surfaceFill(options: {
 
 // ── 组合 props 片段 ───────────────────────────────────
 
-/** 矮列表玻璃行（自动版本回退）。含 maxHeight infinity，勿用于天气/详情等高大卡 */
+/** 列表玻璃行默认样式（自动版本回退） */
 export const glassRowProps = {
   padding: true as const,
   frame: {
@@ -342,8 +340,8 @@ export const glassRowProps = {
   listRowSeparator: "hidden" as const,
 }
 
-/** 高大内容卡：无 maxHeight infinity，避免 List 行撑穿导航栏 */
-export const glassContentCardProps = {
+// 天气大卡片：不要 maxHeight infinity，避免 List 行被无限撑高、叠到导航栏下
+export const weatherCardProps = {
   padding: 16 as const,
   frame: {
     maxWidth: "infinity" as const,
@@ -360,6 +358,16 @@ export const glassContentCardProps = {
   shadow: shadow.card,
   listRowBackground: <></>,
   listRowSeparator: "hidden" as const,
+}
+
+// 天气页列表：减弱负行距，避免高大卡片严重叠层
+export const weatherListChrome = {
+  scrollContentBackground: "hidden" as const,
+  scrollIndicator: "hidden" as const,
+  listStyle: "plain" as const,
+  listRowSpacing: -8,
+  listRowSeparator: "hidden" as const,
+  listRowBackground: <></>,
 }
 
 /** 胶囊/输入框玻璃控件 */
@@ -473,19 +481,13 @@ export const primaryButtonSurface = {
   shadow: shadow.primaryButton,
 } as const
 
-/** 隐藏系统列表底与分割线；默认负行距适合矮行，高大卡页请覆盖 listRowSpacing */
+/** 隐藏系统列表底与分割线的常用组合 */
 export const plainListChrome = {
   scrollContentBackground: "hidden" as const,
   listStyle: "plain" as const,
   listRowSpacing: spacing.listRow,
   listRowSeparator: "hidden" as const,
   listRowBackground: <></>,
-}
-
-/** 高大内容卡列表壳：行距减弱，减轻叠穿 */
-export const contentListChrome = {
-  ...plainListChrome,
-  listRowSpacing: spacing.contentListRow,
 }
 
 /** 语义文字色 */

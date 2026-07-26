@@ -97,25 +97,18 @@ function normalizeInput(input: string) {
   return input.trim().replace(/^\s+|\s+$/g, "");
 }
 
-function extractSupportedLink(input: string) {
+function extractMagnetLink(input: string) {
   const text = normalizeInput(input);
   if (!text) return "";
 
   const magnet = text.match(/magnet:\?[^\s\u4e00-\u9fff，。；、！？）)】\]]+/i)?.[0];
   if (magnet) return magnet;
 
-  const ed2k = text.match(/ed2k:\/\/[^\s\u4e00-\u9fff，。；、！？）)】\]]+/i)?.[0];
-  if (ed2k) return ed2k;
-
-  const http = text.match(/https?:\/\/[^\s\u4e00-\u9fff，。；、！？）)】\]]+/i)?.[0];
-  if (http) return http;
-
   return text;
 }
 
-function isSupportedLink(input: string) {
-  const text = extractSupportedLink(input).toLowerCase();
-  return text.startsWith("magnet:?") || text.startsWith("ed2k://") || text.startsWith("http://") || text.startsWith("https://");
+function isMagnetLink(input: string) {
+  return extractMagnetLink(input).toLowerCase().startsWith("magnet:?");
 }
 
 function formatBytes(bytes?: number) {
@@ -647,7 +640,7 @@ function EmptyState() {
       >
         <Image systemName="link.badge.plus" resizable frame={{ width: 34, height: 34 }} foregroundStyle={BLUE} />
       </ZStack>
-      <Text font={20} fontWeight="bold">粘贴磁力 / ED2K / 下载链接</Text>
+      <Text font={20} fontWeight="bold">粘贴磁力链接</Text>
       <Text foregroundStyle="secondaryLabel" multilineTextAlignment="center">
         输入链接后点击「查询预览」，获取资源名称、大小、类型和截图信息。
       </Text>
@@ -829,9 +822,12 @@ function SearchResultRow({ item, loading, loadingDetail, onUseMagnet, onShowDeta
 function MagnetSearchPage({
   onSelectMagnet,
   initialKeyword = "",
+  onDismissAfterSelect,
 }: {
   onSelectMagnet: (magnet: string) => void;
   initialKeyword?: string;
+  /** 关闭本页后继续关闭上层（如以图搜片） */
+  onDismissAfterSelect?: () => void;
 }) {
   const dismiss = Navigation.useDismiss();
   const [keyword, setKeyword] = useState(initialKeyword);
@@ -877,6 +873,8 @@ function MagnetSearchPage({
       await Pasteboard.setString(magnet);
       await notify("已填入预览页，并复制到剪贴板");
       dismiss();
+      // 从以图搜片进入时需再关一层，避免停在以图搜片页
+      onDismissAfterSelect?.();
     } catch (error: any) {
       await notify(error?.message ?? String(error), "获取失败");
     } finally {
@@ -1070,7 +1068,7 @@ function AboutPage() {
     {
       icon: "link.circle",
       name: "whatslink.info",
-      desc: "磁力资源预览。粘贴磁力 / ED2K / 下载链接后，获取资源名称、大小、类型与截图。",
+      desc: "磁力资源预览。粘贴磁力链接后，获取资源名称、大小、类型与截图。",
       url: "https://whatslink.info/",
     },
     {
@@ -1157,12 +1155,12 @@ function MainApp() {
 
   useEffect(() => {
     Pasteboard.getString().then((text) => {
-      const pasted = extractSupportedLink(text ?? "");
-      if (pasted && isSupportedLink(pasted)) setInput(pasted);
+      const pasted = extractMagnetLink(text ?? "");
+      if (pasted && isMagnetLink(pasted)) setInput(pasted);
     });
   }, []);
 
-  const currentUrl = queriedUrl || extractSupportedLink(input);
+  const currentUrl = queriedUrl || extractMagnetLink(input);
   const isFav = favorites.some((item) => item.url === currentUrl);
 
   const notify = async (message: string, title = "提示") => {
@@ -1172,16 +1170,16 @@ function MainApp() {
   };
 
   const handlePaste = async () => {
-    const text = extractSupportedLink((await Pasteboard.getString()) ?? "");
+    const text = extractMagnetLink((await Pasteboard.getString()) ?? "");
     if (!text) return notify("剪贴板没有文本内容");
     setInput(text);
   };
 
   const runQuery = async (rawInput: string) => {
     Keyboard.hide();
-    const url = extractSupportedLink(rawInput);
+    const url = extractMagnetLink(rawInput);
     if (!url) return notify("请先输入链接");
-    if (!isSupportedLink(url)) return notify("未识别到 magnet:?、ed2k://、http:// 或 https:// 开头的链接");
+    if (!isMagnetLink(url)) return notify("未识别到 magnet:? 开头的磁力链接");
     if (url !== input) setInput(url);
 
     setLoading(true);
@@ -1377,7 +1375,7 @@ function MainApp() {
                   <NavigationLink
                     destination={
                       <ImageSearchPage
-                        renderMagnetSearch={(code) => (
+                        renderMagnetSearch={(code, closeImageSearch) => (
                           <MagnetSearchPage
                             initialKeyword={code}
                             onSelectMagnet={(magnet) => {
@@ -1385,6 +1383,7 @@ function MainApp() {
                               setInputBoxExpanded(false);
                               void runQuery(magnet);
                             }}
+                            onDismissAfterSelect={closeImageSearch}
                           />
                         )}
                       />
@@ -1407,7 +1406,7 @@ function MainApp() {
                 <CompactInputCard
                   icon="link"
                   title="资源链接"
-                  value={currentUrl || extractSupportedLink(input)}
+                  value={currentUrl || extractMagnetLink(input)}
                   placeholder="点击展开输入框"
                   action={() => setInputBoxExpanded(true)}
                 />

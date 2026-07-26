@@ -1,6 +1,6 @@
 import type { Account, AccountDraft, SelfInfo, SiteStatus, CheckinRecord, CheckinStatus, AccountSortKey, SortDirection, AccountSortPreference } from "../types"
 import { isSub2ApiAccount, getPlatformText, localDateString, getSelfQuotaValue, getCheckinRecordMap, sumCheckinAwards, uid, now, normalizeBaseUrl } from "../utils/format"
-import { getErrorMessage, CHECKIN_DISABLED_PATTERN } from "../utils/error"
+import { getErrorMessage, CHECKIN_DISABLED_PATTERN, isAlreadyCheckedInError } from "../utils/error"
 import { loadAccounts, saveAccounts, setSecret, removeSecret, secretKey, getSecret, patchAccount } from "./storage"
 import { removeAccountSecrets } from "./api"
 import { checkSiteStatus, fetchSelf, fetchCheckinStatus, doCheckin } from "./auth"
@@ -251,8 +251,11 @@ export function getManualTodayCheckinPatch(account: Account, checked: boolean): 
       ...(account.lastCheckin.stats ?? {}),
       records,
       checkin_count: records.length,
-      total_checkins: records.length,
-      total_quota: sumCheckinAwards(records),
+      // new-api 签到统计为当月口径，可用当月记录重算；sub2api 的 total_* 是累计口径，不能用当月值覆盖，保留原值待下次刷新矫正
+      ...(isSub2ApiAccount(account) ? {} : {
+        total_checkins: records.length,
+        total_quota: sumCheckinAwards(records),
+      }),
     },
   } : account.lastCheckin
   return {
@@ -313,7 +316,12 @@ export async function quickCheckinAccount(account: Account) {
     siteStatus = getOfflineSiteStatus(e)
     patchAccount(account.id, { lastSiteStatus: siteStatus })
   }
-  const data = await doCheckin(account)
+  // 服务端提示今日已签时按成功处理：继续刷新状态并本地标记，避免每次签到都重复尝试并报失败
+  const data = await doCheckin(account).catch((e: any) => {
+    if (!isAlreadyCheckedInError(e)) throw e
+    return { already_checked: true }
+  })
+  const alreadyChecked = data?.already_checked === true
   let self: SelfInfo | undefined
   let status: CheckinStatus | undefined
   try { self = await fetchSelf(account) } catch {}
@@ -321,6 +329,16 @@ export async function quickCheckinAccount(account: Account) {
   try { siteStatus = await checkSiteStatus(account) } catch {}
   // 本地记录本次签到奖励金额（仅旧版 sub2api 无签到历史时用于补充月历金额）
   const checkinRewardsPatch = getCheckinRewardPatch(account, data)
-  patchAccount(account.id, { lastSelf: self, lastCheckin: status, lastSiteStatus: siteStatus, lastError: "", ...getTodayCheckinPatch(status), ...checkinRewardsPatch })
+  // 仅写入成功获取的字段，避免刷新失败时用 undefined 覆盖已有缓存
+  const patch: Partial<Account> = { lastError: "", ...getTodayCheckinPatch(status), ...checkinRewardsPatch }
+  if (self) patch.lastSelf = self
+  if (status) patch.lastCheckin = status
+  if (siteStatus) patch.lastSiteStatus = siteStatus
+  // 已签但状态刷新失败时用本地记录兜底，保证下次批量签到跳过该账号
+  if (alreadyChecked && !patch.lastTodayCheckinDate) {
+    patch.lastTodayCheckinDate = localDateString()
+    patch.lastTodayCheckin = { checkin_date: localDateString() }
+  }
+  patchAccount(account.id, patch)
   return data
 }

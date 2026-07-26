@@ -3,6 +3,7 @@ import {
   HStack,
   Image,
   LazyVStack,
+  Navigation,
   NavigationLink,
   ProgressView,
   RoundedRectangle,
@@ -170,8 +171,10 @@ function MatchRow({
 export function ImageSearchPage({
   renderMagnetSearch,
 }: {
-  renderMagnetSearch: (keyword: string) => any;
+  /** keyword + 关闭以图搜片页的回调，供使用磁力后一并返回主页 */
+  renderMagnetSearch: (keyword: string, closeImageSearch: () => void) => any;
 }) {
+  const dismiss = Navigation.useDismiss();
   const [image, setImage] = useState<UIImage | null>(null);
   const [cookie, setCookie] = useState(() => loadWhosCookie());
   const [showLogin, setShowLogin] = useState(false);
@@ -383,7 +386,7 @@ export function ImageSearchPage({
               <MatchRow
                 key={item.id}
                 item={item}
-                magnetDestination={renderMagnetSearch(item.code)}
+                magnetDestination={renderMagnetSearch(item.code, dismiss)}
                 onCopyCode={() => void handleCopyCode(item.code)}
                 onOpenWeb={() => void Safari.present(item.videoUrl || resultUrl || WHOS_BASE, true)}
               />

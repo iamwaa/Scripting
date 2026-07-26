@@ -1,0 +1,17 @@
+{
+  "name": "彩云天气",
+  "icon": "cloud.sun.fill",
+  "color": "rgba(10, 132, 255, 1)",
+  "version": "1.0.0",
+  "runInApp": true,
+  "entry": "index.tsx",
+  "description": "基于彩云天气 API 的本地天气工具：当前位置、地点搜索与收藏。",
+  "localizedNames": {
+    "zh": "彩云天气",
+    "en": "Caiyun Weather"
+  },
+  "localizedDescriptions": {
+    "zh": "基于彩云天气 API 的本地天气工具：当前位置、地点搜索与收藏。",
+    "en": "Caiyun Weather tool with current location, place search, and favorites."
+  }
+}
