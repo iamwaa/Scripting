@@ -205,12 +205,28 @@ export function SearchPage({
     dismiss()
   }
 
-  const toggleFav = (place: Place) => {
+  const toggleFav = async (place: Place) => {
     if (isFavorite(favorites, place)) {
+      // 取消收藏前确认
+      const ok = await Dialog.confirm({
+        title: "取消收藏",
+        message: `确定取消收藏「${placeDisplayName(place)}」吗？`,
+      })
+      if (ok !== true) return
       setFavorites(removeFavorite(favorites, place))
     } else {
       setFavorites(addFavorite(favorites, place))
     }
+  }
+
+  // 收藏列表移除前确认
+  const removeFav = async (place: Place) => {
+    const ok = await Dialog.confirm({
+      title: "取消收藏",
+      message: `确定取消收藏「${placeDisplayName(place)}」吗？`,
+    })
+    if (ok !== true) return
+    setFavorites(removeFavorite(favorites, place))
   }
 
   const editDisplayName = async (place: Place) => {
@@ -236,7 +252,7 @@ export function SearchPage({
           navigationBarTitleDisplayMode="inline"
           toolbar={{
             topBarLeading: (
-              <Button title="" systemImage="xmark" action={dismiss} />
+              <Button title="返回" systemImage="chevron.left" fontWeight="semibold" action={dismiss} />
             ),
           }}
         >
@@ -459,7 +475,7 @@ export function SearchPage({
                   onSelect={() => selectPlace(place)}
                   onEditName={() => editDisplayName(place)}
                   showRemove
-                  onRemove={() => setFavorites(removeFavorite(favorites, place))}
+                  onRemove={() => removeFav(place)}
                 />
               ))
             )}

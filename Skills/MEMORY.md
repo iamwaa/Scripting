@@ -62,7 +62,7 @@
 
 ## FormRow（List 表单文本输入）
 
-List / 设置页里的文本输入默认用 **FormRow**（左标签 + 右输入 + 有内容可清空），不要用 `TextField title="..."` 内置行。搜索胶囊、工具栏搜索等非表单布局除外。
+List / 设置页里的文本输入默认用 **FormRow**（左标签 + 右输入 + 有内容可清空），不要用 `TextField title="..."` 内置行。搜索胶囊、工具栏搜索等非表单布局除外。玻璃登录/表单页的输入见 `liquid-glass-ui` 的 `GlassInput` / `glassControlProps`，与本 FormRow 是两套场景（List 表单 vs 玻璃页），按场景择一。
 
 布局：`HStack` 拉满 → 左 `Text` 固定宽（默认 72）→ 中 `TextField` 或 `SecureField`（用 `label={<Text>{label}</Text>}`，不要再传 `title`）→ 右清空按钮（`xmark.circle.fill` / `tertiaryLabel`，`onChanged("")`）。
 
@@ -111,6 +111,7 @@ export function FormRow({
 
 Scripting 页面脚本中的原生对话框，采用运行时注入的全局 `Dialog` 命名空间：`Dialog.alert(...)`、`Dialog.confirm(...)`、`Dialog.prompt(...)`、`Dialog.actionSheet(...)`。不要改写为独立的全局 `alert/confirm/prompt/actionSheet`，也不要从 `"scripting"` 导入 `Dialog`；当前 SDK 类型可能未导出该运行时命名空间。类型检查缺少声明时，可在项目中按实际使用范围添加 `declare const Dialog: ...`（旧项目也可暂用 `any`），但调用仍必须保留 `Dialog.` 前缀。
 
+- `Dialog.alert` / `Dialog.confirm` / `Dialog.prompt` / `Dialog.actionSheet` 一律用**对象参数**形式：`confirm({ message, title?, cancelLabel?, confirmLabel? })`、`alert({ message, title?, buttonLabel? })`、`prompt({ title, message?, defaultValue?, placeholder?, obscureText? })`。**不要**用位置参数 `confirm(message, title)`——第二个参数不会被当成标题，会导致标题空白。
 - `Dialog.confirm` 返回 `Promise<boolean>`；只有严格为 `true` 才执行确认操作。
 - `Dialog.prompt` 返回输入字符串或 `null`；必须先判断 `result == null` 处理取消，空字符串是否有效由业务自行决定。
 - `Dialog.actionSheet` 返回所选 `actions` 的从 `0` 开始索引，取消返回 `null`。必须按数组实际顺序判断，不要凭按钮文案或经验猜测。

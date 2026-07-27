@@ -38,28 +38,26 @@ export const spacing = {
   chip: 6,
   /** 标签内文案间距 */
   tight: 4,
-  /** 矮列表行负行距（轻叠）；高大内容卡页请用 contentListRow 或 0 */
-  listRow: -15,
-  /** 高大内容卡列表建议行距，减弱叠穿导航栏 */
-  contentListRow: -8,
+  /** 玻璃卡片列表行距（正向间距，卡片独立、不重叠） */
+  listRow: 10,
 } as const
 
 // ── 字号 / 字重 ───────────────────────────────────────
 export const typography = {
-  /** 页面主标题 title2 bold */
-  pageTitle: { font: "title2" as const, fontWeight: "bold" as const },
-  /** 空态标题 title semibold */
-  sectionTitle: { font: "title" as const, fontWeight: "semibold" as const },
-  /** 行标题 body semibold */
-  appName: { font: "body" as const, fontWeight: "semibold" as const },
-  body: { font: "body" as const, fontWeight: "regular" as const },
-  callout: { font: "callout" as const },
-  /** 元信息 / 标签（footnote，非系统 caption） */
-  caption: { font: "footnote" as const, fontWeight: "regular" as const },
+  /** 页面主标题 22 bold（≈ title2） */
+  pageTitle: { font: 22 as const, fontWeight: "bold" as const },
+  /** 空态标题 28 semibold（≈ title） */
+  sectionTitle: { font: 28 as const, fontWeight: "semibold" as const },
+  /** 行标题 17 semibold（≈ body） */
+  appName: { font: 17 as const, fontWeight: "semibold" as const },
+  body: { font: 17 as const, fontWeight: "regular" as const },
+  callout: { font: 16 as const },
+  /** 元信息 / 标签 13（≈ footnote，非系统 caption 12） */
+  caption: { font: 13 as const, fontWeight: "regular" as const },
   /** 徽章文案 12 medium */
   meta: { font: 12 as const, fontWeight: "medium" as const },
-  /** 分区头 caption */
-  sectionHeader: { font: "caption" as const },
+  /** 分区头 12（≈ caption） */
+  sectionHeader: { font: 12 as const },
 }
 
 // ── 阴影 ──────────────────────────────────────────────
@@ -473,19 +471,13 @@ export const primaryButtonSurface = {
   shadow: shadow.primaryButton,
 } as const
 
-/** 隐藏系统列表底与分割线；默认负行距适合矮行，高大卡页请覆盖 listRowSpacing */
+/** 隐藏系统列表底与分割线；卡片正向间距，互不重叠 */
 export const plainListChrome = {
   scrollContentBackground: "hidden" as const,
   listStyle: "plain" as const,
   listRowSpacing: spacing.listRow,
   listRowSeparator: "hidden" as const,
   listRowBackground: <></>,
-}
-
-/** 高大内容卡列表壳：行距减弱，减轻叠穿 */
-export const contentListChrome = {
-  ...plainListChrome,
-  listRowSpacing: spacing.contentListRow,
 }
 
 /** 语义文字色 */

@@ -28,7 +28,7 @@ function DemoRow({ title, meta }: { title: string; meta: string }) {
   return (
     <VStack alignment="leading" spacing={8} {...glassRowProps}>
       <HStack spacing={8}>
-        <Text font="body" fontWeight="semibold" foregroundStyle={textColor.primary}>
+        <Text font={17} fontWeight="semibold" foregroundStyle={textColor.primary}>
           {title}
         </Text>
       </HStack>
@@ -95,7 +95,7 @@ export default function LiquidGlassDemoPage() {
 
           <Section>
             <GlassCard>
-              <AnimText font="callout" foregroundStyle={textColor.secondary}>
+              <AnimText font={16} foregroundStyle={textColor.secondary}>
                 这是一块独立玻璃卡片，适合表单、登录历史、设置摘要等非列表行内容。
               </AnimText>
             </GlassCard>

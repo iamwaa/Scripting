@@ -52,7 +52,10 @@ export function SettingsPage({
   }
 
   const onClear = async () => {
-    const ok = await Dialog.confirm("清除后需要重新填写才能查询天气。", "清除 Token")
+    const ok = await Dialog.confirm({
+      title: "清除 Token",
+      message: "清除后需要重新填写才能查询天气。",
+    })
     if (ok !== true) return
     clearApiToken()
     setToken("")
@@ -70,10 +73,10 @@ export function SettingsPage({
           navigationBarTitleDisplayMode="inline"
           toolbar={{
             topBarLeading: (
-              <Button title="" systemImage="xmark" action={dismiss} />
+              <Button title="返回" systemImage="chevron.left" fontWeight="semibold" action={dismiss} />
             ),
             topBarTrailing: (
-              <Button title="保存" action={onSave} />
+              <Button title="保存" fontWeight="semibold" action={onSave} />
             ),
           }}
         >

@@ -17,7 +17,6 @@ import {
   TextField,
   VStack,
   useEffect,
-  useMemo,
   useState,
   type Color,
   type ContentTransition,
@@ -58,20 +57,17 @@ export function AnimText({
     setShow(true)
   }, [])
 
-  return useMemo(
-    () => (
-      <Text
-        {...textProps}
-        contentTransition={anim}
-        animation={{
-          animation: Animation.smooth({ duration: dur }),
-          value: show ? context : "",
-        }}
-      >
-        {show ? context : ""}
-      </Text>
-    ),
-    [show, context, dur]
+  return (
+    <Text
+      {...textProps}
+      contentTransition={anim}
+      animation={{
+        animation: Animation.smooth({ duration: dur }),
+        value: show ? context : "",
+      }}
+    >
+      {show ? context : ""}
+    </Text>
   )
 }
 
@@ -143,7 +139,7 @@ export function GlassTag({
 }) {
   return (
     <Text
-      font="footnote"
+      font={13}
       fontWeight="regular"
       foregroundStyle={foregroundStyle}
       padding={{ horizontal: 8, vertical: 4 }}
@@ -172,15 +168,15 @@ export function GlassInput({
 }) {
   return (
     <VStack alignment="leading" spacing={7}>
-      <AnimText font="callout" foregroundStyle={textColor.secondary}>
+      <AnimText font={16} foregroundStyle={textColor.secondary}>
         {label}
       </AnimText>
       <HStack spacing={8} {...glassControlProps}>
         {secure ? (
-          <SecureField title="" prompt={prompt} value={value} onChanged={onChanged} />
+          <SecureField label={<Text>{""}</Text>} prompt={prompt} value={value} onChanged={onChanged} />
         ) : (
           <TextField
-            title=""
+            label={<Text>{""}</Text>}
             prompt={prompt}
             value={value}
             onChanged={onChanged}
@@ -204,7 +200,7 @@ export function PrimaryGlassButton({
     <Button buttonStyle="plain" action={action}>
       <HStack {...primaryButtonSurface}>
         <AnimText
-          font="body"
+          font={17}
           fontWeight="semibold"
           foregroundStyle={textColor.onPrimary}
           frame={{ maxWidth: "infinity" }}
@@ -237,7 +233,7 @@ export function GlassToast({ type, message }: { type: ToastType; message: string
           foregroundStyle={toastIcon[type].color}
         />
       )}
-      <AnimText font="body" foregroundStyle={textColor.primary} multilineTextAlignment="center">
+      <AnimText font={17} foregroundStyle={textColor.primary} multilineTextAlignment="center">
         {message}
       </AnimText>
     </VStack>

@@ -39,7 +39,7 @@ import {
 } from "../services/favoritesService"
 import { getCurrentPlace } from "../services/locationService"
 import type { Place, WeatherResult } from "../types"
-import { withDisplayName } from "../utils/place"
+import { placeDisplayName, withDisplayName } from "../utils/place"
 import { SearchPage } from "./SearchPage"
 import { SettingsPage } from "./SettingsPage"
 
@@ -164,8 +164,16 @@ export function HomePage() {
 
   const favorited = place ? isFavorite(favorites, place) : false
 
-  const onToggleFavorite = () => {
+  const onToggleFavorite = async () => {
     if (!place) return
+    // 仅取消收藏时确认，添加不打扰
+    if (isFavorite(favorites, place)) {
+      const ok = await Dialog.confirm({
+        title: "取消收藏",
+        message: `确定取消收藏「${placeDisplayName(place)}」吗？`,
+      })
+      if (ok !== true) return
+    }
     setFavorites(toggleFavorite(favorites, place))
   }
 
@@ -205,7 +213,7 @@ export function HomePage() {
           }}
           toolbar={{
             topBarLeading: (
-              <Button title="" systemImage="xmark" action={dismiss} />
+              <Button title="关闭" systemImage="xmark" fontWeight="semibold" tint="red" action={dismiss} />
             ),
             topBarTrailing: (
               <HStack spacing={14}>
@@ -214,13 +222,6 @@ export function HomePage() {
                   systemImage="location.fill"
                   action={() => loadCurrent(true)}
                 />
-                {place ? (
-                  <Button
-                    title=""
-                    systemImage={favorited ? "star.fill" : "star"}
-                    action={onToggleFavorite}
-                  />
-                ) : null}
                 <Button title="" systemImage="magnifyingglass" action={openSearch} />
                 <Button title="" systemImage="gearshape" action={openSettings} />
               </HStack>
@@ -290,6 +291,8 @@ export function HomePage() {
                   realtime={weather.realtime}
                   daily={weather.daily}
                   refreshing={refreshing}
+                  favorited={favorited}
+                  onToggleFavorite={onToggleFavorite}
                   onEditName={
                     !place.isCurrent && favorited ? onEditDisplayName : undefined
                   }

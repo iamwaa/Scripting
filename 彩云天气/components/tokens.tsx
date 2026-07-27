@@ -38,8 +38,8 @@ export const spacing = {
   chip: 6,
   /** 标签内文案间距 */
   tight: 4,
-  /** 列表负行距（玻璃卡片重叠视觉） */
-  listRow: -15,
+  /** 玻璃卡片列表行距（正向间距，卡片独立、不重叠） */
+  listRow: 10,
 } as const
 
 // ── 字号 / 字重 ───────────────────────────────────────
@@ -360,12 +360,12 @@ export const weatherCardProps = {
   listRowSeparator: "hidden" as const,
 }
 
-// 天气页列表：减弱负行距，避免高大卡片严重叠层
+// 天气页列表：卡片正向间距，互不重叠
 export const weatherListChrome = {
   scrollContentBackground: "hidden" as const,
   scrollIndicator: "hidden" as const,
   listStyle: "plain" as const,
-  listRowSpacing: -8,
+  listRowSpacing: 10,
   listRowSeparator: "hidden" as const,
   listRowBackground: <></>,
 }

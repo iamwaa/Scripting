@@ -114,9 +114,13 @@ function ultravioletBadgeStyle(
 export function PlaceHeader({
   place,
   onEditName,
+  favorited,
+  onToggleFavorite,
 }: {
   place: Place
   onEditName?: () => void
+  favorited?: boolean
+  onToggleFavorite?: () => void
 }) {
   const title = placeDisplayName(place)
   const address = placeAddress(place)
@@ -127,18 +131,29 @@ export function PlaceHeader({
         {place.isCurrent ? (
           <Image systemName="location.fill" font={12} foregroundStyle="systemBlue" />
         ) : null}
-        <Text font={14} fontWeight="bold" foregroundStyle={textColor.primary} lineLimit={1}>
+        <Text font="headline" foregroundStyle={textColor.primary} lineLimit={1}>
           {title}
         </Text>
+        {onToggleFavorite ? (
+          <Button action={onToggleFavorite} buttonStyle="plain">
+            <Image
+              systemName={favorited ? "star.fill" : "star"}
+              font={14}
+              foregroundStyle={favorited ? "systemYellow" : textColor.secondary}
+            />
+          </Button>
+        ) : null}
         {onEditName ? (
           <Button action={onEditName} buttonStyle="plain">
-            <Image systemName="pencil" font={13} foregroundStyle={textColor.secondary} />
+            <Image systemName="pencil" font={14} foregroundStyle={textColor.secondary} />
           </Button>
         ) : null}
       </HStack>
-      <Text font={12} foregroundStyle={textColor.secondary} lineLimit={2}>
-        {address}
-      </Text>
+      <HStack spacing={6} alignment="firstTextBaseline">
+        <Text font={12} foregroundStyle={textColor.secondary} lineLimit={2}>
+          {address}
+        </Text>
+      </HStack>
     </VStack>
   )
 }
@@ -149,12 +164,16 @@ export function RealtimeCard({
   daily,
   refreshing = false,
   onEditName,
+  favorited,
+  onToggleFavorite,
 }: {
   place: Place
   realtime: RealtimeWeather
   daily?: DailyWeather
   refreshing?: boolean
   onEditName?: () => void
+  favorited?: boolean
+  onToggleFavorite?: () => void
 }) {
   const aqi = realtime.air_quality?.aqi?.chn
   const aqiDesc = realtime.air_quality?.description?.chn
@@ -167,7 +186,12 @@ export function RealtimeCard({
   return (
     <VStack spacing={14} {...weatherCardProps}>
       <HStack spacing={10} frame={{ maxWidth: "infinity", alignment: "leading" }}>
-        <PlaceHeader place={place} onEditName={onEditName} />
+        <PlaceHeader
+          place={place}
+          onEditName={onEditName}
+          favorited={favorited}
+          onToggleFavorite={onToggleFavorite}
+        />
         {refreshing ? <ProgressView progressViewStyle="circular" /> : null}
       </HStack>
 
@@ -353,8 +377,8 @@ function buildRainProbPoints(probability: number[]): RainProbPoint[] {
     // 仅整点位给语义标签；其余保留唯一时间串，保证折线连续且类别轴不塌陷
     let label: string
     if (index === 0) label = "现在"
-    else if (index === 4) label = "一小时"
-    else if (index === 8) label = "两小时"
+    else if (index === 4) label = "1 小时"
+    else if (index === 8) label = "2 小时"
     else
       label = `${String(moment.getHours()).padStart(2, "0")}:${String(moment.getMinutes()).padStart(2, "0")}`
     return { label, value }
@@ -384,12 +408,11 @@ export function RainProbabilitySection({
   return (
     <VStack alignment="leading" spacing={12} {...weatherCardProps}>
       <HStack spacing={6}>
-        <Image systemName="umbrella.fill" font={15} foregroundStyle="systemBlue" />
         <Text font="headline" foregroundStyle={textColor.primary}>
           未来两小时降水概率
         </Text>
       </HStack>
-      <Text font="footnote" foregroundStyle={textColor.secondary}>
+      <Text font={14} foregroundStyle={textColor.secondary}>
         {raining ? "当前有降水" : "预计即将降水"}，峰值概率 {peak}%
       </Text>
       <VStack spacing={4}>
@@ -433,7 +456,7 @@ export function RainProbabilitySection({
           />
         </Chart>
         {/* 自绘 x 轴标签：Y 轴在左侧，标签行 leading 留白对齐绘图区起点，三段占满剩余宽度 */}
-        <HStack padding={{ leading: 30 }} frame={{ maxWidth: "infinity" }}>
+        <HStack padding={{ leading: 50 }} frame={{ maxWidth: "infinity" }}>
           <Text
             font="caption"
             foregroundStyle={textColor.tertiary}
@@ -446,14 +469,14 @@ export function RainProbabilitySection({
             foregroundStyle={textColor.tertiary}
             frame={{ maxWidth: "infinity", alignment: "center" }}
           >
-            一小时
+            1 小时
           </Text>
           <Text
             font="caption"
             foregroundStyle={textColor.tertiary}
             frame={{ maxWidth: "infinity", alignment: "trailing" }}
           >
-            两小时
+            2 小时
           </Text>
         </HStack>
       </VStack>
@@ -482,7 +505,7 @@ export function HourlySection({ hourly }: { hourly?: HourlyWeather }) {
       </Text>
       {/* 概括单独占一行，避免和标题挤在一起 */}
       {hourly.description ? (
-        <Text font="callout" foregroundStyle={textColor.secondary} lineLimit={3}>
+        <Text font={14} foregroundStyle={textColor.secondary} lineLimit={3}>
           {hourly.description}
         </Text>
       ) : null}
@@ -606,6 +629,7 @@ export function DailySection({ daily }: { daily?: DailyWeather }) {
               font={18}
               symbolRenderingMode="multicolor"
               frame={{ width: 24, alignment: "center" }}
+              padding={{ leading: 12 }}
             />
             <Text
               font={16}
@@ -619,7 +643,7 @@ export function DailySection({ daily }: { daily?: DailyWeather }) {
               font="callout"
               foregroundStyle={textColor.tertiary}
               lineLimit={1}
-              frame={{ width: 70, alignment: "trailing" }}
+              frame={{ width: 58, alignment: "trailing" }}
             >
               {formatTemp(temp.min, "")}°
             </Text>
@@ -657,7 +681,7 @@ export function AlertsSection({ result }: { result: WeatherResult }) {
         提醒
       </Text>
       {minutely ? (
-        <Text font="callout" foregroundStyle={textColor.secondary}>
+        <Text font={14} foregroundStyle={textColor.secondary}>
           {minutely}
         </Text>
       ) : null}

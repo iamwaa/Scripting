@@ -70,7 +70,7 @@ export const supportsLiquidGlass = (() => {
 4. **描边 + 阴影成对出现。** 卡片需要细描边 *和* 柔和阴影，才能读出悬浮玻璃感。
 5. **语义双色。** 所有自定义颜色提供 `{ light, dark }`。正文优先系统语义色（`label`、`secondaryLabel`）。
 6. **动效克制。** 数字/状态变化用 `AnimText` / `contentTransition`；避免喧闹动画。
-7. **负行距按场景用。** 矮列表行可用 `listRowSpacing={-15}`（`spacing.listRow` / `plainListChrome`）做轻叠；**高大内容卡**（天气、详情）负行距收到约 `-8`，或 `0` 取消叠卡——**不要**为了叠层硬套 `-15`。
+7. **卡片独立分隔，不重叠。** 列表行距用正向间距（`listRowSpacing={10}`，即 `spacing.listRow` / `plainListChrome`），玻璃卡片之间留出间隙，靠描边与阴影读出悬浮感；**不要**用负行距制造卡片重叠。
 
 # Tokens（唯一真相源）
 
@@ -92,7 +92,7 @@ export const supportsLiquidGlass = (() => {
 | Toast 圆角 | `22` | Toast 面板 |
 | 大图标圆角 | `17` continuous | 约 80pt 图标 |
 | 中图标圆角 | `16` continuous | 约 60pt 图标 |
-| 列表行距 | `-15` | 玻璃卡片叠层 |
+| 列表行距 | `10` | 玻璃卡片间隔（不重叠） |
 | 页面水平边距 | `24` | 表单 / 登录页 |
 | 页面垂直节奏 | `24` | 表单分区堆叠 |
 | 卡片阴影 | `rgba(72,88,120,0.16), r12, y5` | 默认悬浮 |
@@ -114,7 +114,7 @@ export const supportsLiquidGlass = (() => {
 | `glassElevatedBarProps` | 顶部筛选条等加强 chrome |
 | `glassToastProps` | Toast 面板 |
 | `primaryButtonSurface` | 主操作按钮（不依赖 Liquid Glass） |
-| `plainListChrome` | List 隐藏系统底 + 默认负行距（矮行）；高大卡页可覆盖 `listRowSpacing` |
+| `plainListChrome` | List 隐藏系统底 + 卡片正向间距（不重叠） |
 | `textColor` | 语义文字色（primary / secondary / onPrimary…） |
 | `badgeTokens` | 语义徽章色板 |
 | `supportsLiquidGlass` | 版本能力探测 |
@@ -223,8 +223,8 @@ import { PageBackground } from "./PageBackground"
 
 ### 硬性要求
 
-- List 使用 `{...plainListChrome}`（`scrollContentBackground="hidden"`、`listStyle="plain"`、清行底/分割线；默认 `listRowSpacing={-15}` 适合**矮行**）
-- 高大内容卡页：覆盖 `listRowSpacing={-8}` 或 `0`，行用 `glassContentCardProps`（不要用带 `maxHeight: infinity` 的 `glassRowProps`）
+- List 使用 `{...plainListChrome}`（`scrollContentBackground="hidden"`、`listStyle="plain"`、清行底/分割线；`listRowSpacing={10}` 让卡片留出间隙、互不重叠）
+- 高大内容卡页：行用 `glassContentCardProps`（不要用带 `maxHeight: infinity` 的 `glassRowProps`），行距沿用 `plainListChrome` 的正向间距即可
 - 关闭按钮：`systemImage="xmark"` + `Navigation.useDismiss()`
 - 呈现：`await Navigation.present({ element: <Page /> })`，结束后调用 `Script.exit()`
 
@@ -273,11 +273,11 @@ import { PageBackground } from "./PageBackground"
 
 可选：若有主题主色（如图标主色），可用 `background={<AccentBackground color={...} />}` 做轻微着色强调；圆角仍保持 `20`，并保留明暗外轮廓描边。
 
-### 高大卡与负行距（常见陷阱）
+### 高大卡与行距（常见陷阱）
 
 | 现象 | 原因 | 做法 |
 |------|------|------|
-| 大卡叠穿导航栏 | `glassRowProps.maxHeight: infinity` 把 List 行撑高，再叠 `-15` 负行距 | 用 `glassContentCardProps`；List 上 `listRowSpacing={-8}` 或 `0` |
+| 大卡叠穿导航栏 | `glassRowProps.maxHeight: infinity` 把 List 行撑高 | 用 `glassContentCardProps`；行距用 `plainListChrome` 的正向间距 |
 | 空态/chips 写了居中仍偏左 | `{...glassRowProps}` 的 `frame.alignment: "leading"` 后写覆盖了居中 | 展开后再设 `frame={{ maxWidth: "infinity", alignment: "center" }}`，文案可加 `multilineTextAlignment="center"` |
 
 ```tsx
@@ -292,7 +292,7 @@ import { PageBackground } from "./PageBackground"
 </VStack>
 ```
 
-**负行距要不要？** 不整条去掉：矮行列表可保留轻叠；高大卡页减弱或取消。以不挡导航、不严重叠穿为准。
+**行距。** 统一用正向 `listRowSpacing`（约 `10`）让卡片留出间隙、互不重叠；不要用负行距制造重叠或叠穿导航栏。
 
 ## 表单 / 登录风格页
 
@@ -303,7 +303,7 @@ import { PageBackground } from "./PageBackground"
   <PageBackground />
   <ScrollView>
     <VStack spacing={24} padding={{ horizontal: 24, top: 42, bottom: 32 }}>
-      {/* 标题：title2 bold + callout secondaryLabel */}
+      {/* 标题：font={22} bold + font={16} secondaryLabel */}
       {/* GlassInput 字段 */}
       {/* PrimaryGlassButton */}
       {/* OR 分割线 */}
@@ -316,7 +316,7 @@ import { PageBackground } from "./PageBackground"
 ### 输入框配方
 
 - 外层 `HStack` 使用 `glassControlProps`（圆角 18、minHeight 56、高光描边、卡片阴影）
-- 上方标签：`font="callout"`、`foregroundStyle="secondaryLabel"`
+- 上方标签：`font={16}`、`foregroundStyle="secondaryLabel"`
 - `TextField` 使用 `textFieldStyle="plain"`
 
 ### 主按钮配方
@@ -328,14 +328,14 @@ import { PageBackground } from "./PageBackground"
 
 ### OR 分割线
 
-两侧渐变淡出的水平线 + 居中 `footnote` `secondaryLabel` 文案（如 `"或"` / `"OR"`）。颜色用 tokens 的 `fill.divider`。
+两侧渐变淡出的水平线 + 居中 `font={13}` `secondaryLabel` 文案（如 `"或"` / `"OR"`）。颜色用 tokens 的 `fill.divider`。
 
 ## 设置 / 分组配置
 
 配置页同样使用渐变背景 + plain List，但每个分区主体包在玻璃容器中（圆角 20、外轮廓描边、卡片阴影）。分区内部行用简单 padding + `Divider`，不要再给每行单独上玻璃。
 
 ```tsx
-<Section header={<Text font="caption" foregroundStyle="secondaryLabel">通用</Text>}>
+<Section header={<Text font={12} foregroundStyle="secondaryLabel">通用</Text>}>
   <ZStack {...glassSectionProps}>
     <VStack padding={10} spacing={0}>
       {/* 配置项行 */}
@@ -358,11 +358,11 @@ import { PageBackground } from "./PageBackground"
 // iOS <26：thinMaterial + capsule + elevated 阴影
 ```
 
-`GlassTag` = footnote 文案 + 水平 8 / 垂直 4 padding + `glassChipProps`（自动版本回退）。
+`GlassTag` = `font={13}` 文案 + 水平 8 / 垂直 4 padding + `glassChipProps`（自动版本回退）。
 
 ## Toast
 
-居中玻璃面板，圆角 22，minWidth 200，大号 SF Symbol 或 `ProgressView`，body 级文案。优先通过宿主视图的 `toast={toastConfig}` 呈现（Scripting toast API），内容可按 `GlassToast` 构建。
+居中玻璃面板，圆角 22，minWidth 200，大号 SF Symbol 或 `ProgressView`，`font={17}` 文案。优先通过宿主视图的 `toast={toastConfig}` 呈现（Scripting toast API），内容可按 `GlassToast` 构建。
 
 # 动效与反馈
 
@@ -389,16 +389,16 @@ import { PageBackground } from "./PageBackground"
 
 | 角色 | Token |
 |------|-------|
-| 页面主标题 | `title2` + `bold` + `label` |
-| 空态标题 | `title` + `semibold` |
-| 行标题 | `body` + `semibold` |
-| 正文 / 按钮 | `body` |
-| 字段标签 | `callout` + `secondaryLabel` |
-| 元信息 / 标签 | `footnote` |
-| 分区头 | `caption` + `secondaryLabel` |
-| 徽章文案 | `12` + `medium` |
+| 页面主标题 | `font={22}` + `bold` + `label` |
+| 空态标题 | `font={28}` + `semibold` |
+| 行标题 | `font={17}` + `semibold` |
+| 正文 / 按钮 | `font={17}` |
+| 字段标签 | `font={16}` + `secondaryLabel` |
+| 元信息 / 标签 | `font={13}` |
+| 分区头 | `font={12}` + `secondaryLabel` |
+| 徽章文案 | `font={12}` + `medium` |
 
-`tokens.typography` 映射：`pageTitle` / `sectionTitle`（空态 title）/ `appName`（行标题）/ `body` / `callout` / `meta`（徽章 12）/ `sectionHeader`（caption）。`typography.caption` 实际为 `footnote` 元信息，勿与分区头混淆。
+`tokens.typography` 映射：`pageTitle`(22) / `sectionTitle`(28，空态标题) / `appName`(17，行标题) / `body`(17) / `callout`(16) / `caption`(13，元信息) / `meta`(12，徽章) / `sectionHeader`(12，分区头)。字号一律用数字，注释保留 iOS 语义角色便于对照。
 
 # 图标约定
 
@@ -425,7 +425,7 @@ import { PageBackground } from "./PageBackground"
 - 默认使用不透明纯白卡片
 - 同一屏混用随意圆角（如 8 / 12 / 24）
 - 在玻璃背后保留系统 grouped List 灰底（未清 `listRowBackground` / 未 `plainListChrome`）
-- 高大内容卡仍用 `glassRowProps.maxHeight: infinity` 或整页死用 `listRowSpacing: -15` 叠穿导航栏
+- 高大内容卡仍用 `glassRowProps.maxHeight: infinity` 撑高叠穿导航栏；或用负 `listRowSpacing` 制造卡片重叠
 - 用 `Button` 包住整张玻璃卡导致双层不透明底；应卡在外、`buttonStyle="plain"` 在内
 - 依赖 `Section footer` 做说明却引入系统页脚条带底
 - 只硬编码浅色 hex
@@ -454,7 +454,7 @@ import { PageBackground } from "./PageBackground"
 
 需要多选 / 排序 / 滑动删除时：
 
-- 在现有玻璃视觉 tokens 上叠加编辑能力（圆角 20、阴影、行距按矮/高卡场景、`PageBackground` 保持不变）
+- 在现有玻璃视觉 tokens 上叠加编辑能力（圆角 20、阴影、正向行距、`PageBackground` 保持不变）
 - 不要为了视觉效果重写整套编辑管线；仅在用户明确需要编辑行为时再引入
 
 # 相关 skills

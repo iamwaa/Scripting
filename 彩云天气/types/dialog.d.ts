@@ -1,7 +1,12 @@
 // Scripting 运行时注入的原生对话框；类型可能未从 SDK 导出
 declare const Dialog: {
   alert(message: string, title?: string): Promise<void>
-  confirm(message: string, title?: string): Promise<boolean>
+  confirm(options: {
+    message: string
+    title?: string
+    cancelLabel?: string
+    confirmLabel?: string
+  }): Promise<boolean>
   prompt(
     messageOrOptions:
       | string
