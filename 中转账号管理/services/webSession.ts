@@ -3,7 +3,7 @@
 // Sub2API: localStorage.auth_token + localStorage.auth_user（前端 isAuthenticated 要求两者都在）
 import type { Account, SelfInfo } from "../types"
 import { parseCookieHeader } from "../utils/cookie"
-import { getSecret, setSecret, patchAccount } from "./storage"
+import { getSecret, setSecret, patchAccount, getRefreshTokenKey } from "./storage"
 
 // 构造 new-api 前端 localStorage.user 对象
 export function buildNewApiLocalUser(account: Account): Record<string, any> | undefined {
@@ -126,9 +126,12 @@ export function recycleSub2ApiWebSession(
   authToken: string | undefined,
   previousToken: string,
   storageSelf?: SelfInfo,
+  refreshToken?: string,
 ) {
   if (!account.cookieKey) return
   if (authToken && authToken !== previousToken) setSecret(account.cookieKey, authToken)
+  // 网页登录抽到的 refresh_token 一并存下，后续签到用它换新 access_token
+  if (refreshToken) setSecret(getRefreshTokenKey(account), refreshToken)
 
   const patch: Partial<Account> = {}
   if (authToken || storageSelf) {

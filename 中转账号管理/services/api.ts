@@ -4,7 +4,7 @@ import { UA } from "../constants"
 import { normalizeBaseUrl, quotaFromUsd, localDateString, localMonthString } from "../utils/format"
 import { translateErrorMessage } from "../utils/error"
 import { mergeCookies } from "../utils/cookie"
-import { getSecret, removeSecret } from "./storage"
+import { getSecret, setSecret, removeSecret, getRefreshTokenKey } from "./storage"
 import { isWebChallengeResponse, refreshWebChallengeCookies } from "./antiBot"
 
 // 服务端消息中出现这些关键词才认为是登录失效；
@@ -31,6 +31,7 @@ export function removeAccountSecrets(account: Account) {
   if (account.passwordKey) removeSecret(account.passwordKey)
   if (account.cookieKey) removeSecret(account.cookieKey)
   if (account.accessTokenKey) removeSecret(account.accessTokenKey)
+  removeSecret(getRefreshTokenKey(account))
 }
 
 export function unwrapSub2ApiJson<T>(json: any): T {
@@ -41,7 +42,44 @@ export function unwrapSub2ApiJson<T>(json: any): T {
   return json as T
 }
 
-export async function sub2ApiRequest<T = any>(account: Account, method: string, path: string, body?: any, challengeRetried = false): Promise<T> {
+// 用 refresh_token 调 /auth/refresh 换取新的 access_token（不经过登录 Turnstile）
+export async function refreshSub2ApiToken(account: Account): Promise<boolean> {
+  const refreshTokenKey = getRefreshTokenKey(account)
+  const refreshToken = getSecret(refreshTokenKey)
+  if (!refreshToken) return false
+  const baseUrl = normalizeBaseUrl(account.baseUrl)
+  if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) return false
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/auth/refresh`, {
+      method: "POST",
+      headers: {
+        "User-Agent": UA,
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "Origin": baseUrl,
+        "Referer": `${baseUrl}/`,
+      },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+      allowInsecureRequest: baseUrl.startsWith("http://"),
+      timeout: 25,
+    } as any)
+    const raw = await response.text()
+    if (!response.ok) return false
+    let json: any
+    try { json = raw ? JSON.parse(raw) : {} } catch { return false }
+    const data = unwrapSub2ApiJson<any>(json)
+    const newToken = data?.access_token
+    if (!newToken) return false
+    if (account.cookieKey) setSecret(account.cookieKey, newToken)
+    // 部分实现会轮换 refresh_token，一并更新
+    if (data?.refresh_token) setSecret(refreshTokenKey, data.refresh_token)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function sub2ApiRequest<T = any>(account: Account, method: string, path: string, body?: any, challengeRetried = false, refreshRetried = false): Promise<T> {
   const baseUrl = normalizeBaseUrl(account.baseUrl)
   if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
     throw new Error("站点地址必须以 http:// 或 https:// 开头")
@@ -99,6 +137,10 @@ export async function sub2ApiRequest<T = any>(account: Account, method: string, 
     const status = Number(response.status) || 0
     const rawMessage = json?.message || json?.detail || (status ? `HTTP ${status}` : "未知错误")
     const authExpired = status === 401 || AUTH_EXPIRED_MESSAGE_RE.test(rawMessage)
+    // 登录态失效时先用 refresh_token 换新 access_token 再重试一次，避开登录 Turnstile
+    if (authExpired && !refreshRetried && await refreshSub2ApiToken(account)) {
+      return await sub2ApiRequest<T>(account, method, path, body, challengeRetried, true)
+    }
     throw makeApiError(rawMessage, { status, authExpired })
   }
   return unwrapSub2ApiJson<T>(json)

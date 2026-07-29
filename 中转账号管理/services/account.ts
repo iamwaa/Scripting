@@ -79,6 +79,7 @@ export function upsertAccount(draft: AccountDraft) {
   const passwordKey = prev?.passwordKey ?? secretKey(id, "password")
   const cookieKey = prev?.cookieKey ?? secretKey(id, "cookie")
   const accessTokenKey = prev?.accessTokenKey ?? secretKey(id, "accessToken")
+  const refreshTokenKey = prev?.refreshTokenKey ?? secretKey(id, "refreshToken")
 
   const account: Account = {
     ...(prev ?? {} as Account),
@@ -90,6 +91,7 @@ export function upsertAccount(draft: AccountDraft) {
     passwordKey,
     cookieKey,
     accessTokenKey,
+    refreshTokenKey,
     checkinTime: draft.checkinTime.trim() || undefined,
     updatedAt: now(),
   }

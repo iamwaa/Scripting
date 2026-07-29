@@ -152,6 +152,31 @@ export interface BranchInfo {
   current: string | null
 }
 
+/** 分支管理页数据：区分本地分支与仅远端存在的分支 */
+export interface ManagedBranches {
+  current: string | null
+  /** 本地分支短名（含 current） */
+  locals: string[]
+  /** origin 跟踪分支短名（去掉 origin/ 前缀、去掉 HEAD） */
+  remotes: string[]
+  /** 是否存在 origin 远端 */
+  hasRemote: boolean
+}
+
+/** 重命名分支结果：本地一定完成；若旧分支发布过则尝试远端同步（推新分支 + 删远端旧分支） */
+export interface RenameBranchResult {
+  from: string
+  to: string
+  /** 旧分支曾配置的远端名；null 表示纯本地分支，未触发远端同步 */
+  oldRemote: string | null
+  /** 是否已推送新分支到远端 */
+  pushedNewBranch: boolean
+  /** 是否已删除远端旧分支 */
+  deletedOldRemoteBranch: boolean
+  /** 远端同步失败信息（本地 rename 已成功，仅远端步骤失败） */
+  remoteError: string | null
+}
+
 /** Git 操作结果（统一返回结构） */
 export interface GitResult<T = unknown> {
   ok: boolean

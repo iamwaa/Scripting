@@ -6,7 +6,7 @@ import { isSub2ApiAccount, normalizeBaseUrl, quotaFromUsd, localMonthString, loc
 import { translateErrorMessage, getErrorMessage } from "../utils/error"
 import { mergeCookies } from "../utils/cookie"
 import { sha256Hex } from "../utils/crypto"
-import { getSecret, setSecret, removeSecret, loadAccounts, patchAccount } from "./storage"
+import { getSecret, setSecret, removeSecret, loadAccounts, patchAccount, getRefreshTokenKey } from "./storage"
 import { unwrapSub2ApiJson, sub2ApiRequest, fetchSub2ApiSelf, fetchSub2ApiCheckinStatus, doSub2ApiCheckin, apiRequestWithMeta, apiRequest } from "./api"
 import {
   getWebLoginCookie,
@@ -126,6 +126,8 @@ export async function loginSub2ApiAccount(account: Account) {
   const token = data?.access_token
   if (!token) throw new Error("登录成功但未返回 access_token")
   if (account.cookieKey) setSecret(account.cookieKey, token)
+  // 存下 refresh_token，后续签到用它免 Turnstile 换新 access_token
+  if (data?.refresh_token) setSecret(getRefreshTokenKey(account), data.refresh_token)
 
   const self = data?.user ? {
     id: data.user.id,

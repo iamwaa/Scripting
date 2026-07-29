@@ -170,7 +170,14 @@ function WeatherEffects({
 
 // ── 主组件 ────────────────────────────────────────────
 
-export function WeatherBackground({ skycon }: { skycon?: SkyconCode | null }) {
+export function WeatherBackground({
+  skycon,
+  showEffects = true,
+}: {
+  skycon?: SkyconCode | null
+  // 为 false 时只画渐变，不挂天气动画层；用于根层顶带这类无需动效、只求与当前 tab 底色一致的场景
+  showEffects?: boolean
+}) {
   // 未加载：与 PageBackground / SearchPage 完全相同
   if (!skycon) {
     return (
@@ -190,6 +197,17 @@ export function WeatherBackground({ skycon }: { skycon?: SkyconCode | null }) {
     skycon === "WIND" ||
     kind === "rain" ||
     kind === "snow"
+
+  // 静态模式：只画渐变 Rectangle，不挂动画层（根层顶带用，与当前 tab 底色一致且无动效开销）
+  if (!showEffects) {
+    return (
+      <Rectangle
+        fill={backgroundStyle(palette)}
+        ignoresSafeArea={true}
+        allowsHitTesting={false}
+      />
+    )
+  }
 
   // 关键：根节点必须是单层 Rectangle + ignoresSafeArea（与未加载态同构）
   // 效果放 overlay 的 EffectsStage——固定屏尺寸 + clipped，粒子按整屏坐标分布

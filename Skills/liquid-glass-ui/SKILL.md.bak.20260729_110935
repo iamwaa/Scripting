@@ -70,7 +70,7 @@ export const supportsLiquidGlass = (() => {
 4. **描边 + 阴影成对出现。** 卡片需要细描边 *和* 柔和阴影，才能读出悬浮玻璃感。
 5. **语义双色。** 所有自定义颜色提供 `{ light, dark }`。正文优先系统语义色（`label`、`secondaryLabel`）。
 6. **动效克制。** 数字/状态变化用 `AnimText` / `contentTransition`；避免喧闹动画。
-7. **卡片独立分隔，不重叠。** 列表行距让玻璃卡片之间留出间隙、靠描边与阴影读出悬浮感；**不要**用负行距制造卡片重叠或叠穿导航栏。注意区分两种行：原生 inset 行（系统给行 padding）用正向小间距（约 `4–10`）即可；**独立玻璃卡片行**（`listRowBackground: <></>`、每行是 self-contained 玻璃卡）因系统默认行 padding 仍占位，正向间距会偏大，需用**负 `listRowSpacing`（约 `-12 ~ -24`，如 `-15`）抵消系统行 padding** 才能贴近——这是布局结构属性，与 Liquid Glass / Material 无关，换不透明卡片同样需要。只要每张卡有自己的 `listRowBackground: <></>` 且卡片自带内边距，负间距只压缩行距、不会造成卡片重叠。
+7. **卡片独立分隔，不重叠。** 列表行距用正向间距（`listRowSpacing={10}`，即 `spacing.listRow` / `plainListChrome`），玻璃卡片之间留出间隙，靠描边与阴影读出悬浮感；**不要**用负行距制造卡片重叠。
 
 # Tokens（唯一真相源）
 
@@ -292,14 +292,7 @@ import { PageBackground } from "./PageBackground"
 </VStack>
 ```
 
-**行距。** 区分两种行：
-
-| 行类型 | 行距手段 |
-|--------|----------|
-| 原生 inset 行（系统给行 padding、`listRowBackground` 用系统默认） | 正向小间距（约 `4–10`）即可；负值无意义且可能内容贴边 |
-| **独立玻璃卡片行**（`listRowBackground: <></>`、每行是 self-contained 玻璃卡） | 系统默认行 padding 仍占位，正向间距偏大；用**负 `listRowSpacing`（约 `-12 ~ -24`，如 `-15`）抵消系统行 padding** 以压缩行距 |
-
-负间距在此是布局结构属性（抵消系统行 padding），**与 Liquid Glass / Material 无关**，换不透明 Rectangle 卡片同样需要。只要每张卡有自己的 `listRowBackground: <></>` 且卡片自带内边距，负间距只压缩行距、不重叠；仅当卡片无自带内边距、内容贴卡片边缘时，过负的间距才让两张卡的描边/阴影区相接——那才需避免。**禁止**的是用负行距制造卡片重叠或叠穿导航栏，而非压缩独立卡片行距。
+**行距。** 统一用正向 `listRowSpacing`（约 `10`）让卡片留出间隙、互不重叠；不要用负行距制造重叠或叠穿导航栏。
 
 ## 表单 / 登录风格页
 
@@ -432,7 +425,7 @@ import { PageBackground } from "./PageBackground"
 - 默认使用不透明纯白卡片
 - 同一屏混用随意圆角（如 8 / 12 / 24）
 - 在玻璃背后保留系统 grouped List 灰底（未清 `listRowBackground` / 未 `plainListChrome`）
-- 高大内容卡仍用 `glassRowProps.maxHeight: infinity` 撑高叠穿导航栏；或用负 `listRowSpacing` **制造卡片重叠 / 叠穿导航栏**（注意：独立玻璃卡片行用负 `listRowSpacing` 抵消系统行 padding 以压缩行距是允许的，见上文“行距”）
+- 高大内容卡仍用 `glassRowProps.maxHeight: infinity` 撑高叠穿导航栏；或用负 `listRowSpacing` 制造卡片重叠
 - 用 `Button` 包住整张玻璃卡导致双层不透明底；应卡在外、`buttonStyle="plain"` 在内
 - 依赖 `Section footer` 做说明却引入系统页脚条带底
 - 只硬编码浅色 hex

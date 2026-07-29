@@ -3,6 +3,10 @@ import { CAIYUN_API_HOST, FORECAST_DAYS, FORECAST_HOURS } from "../constants"
 import { loadApiToken } from "../services/settingsService"
 import type { WeatherResponse } from "../types"
 
+const WEATHER_CACHE_TTL = 60_000
+const responseCache = new Map<string, { response: WeatherResponse; expiresAt: number }>()
+const inFlightRequests = new Map<string, Promise<WeatherResponse>>()
+
 export type FetchWeatherOptions = {
   longitude: number
   latitude: number
@@ -40,14 +44,33 @@ export async function fetchWeather(options: FetchWeatherOptions): Promise<Weathe
   })
 
   const url = `${CAIYUN_API_HOST}/${apiToken}/${lng},${lat}/weather?${query.toString()}`
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(`天气请求失败（HTTP ${response.status}）`)
-  }
+  const cached = responseCache.get(url)
+  if (cached && cached.expiresAt > Date.now()) return cached.response
 
-  const data = (await response.json()) as WeatherResponse
-  if (!data || data.status !== "ok" || !data.result?.realtime) {
-    throw new Error("天气数据无效，请检查 Token 或稍后重试")
+  const inFlight = inFlightRequests.get(url)
+  if (inFlight) return inFlight
+
+  const request = (async () => {
+    const response = await fetch(url)
+    if (!response.ok) {
+      throw new Error(`天气请求失败（HTTP ${response.status}）`)
+    }
+
+    const data = (await response.json()) as WeatherResponse
+    if (!data || data.status !== "ok" || !data.result?.realtime) {
+      throw new Error("天气数据无效，请检查 Token 或稍后重试")
+    }
+    responseCache.set(url, {
+      response: data,
+      expiresAt: Date.now() + WEATHER_CACHE_TTL,
+    })
+    return data
+  })()
+
+  inFlightRequests.set(url, request)
+  try {
+    return await request
+  } finally {
+    inFlightRequests.delete(url)
   }
-  return data
 }

@@ -28,7 +28,7 @@
 - **P2.18 文件与历史详情**：仓库详情新增“文件”视图，基于当前 `HEAD` 展示已跟踪文件；历史提交行可进入详情页，展示完整 OID、作者、时间、父提交和相对第一父提交的新增/修改/删除文件，并支持单文件行级 Diff（根提交、删除文件、二进制文件均有对应处理）。当前文件与历史变更都通过 `buildFileTree()` 按可展开目录树显示，目录优先并支持任意深度；历史叶子保留 A/M/D 和 Diff 跳转。`getTrackedFiles()` 只将明确缺少 HEAD 视为空仓，其它读取错误继续抛出；测试覆盖 A/M/D、未变化、根提交及多级文件树排序。
 - **代码审查三阶段**（详见 `CODE_REVIEW_PROGRESS.md`）：
   - 第一阶段数据安全、第二阶段可靠性与失败恢复：已完成。
-  - **第三阶段进行中**：M1–M6 已完成（含 stash 可靠性修复、合并到当前、Pull 读 Upstream、远程进度与取消）。下一步可选 M7（3.3/3.4）；结构债在写路径稳定后渐进拆分。
+  - **第三阶段进行中**：M1–M6 已完成（含 stash 可靠性修复、合并到当前、Pull 读 Upstream、远程进度与取消）。M7-1（分支管理：删除/重命名/远端分支）已完成；下一步可选 Tag 管理或仓库健康检查；结构债在写路径稳定后渐进拆分。
   - **M4 Remote/upstream**：`utils/remote.ts` + `setRemoteUrl`/`deleteRemote`/`getBranchUpstream`/`setBranchUpstream`；`pages/RemotesPage.tsx`；详情页「远端管理」入口；测试 `testRemoteHelpers`。
   - **M5 冲突**：`utils/mergeConflict.ts`；pull=fetch+merge(abortOnConflict:false)；状态文件 `gitgit-merge-state.json`；`resolveConflictFile`/`completeMerge`/`abortMerge`；`pages/ConflictsPage.tsx`；测试 `testMergeConflictHelpers`。
   - **列表冲突摘要**：`RepoListStatus.conflictCount/mergeInProgress`；`getRepoListStatus` 读 merge-state；列表右侧优先显示「N 冲突」/「待完成合并」（`formatRepoListMergeSummary`）。
@@ -36,6 +36,7 @@
   - **Pull 读 Upstream**：`resolvePullTarget`；有 `branch.*.remote/merge` 则当前←remote/merge，无则 origin/同名；Push 仍 origin/同名；RemotesPage/详情 footer 已说明。
   - **M6 远程进度与取消**：`utils/remoteProgress.ts`；push/pull/clone 的 `onProgress` + `RemoteCancelToken`（无 AbortSignal，协作式抛 `RemoteOperationCancelled`）；ClonePage/详情同步区进度与取消；clone 取消仍走 `cleanupCloneAttempt`；测试 `testRemoteProgressHelpers`。
   - **历史搜索与分页**（2026-07-22）：`utils/history.ts` 提供查询规范化、提交标题/描述/作者/邮箱/OID 匹配与页切分；`getLogPage()` 接入详情页固定页大小加载；历史 Tab 支持显式搜索、匹配总数、空结果和加载更多。完整仓库提交状态与筛选结果分离，避免搜索无结果误判空仓库；独立测试 `tests/history.test.ts`。
+  - **M7-1 分支管理**（2026-07-27）：纯函数 `utils/branch.ts`（`validateBranchName` 走 check-ref-format 子集、`planDeleteBranch`/`planRenameBranch`/`planDeleteRemoteBranch`）；服务层 `getManagedBranches`（区分本地/仅远端分支）、`deleteBranch`（禁删当前分支 + 清 upstream 配置）、`renameBranch`（本地 `git.renameBranch` + 迁移 upstream 配置；旧分支发布过时自动同步远端：推新分支 `pushInternal` + 删远端旧分支 `deleteRemoteBranchInternal`，同一 mutation 内、远端失败不回滚本地、返回 `RenameBranchResult` 供 UI 提示，需 Token）、`deleteRemoteBranch`（`push({delete:true})` + 清 remote-tracking ref，需 Token），均接 `runRepoMutation`；UI 内联到详情页（**无独立管理页**，`BranchesPage.tsx` 已删）：`getManagedBranches` 拆本地/仅远端，`loadBranches` 存 `remoteOnlyBranches`；分支区 Picker 每项带「· 本地 / · 远端」标签，header 平铺四个操作（从左到右：删除、合并、重命名、新建）：删除为 Menu（`trash`/`COLOR_RED`，列所有非当前分支，远端项标注并走 `deleteRemoteBranch`），重命名为 Button（`pencil`，作用于当前分支），删除复用详情页 `PendingAction`/`runPending` 声明式确认 alert（`deleteLocalBranch`/`deleteRemoteBranch`）；测试 `testBranchHelpers`。
   - **P2.19 Stash 可靠性修复**（UI + 写入/解析 + drop）：
     - **独立于 skill**：运行期只依赖项目内 `vendor/index.umd.min.js`（`gitCore.ts`），不调用 `scripting-skills/isomorphic-git` 脚本；删掉 skill 不影响 gitgit。
     - **UI**：`StashTab` 列表只显示 `entry.message`，不显示 `stash@{N}`；应用/删除提示也用 message。`key` 用 `entry.index`。

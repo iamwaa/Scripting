@@ -65,8 +65,13 @@ export function saveAccountSortPreference(preference: AccountSortPreference) {
   writeJsonFile(SORT_FILE, preference)
 }
 
-export function secretKey(accountId: string, kind: "password" | "cookie" | "accessToken") {
+export function secretKey(accountId: string, kind: "password" | "cookie" | "accessToken" | "refreshToken") {
   return `${SECRET_PREFIX}${accountId}.${kind}`
+}
+
+// 获取账号的刷新令牌存储键：老账号未分配时按确定性规则推导，免于必须重存账号才能用
+export function getRefreshTokenKey(account: Pick<Account, "id" | "refreshTokenKey">) {
+  return account.refreshTokenKey ?? secretKey(account.id, "refreshToken")
 }
 
 export function getSecret(key?: string) {

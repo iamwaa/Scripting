@@ -59,6 +59,7 @@
 - 复用 skill 提供的版本感知 surface props、页面骨架和标准目录，不自行复制双套玻璃分支。
 - 交付前核对 Light/Dark 与 iOS 26+/<26；避免不透明白卡、grouped List 灰底残留、圆角混乱和过度厚重材质。
 - 字号一律用数字（如 `font={16}`），不要用 `title`、`headline`、`body`、`caption` 等语义字号名。
+- 列表行距：独立玻璃卡片行（`listRowBackground: <></>`、每行 self-contained 卡）压缩行距时用**负 `listRowSpacing`** 抵消系统行 padding（详见 `liquid-glass-ui`「行距」）；原生 inset 行仍用正向小间距。这是布局结构属性、与 Liquid Glass/Material 无关。不要因「卡片不重叠」原则字面回避负值——该原则禁的是制造卡片重叠/叠穿导航栏，而非压缩独立卡片行距。
 
 ## FormRow（List 表单文本输入）
 

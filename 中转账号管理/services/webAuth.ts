@@ -122,6 +122,22 @@ export function extractSub2ApiToken(items: Record<string, string>) {
   return ""
 }
 
+// 从 storage 提取 Sub2API refresh_token（用于免 Turnstile 刷新 access_token）
+export function extractSub2ApiRefreshToken(items: Record<string, string>) {
+  for (const key of ["refresh_token", "refreshToken"]) {
+    const value = items[key]
+    if (value) return value
+  }
+  for (const raw of Object.values(items)) {
+    try {
+      const parsed = JSON.parse(raw)
+      const token = parsed?.refresh_token || parsed?.refreshToken || parsed?.state?.refresh_token
+      if (typeof token === "string" && token) return token
+    } catch {}
+  }
+  return ""
+}
+
 // 从 storage 提取用户信息
 export function extractSelfInfoFromStorage(items: Record<string, string>) {
   for (const raw of Object.values(items)) {
@@ -403,9 +419,10 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
     }
     const storageSelf = extractSelfInfoFromStorage(storageItems)
     const authToken = extractSub2ApiToken(storageItems)
+    const refreshToken = extractSub2ApiRefreshToken(storageItems)
     
     if (!cookieHeader && !authToken) throw new Error("未获取到 Cookie 或登录令牌")
-    return { cookieHeader, authToken, storageSelf, pageTitle: capturedTitle }
+    return { cookieHeader, authToken, refreshToken, storageSelf, pageTitle: capturedTitle }
   } finally {
     webView.dispose()
   }
@@ -469,6 +486,7 @@ export async function openManualCheckinWebView(account: Account) {
           extractSub2ApiToken(storageItems),
           credential,
           extractSelfInfoFromStorage(storageItems),
+          extractSub2ApiRefreshToken(storageItems),
         )
       } catch {}
     } finally {
@@ -527,11 +545,11 @@ export async function openManualCheckinWebView(account: Account) {
 // 网页登录完整流程
 export async function loginByWebView(account: Account) {
   if (!account.cookieKey) throw new Error("Cookie 存储键缺失，请重新保存账号")
-  const { cookieHeader, authToken, storageSelf } = await getWebLoginCookie(account.baseUrl)
+  const { cookieHeader, authToken, refreshToken, storageSelf } = await getWebLoginCookie(account.baseUrl)
   if (isSub2ApiAccount(account)) {
     if (!authToken) throw new Error("未获取到 Sub2API auth_token")
     // 网页登录拿到的新令牌覆盖旧凭据；storage 有用户信息时先回写 lastSelf
-    recycleSub2ApiWebSession(account, authToken, "", storageSelf)
+    recycleSub2ApiWebSession(account, authToken, "", storageSelf, refreshToken)
     const tempAccount: Account = { ...account, lastSelf: storageSelf ?? account.lastSelf }
     const self = await fetchSub2ApiSelf(tempAccount)
     patchAccount(account.id, { lastSelf: self, lastError: "", authSource: "web" })

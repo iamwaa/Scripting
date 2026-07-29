@@ -1,7 +1,7 @@
 import type { SkyconCode } from "./types"
 
 // 无内置 Token，必须由用户在设置页自行填写
-export const CAIYUN_API_HOST = "https://api.caiyunapp.com/v2.5"
+export const CAIYUN_API_HOST = "https://api.caiyunapp.com/v2.6"
 
 export const STORAGE_KEYS = {
   favorites: "caiyun_weather_favorites",

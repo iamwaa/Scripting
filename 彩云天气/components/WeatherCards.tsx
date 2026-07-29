@@ -113,12 +113,10 @@ function ultravioletBadgeStyle(
 // 地点信息：标题用显示名（收藏），副标题始终是地址
 export function PlaceHeader({
   place,
-  onEditName,
   favorited,
   onToggleFavorite,
 }: {
   place: Place
-  onEditName?: () => void
   favorited?: boolean
   onToggleFavorite?: () => void
 }) {
@@ -143,11 +141,6 @@ export function PlaceHeader({
             />
           </Button>
         ) : null}
-        {onEditName ? (
-          <Button action={onEditName} buttonStyle="plain">
-            <Image systemName="pencil" font={14} foregroundStyle={textColor.secondary} />
-          </Button>
-        ) : null}
       </HStack>
       <HStack spacing={6} alignment="firstTextBaseline">
         <Text font={12} foregroundStyle={textColor.secondary} lineLimit={2}>
@@ -163,7 +156,6 @@ export function RealtimeCard({
   realtime,
   daily,
   refreshing = false,
-  onEditName,
   favorited,
   onToggleFavorite,
 }: {
@@ -171,7 +163,6 @@ export function RealtimeCard({
   realtime: RealtimeWeather
   daily?: DailyWeather
   refreshing?: boolean
-  onEditName?: () => void
   favorited?: boolean
   onToggleFavorite?: () => void
 }) {
@@ -188,7 +179,6 @@ export function RealtimeCard({
       <HStack spacing={10} frame={{ maxWidth: "infinity", alignment: "leading" }}>
         <PlaceHeader
           place={place}
-          onEditName={onEditName}
           favorited={favorited}
           onToggleFavorite={onToggleFavorite}
         />
@@ -417,7 +407,7 @@ export function RainProbabilitySection({
       </Text>
       <VStack spacing={4}>
         <Chart
-          frame={{ height: 120 }}
+          frame={{ height: 100 }}
           chartYScale={{ from: 0, to: 1 }}
           chartXAxis={{ gridLine: false, tick: false, valueLabel: false }}
           chartYAxis={{

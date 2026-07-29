@@ -284,7 +284,12 @@
 
 ### 3.3 第二梯队（本阶段可选，3.2 完成后）
 
-- [ ] 分支删除、重命名和远端分支管理。
+- [x] 分支删除、重命名和远端分支管理。（M7-1 已完成，2026-07-27）
+  - 纯函数：`utils/branch.ts` 校验分支名（check-ref-format 子集）与删除/重命名/删远端分支规划。
+  - 服务层：`getManagedBranches`（区分本地/仅远端）、`deleteBranch`、`renameBranch`、`deleteRemoteBranch`（push --delete），写操作接入 `runRepoMutation`；删本地分支同步清理 upstream 配置、删远端分支同步清理 remote-tracking ref；重命名旧分支若发布过则自动同步远端（迁移 upstream + 推新分支 + 删远端旧分支，远端失败不回滚本地，`RenameBranchResult` 回传 UI）。
+  - UI（内联详情页，无独立管理页）：分支区 Picker 显示当前分支并切换，每项带「· 本地 / · 远端」标签；header 平铺四个操作（从左到右：删除、合并、重命名、新建），删除为 Menu 列所有非当前分支（远端项标注、走 push --delete），重命名作用于当前分支，删除复用详情页声明式确认 alert。
+  - 测试：`tests/reliability.test.ts` 的 `testBranchHelpers` 覆盖名称校验、删除/重命名/删远端规划。
+  - 备份：`backup/gitgit/gitgit_分支管理删除重命名_20260727_125255`
 - [ ] Tag 创建、查看和删除。
 - [x] 提交详情页，包括文件级变更列表和相对第一父提交的单文件 Diff。（已完成，见第九节）
 - [x] 历史搜索与分页加载。

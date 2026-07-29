@@ -3,8 +3,6 @@ import {
   HStack,
   Image,
   List,
-  Navigation,
-  NavigationStack,
   Section,
   Text,
   VStack,
@@ -34,7 +32,6 @@ export function SettingsPage({
 }: {
   onTokenSaved?: () => void
 }) {
-  const dismiss = Navigation.useDismiss()
   const [token, setToken] = useState(() => loadApiToken())
   const [savedHint, setSavedHint] = useState<string | null>(null)
   const configured = hasApiToken()
@@ -64,30 +61,26 @@ export function SettingsPage({
   }
 
   return (
-    <NavigationStack>
-      <ZStack alignment="top" frame={{ maxWidth: "infinity", maxHeight: "infinity" }}>
-        <PageBackground />
-        <List
-          {...weatherListChrome}
-          navigationTitle="设置"
-          navigationBarTitleDisplayMode="inline"
-          toolbar={{
-            topBarLeading: (
-              <Button title="返回" systemImage="chevron.left" fontWeight="semibold" action={dismiss} />
-            ),
-            topBarTrailing: (
-              <Button title="保存" fontWeight="semibold" action={onSave} />
-            ),
-          }}
+    <ZStack alignment="top" frame={{ maxWidth: "infinity", maxHeight: "infinity" }}>
+      <PageBackground />
+      <List
+        {...weatherListChrome}
+        navigationTitle="设置"
+        navigationBarTitleDisplayMode="inline"
+        toolbar={{
+          topBarTrailing: (
+            <Button title="保存" fontWeight="semibold" action={onSave} />
+          ),
+        }}
+      >
+        {/* 不用 Section footer，避免系统页脚条带背景 */}
+        <Section
+          header={
+            <Text font="subheadline" fontWeight="semibold" foregroundStyle={textColor.secondary}>
+              彩云 Token
+            </Text>
+          }
         >
-          {/* 不用 Section footer，避免系统页脚条带背景 */}
-          <Section
-            header={
-              <Text font="subheadline" fontWeight="semibold" foregroundStyle={textColor.secondary}>
-                彩云 Token
-              </Text>
-            }
-          >
             <VStack alignment="leading" spacing={12} {...weatherCardProps}>
               <FormRow
                 label="Token"
@@ -122,30 +115,29 @@ export function SettingsPage({
                 请在彩云天气开放平台申请 Token 并粘贴到此处。
               </Text>
             </VStack>
-          </Section>
+        </Section>
 
-          {configured ? (
-            <Section>
-              {/* 行本身做玻璃底，避免 Button 包一层产生不透明白底 */}
-              <HStack spacing={10} {...weatherCardProps}>
-                <Button action={onClear} buttonStyle="plain">
-                  <HStack spacing={10} frame={{ maxWidth: "infinity", alignment: "leading" }}>
-                    <Image systemName="trash" font={16} foregroundStyle="systemRed" />
-                    <VStack alignment="leading" spacing={2} frame={{ maxWidth: "infinity", alignment: "leading" }}>
-                      <Text font="body" fontWeight="medium" foregroundStyle={textColor.primary}>
-                        清除 Token
-                      </Text>
-                      <Text font="caption" foregroundStyle={textColor.secondary}>
-                        清除后需重新填写才能查询
-                      </Text>
-                    </VStack>
-                  </HStack>
-                </Button>
-              </HStack>
-            </Section>
-          ) : null}
-        </List>
-      </ZStack>
-    </NavigationStack>
+        {configured ? (
+          <Section>
+            {/* 行本身做玻璃底，避免 Button 包一层产生不透明白底 */}
+            <HStack spacing={10} {...weatherCardProps}>
+              <Button action={onClear} buttonStyle="plain">
+                <HStack spacing={10} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+                  <Image systemName="trash" font={16} foregroundStyle="systemRed" />
+                  <VStack alignment="leading" spacing={2} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+                    <Text font="body" fontWeight="medium" foregroundStyle={textColor.primary}>
+                      清除 Token
+                    </Text>
+                    <Text font="caption" foregroundStyle={textColor.secondary}>
+                      清除后需重新填写才能查询
+                    </Text>
+                  </VStack>
+                </HStack>
+              </Button>
+            </HStack>
+          </Section>
+        ) : null}
+      </List>
+    </ZStack>
   )
 }

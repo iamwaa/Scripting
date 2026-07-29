@@ -1,333 +1,176 @@
 import {
-  Button,
-  ContentUnavailableView,
-  HStack,
-  Image,
-  List,
   Navigation,
   NavigationStack,
   ProgressView,
-  Section,
+  TabView,
   Text,
   VStack,
   ZStack,
   useEffect,
+  useObservable,
   useRef,
   useState,
 } from "scripting"
-import { fetchWeather } from "../api/weather"
-import {
-  AlertsSection,
-  DailySection,
-  HourlySection,
-  RainProbabilitySection,
-  RealtimeCard,
-  shouldShowRainProbability,
-} from "../components/WeatherCards"
-import { LifeIndexSection } from "../components/LifeIndexSection"
 import { WeatherBackground } from "../components/WeatherBackground"
-import { GlassBadge } from "../components/glass"
-import { textColor, weatherCardProps, weatherListChrome } from "../components/tokens"
-import {
-  isFavorite,
-  loadFavorites,
-  loadLastPlace,
-  mergeFavoriteMeta,
-  saveLastPlace,
-  toggleFavorite,
-  updateFavoriteDisplayName,
-} from "../services/favoritesService"
+import { createWeatherToolbar } from "../components/WeatherToolbar"
+import { textColor } from "../components/tokens"
+import { loadFavorites } from "../services/favoritesService"
 import { getCurrentPlace } from "../services/locationService"
-import type { Place, WeatherResult } from "../types"
-import { placeDisplayName, withDisplayName } from "../utils/place"
+import type { Place, SkyconCode } from "../types"
+import { placeDisplayName } from "../utils/place"
 import { SearchPage } from "./SearchPage"
 import { SettingsPage } from "./SettingsPage"
+import { WeatherPage } from "./WeatherPage"
+
+function WeatherTabs({
+  places,
+  selection,
+  onFavoritesChanged,
+  onSkyconLoaded,
+}: {
+  places: Place[]
+  selection: ReturnType<typeof useObservable<number>>
+  onFavoritesChanged: () => void
+  onSkyconLoaded: (placeId: string, skycon: SkyconCode | null) => void
+}) {
+  return (
+    <TabView
+      tabViewStyle="pageAutomaticDisplayIndex"
+      selection={selection}
+      ignoresSafeArea={{ edges: ["bottom"] }}
+    >
+      {places.map((place, index) => (
+        <WeatherPage
+          key={place.id}
+          tag={index}
+          place={place}
+          onFavoritesChanged={onFavoritesChanged}
+          onSkyconLoaded={skycon => onSkyconLoaded(place.id, skycon)}
+        />
+      ))}
+    </TabView>
+  )
+}
 
 export function HomePage() {
   const dismiss = Navigation.useDismiss()
-  const [place, setPlace] = useState<Place | null>(null)
-  const [weather, setWeather] = useState<WeatherResult | null>(null)
+  const [currentPlace, setCurrentPlace] = useState<Place | null>(null)
   const [favorites, setFavorites] = useState<Place[]>(() => loadFavorites())
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  // 始终指向最新地点，避免 present 回调闭包读到旧值
-  const placeRef = useRef<Place | null>(null)
+  const [tabsVersion, setTabsVersion] = useState(0)
+  const [searchPresented, setSearchPresented] = useState(false)
+  const pageSelection = useObservable(0)
+  const returnToCurrentRef = useRef(false)
+  // 各 tab 上报的实时 skycon（按地点 id 记录），供根层绘制当前 tab 的全屏背景
+  const [skyconMap, setSkyconMap] = useState<Record<string, SkyconCode | null>>({})
 
-  const applyPlace = (next: Place) => {
-    // 进入展示前合并收藏中的自定义显示名
-    const merged = mergeFavoriteMeta(loadFavorites(), next)
-    placeRef.current = merged
-    setPlace(merged)
-    saveLastPlace(merged)
-    return merged
+  const handleSkyconLoaded = (placeId: string, skycon: SkyconCode | null) => {
+    setSkyconMap(prev => (prev[placeId] === skycon ? prev : { ...prev, [placeId]: skycon }))
   }
 
-  // asCurrent=true 仅用于定位；搜索/收藏选点必须 isCurrent=false
-  const loadForPlace = async (
-    next: Place,
-    opts?: { silent?: boolean; asCurrent?: boolean }
-  ) => {
-    const target: Place = opts?.asCurrent
-      ? { ...next, isCurrent: true }
-      : { ...next, isCurrent: false }
+  const places: Place[] = (() => {
+    const list = currentPlace ? [currentPlace, ...favorites] : [...favorites]
+    const seen = new Set<string>()
+    return list.filter(place => {
+      if (seen.has(place.id)) return false
+      seen.add(place.id)
+      return true
+    })
+  })()
 
-    if (!opts?.silent) setLoading(true)
-    setRefreshing(true)
-    setError(null)
-    // 先切换地点标题，避免仍显示旧「当前位置」
-    applyPlace(target)
-    try {
-      const response = await fetchWeather({
-        longitude: target.longitude,
-        latitude: target.latitude,
-      })
-      // 请求返回后再次确认地点（防止并发请求写回旧地点）
-      applyPlace(target)
-      setWeather(response.result)
-    } catch (e: any) {
-      setError(e?.message ?? String(e))
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-    }
-  }
-
-  const loadCurrent = async (forceRequest = false) => {
-    if (!forceRequest) setLoading(true)
-    setRefreshing(true)
-    setError(null)
-    try {
-      const current = await getCurrentPlace(forceRequest)
-      await loadForPlace(current, { silent: true, asCurrent: true })
-    } catch (e: any) {
-      // 定位失败时回退上次地点
-      const last = loadLastPlace()
-      if (last) {
-        try {
-          await loadForPlace(last, {
-            silent: true,
-            asCurrent: Boolean(last.isCurrent),
-          })
-          setError(`定位失败，已显示上次地点：${e?.message ?? String(e)}`)
-          return
-        } catch {
-          // ignore
-        }
-      }
-      setError(e?.message ?? String(e))
-      setLoading(false)
-      setRefreshing(false)
-    }
+  const syncFavorites = () => {
+    setFavorites(loadFavorites())
   }
 
   useEffect(() => {
-    loadCurrent(false)
+    ;(async () => {
+      try {
+        setCurrentPlace(await getCurrentPlace(false))
+      } catch {
+        // 定位失败时仍可通过搜索和设置继续使用。
+      }
+    })()
   }, [])
 
-  const openSearch = async () => {
-    await Navigation.present({
-      element: (
-        <SearchPage
-          onSelect={selected => {
-            // 搜索/收藏点选：明确非当前位置
-            loadForPlace(selected, { asCurrent: false })
-          }}
-        />
-      ),
-    })
-    // 关闭后只同步收藏；基于 placeRef 合并显示名，绝不回写旧当前位置
-    const latest = loadFavorites()
-    setFavorites(latest)
-    if (placeRef.current) {
-      applyPlace(placeRef.current)
+  const handleLocate = async () => {
+    pageSelection.setValue(0)
+    setTabsVersion(version => version + 1)
+    if (currentPlace) return
+    try {
+      setCurrentPlace(await getCurrentPlace(true))
+    } catch {
+      // 定位失败时保留当前页面。
     }
   }
 
-  const openSettings = async () => {
-    await Navigation.present({
-      element: (
-        <SettingsPage
-          onTokenSaved={() => {
-            const current = placeRef.current
-            if (current) {
-              loadForPlace(current, {
-                silent: true,
-                asCurrent: Boolean(current.isCurrent),
-              })
-            }
-          }}
-        />
-      ),
-    })
-  }
-
-  const favorited = place ? isFavorite(favorites, place) : false
-
-  const onToggleFavorite = async () => {
-    if (!place) return
-    // 仅取消收藏时确认，添加不打扰
-    if (isFavorite(favorites, place)) {
-      const ok = await Dialog.confirm({
-        title: "取消收藏",
-        message: `确定取消收藏「${placeDisplayName(place)}」吗？`,
-      })
-      if (ok !== true) return
-    }
-    setFavorites(toggleFavorite(favorites, place))
-  }
-
-  // 仅收藏地点可改显示名；当前位置不支持
-  const onEditDisplayName = async () => {
-    if (!place || place.isCurrent || !isFavorite(favorites, place)) return
-    const result = await Dialog.prompt({
-      title: "设置显示名称",
-      message: "仅对收藏地点生效，留空恢复原始地名",
-      defaultValue: place.displayName ?? place.name,
-      placeholder: place.name,
-    })
-    if (result == null) return
-
-    const updated = withDisplayName(place, result)
-    setPlace(updated)
-    saveLastPlace(updated)
-    setFavorites(updateFavoriteDisplayName(favorites, place, result))
-  }
+  const tabsKey = `${places.map(place => place.id).join("|")}__${tabsVersion}`
+  // 根层统一绘制全屏背景与工具栏/标题，跟随当前选中 tab
+  const selectedIndex = Math.max(0, Math.min(pageSelection.value, places.length - 1))
+  const selectedPlace = places.length > 0 ? places[selectedIndex] : null
+  const selectedSkycon = selectedPlace ? skyconMap[selectedPlace.id] ?? null : null
+  const selectedTitle = selectedPlace
+    ? selectedPlace.isCurrent
+      ? "当前位置"
+      : placeDisplayName(selectedPlace)
+    : ""
+  const toolbar = createWeatherToolbar({
+    onDismiss: dismiss,
+    onLocate: handleLocate,
+    onSearch: () => setSearchPresented(true),
+    settingsDestination: <SettingsPage onTokenSaved={() => {}} />,
+  })
 
   return (
     <NavigationStack>
-      {/* 与 SearchPage 相同：背景可扩到安全区外，List 仍走系统安全区 */}
-      <ZStack alignment="top" frame={{ maxWidth: "infinity", maxHeight: "infinity" }}>
-        <WeatherBackground skycon={weather?.realtime?.skycon} />
-        <List
-          {...weatherListChrome}
-          frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
-          navigationTitle="彩云天气"
-          navigationBarTitleDisplayMode="inline"
-          refreshable={async () => {
-            if (place?.isCurrent || !place) {
-              await loadCurrent(true)
-            } else if (place) {
-              await loadForPlace(place, { silent: true })
+      <ZStack
+        alignment="top"
+        frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
+        // 背景 Rectangle 自带 ignoresSafeArea 铺满全屏（含状态栏/导航栏区域）；
+        // ZStack 本身遵守安全区，List 内容才会正常内缩到导航栏下方，不顶进导航栏
+        navigationTitle={selectedTitle}
+        navigationBarTitleDisplayMode="inline"
+        toolbar={toolbar}
+        navigationDestination={{
+          isPresented: searchPresented,
+          onChanged: isPresented => {
+            setSearchPresented(isPresented)
+            if (!isPresented) {
+              syncFavorites()
+              if (returnToCurrentRef.current) {
+                returnToCurrentRef.current = false
+                handleLocate()
+              }
             }
-          }}
-          toolbar={{
-            topBarLeading: (
-              <Button title="关闭" systemImage="xmark" fontWeight="semibold" tint="red" action={dismiss} />
-            ),
-            topBarTrailing: (
-              <HStack spacing={14}>
-                <Button
-                  title=""
-                  systemImage="location.fill"
-                  action={() => loadCurrent(true)}
-                />
-                <Button title="" systemImage="magnifyingglass" action={openSearch} />
-                <Button title="" systemImage="gearshape" action={openSettings} />
-              </HStack>
-            ),
-          }}
-          overlay={
-            loading && !weather ? (
-              <VStack spacing={12}>
-                <ProgressView progressViewStyle="circular" controlSize="large" />
-                <Text foregroundStyle={textColor.secondary}>正在获取天气…</Text>
-              </VStack>
-            ) : !loading && !weather && error ? (
-              <ContentUnavailableView
-                label={
-                  <VStack spacing={8}>
-                    <Image
-                      systemName="exclamationmark.triangle"
-                      font={36}
-                      foregroundStyle="systemOrange"
-                    />
-                    <Text font="title3" fontWeight="semibold">
-                      加载失败
-                    </Text>
-                  </VStack>
-                }
-                description={
-                  <Text font="callout" foregroundStyle={textColor.secondary} multilineTextAlignment="center">
-                    {error}
-                  </Text>
-                }
-                actions={[
-                  <Button title="重试" action={() => loadCurrent(true)} />,
-                  <Button title="设置 Token" action={openSettings} />,
-                ]}
-              />
-            ) : undefined
-          }
-        >
-          {place && weather ? (
-            <>
-              {/* 提醒放最上方 */}
-              {(weather.alert?.content?.length || weather.minutely?.description) ? (
-                <Section>
-                  <AlertsSection result={weather} />
-                </Section>
-              ) : null}
-
-              {error ? (
-                <Section>
-                  <VStack alignment="leading" spacing={6} {...weatherCardProps}>
-                    <GlassBadge style="warning">
-                      <Text font={11} fontWeight="medium">
-                        提示
-                      </Text>
-                    </GlassBadge>
-                    <Text font="caption" foregroundStyle={textColor.secondary}>
-                      {error}
-                    </Text>
-                  </VStack>
-                </Section>
-              ) : null}
-
-              {/* 地点并入天气框；仅收藏地点显示铅笔改名 */}
-              <Section>
-                <RealtimeCard
-                  place={place}
-                  realtime={weather.realtime}
-                  daily={weather.daily}
-                  refreshing={refreshing}
-                  favorited={favorited}
-                  onToggleFavorite={onToggleFavorite}
-                  onEditName={
-                    !place.isCurrent && favorited ? onEditDisplayName : undefined
-                  }
-                />
-              </Section>
-
-              {shouldShowRainProbability(weather.realtime, weather.minutely) ? (
-                <Section>
-                  <RainProbabilitySection
-                    realtime={weather.realtime}
-                    minutely={weather.minutely}
-                  />
-                </Section>
-              ) : null}
-
-              {weather.hourly?.temperature?.length ? (
-                <Section>
-                  <HourlySection hourly={weather.hourly} />
-                </Section>
-              ) : null}
-
-              {weather.daily?.temperature?.length ? (
-                <Section>
-                  <DailySection daily={weather.daily} />
-                </Section>
-              ) : null}
-
-              {(weather.daily?.life_index || weather.realtime?.life_index) ? (
-                <Section>
-                  <LifeIndexSection realtime={weather.realtime} daily={weather.daily} />
-                </Section>
-              ) : null}
-            </>
-          ) : null}
-        </List>
+          },
+          content: (
+            <SearchPage
+              onReturnToCurrent={() => {
+                returnToCurrentRef.current = true
+                setSearchPresented(false)
+              }}
+            />
+          ),
+        }}
+      >
+        {/* 根层唯一全屏背景：Rectangle 自带 ignoresSafeArea 铺满全屏，跟随当前选中 tab 的 skycon
+            渲染动态天气效果。各内嵌分页页透明、不再自绘背景，从根本上消除顶部接缝与色差空隙 */}
+        <WeatherBackground key={selectedSkycon ?? "fallback"} skycon={selectedSkycon} />
+        {places.length > 0 ? (
+          <WeatherTabs
+            key={tabsKey}
+            places={places}
+            selection={pageSelection}
+            onFavoritesChanged={syncFavorites}
+            onSkyconLoaded={handleSkyconLoaded}
+          />
+        ) : (
+          <VStack
+            spacing={12}
+            frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
+          >
+            <ProgressView progressViewStyle="circular" controlSize="large" />
+            <Text foregroundStyle={textColor.secondary}>正在获取位置…</Text>
+          </VStack>
+        )}
       </ZStack>
     </NavigationStack>
   )

@@ -286,6 +286,7 @@ type SurfaceShape =
   | typeof glassShape.toast
   | "buttonBorder"
   | "capsule"
+  | { type: "rect"; cornerRadius: number; style: "continuous" }
 
 /** 版本感知表面：iOS 26+ 用 glassEffect，否则 background Material */
 export function surfaceFill(options: {
@@ -360,15 +361,49 @@ export const weatherCardProps = {
   listRowSeparator: "hidden" as const,
 }
 
-// 天气页列表：卡片正向间距，互不重叠
+// 天气页列表：卡片正向间距（紧凑），互不重叠
 export const weatherListChrome = {
   scrollContentBackground: "hidden" as const,
   scrollIndicator: "hidden" as const,
   listStyle: "plain" as const,
-  listRowSpacing: 10,
+  // 缩小搜索结果行与收藏列表行之间的行间距
+  listRowSpacing: -15,
   listRowSeparator: "hidden" as const,
   listRowBackground: <></>,
 }
+
+/**
+ * 收藏行紧凑玻璃表面：版本感知的单层 listRowBackground Shape。
+ * - iOS 26+：glassEffect liquid glass；低版本：Material 毛玻璃
+ * - 自撑满 RoundedRectangle，避免空容器在拖动快照里塌缩露系统白底
+ * - 圆角略小于卡片行，使紧凑行视觉更贴近原生列表
+ */
+export const favoriteSurfaceFill = surfaceFill({
+  material: fallbackMaterial.card,
+  shape: {
+    type: "rect",
+    cornerRadius: 16,
+    style: "continuous",
+  },
+})
+
+/** 收藏行紧凑布局参数 */
+export const favoriteRowLayout = {
+  /** 行内容水平内缩（玻璃表面左右不贴屏幕边缘；对齐 spacing.pageX） */
+  insetX: 0,
+  /** 行内容垂直内边距（收紧以减小收藏行间视觉间距） */
+  paddingY: 12,
+  /** 行内主间距 */
+  spacing: 12,
+  /** 左侧图标块尺寸 */
+  iconSize: 32,
+  /** 图标块圆角 */
+  iconRadius: 9,
+  /** 图标字号 */
+  iconFont: 14,
+  /** 文字行间距 */
+  textSpacing: 2,
+} as const
 
 /** 胶囊/输入框玻璃控件 */
 export const glassControlProps = {

@@ -38,8 +38,11 @@ import {
   commit,
   getLogPage,
   getTrackedFiles,
-  getBranches,
+  getManagedBranches,
   createBranch,
+  deleteBranch,
+  renameBranch,
+  deleteRemoteBranch,
   checkoutBranch,
   restoreFile,
   push,
@@ -56,6 +59,7 @@ import {
   isRemoteOperationCancelled,
   RemoteCancelToken,
 } from "../services/gitService"
+import { validateBranchName } from "../utils/branch"
 import {
   formatBusyActionLabel,
   yieldForUi,
@@ -88,7 +92,7 @@ import {
 } from "../utils/branchMerge"
 import type { UpstreamConfig } from "../utils/remote"
 import { DEFAULT_BRANCH } from "../constants/git"
-import { COLOR_ACCENT, COLOR_SECONDARY_LABEL } from "../constants/colors"
+import { COLOR_ACCENT, COLOR_RED, COLOR_SECONDARY_LABEL } from "../constants/colors"
 
 /** 分段 Tab 索引：0=改动，1=Stash，2=文件，3=历史 */
 type Tab = 0 | 1 | 2 | 3
@@ -106,6 +110,8 @@ type PendingAction =
   | { type: "softReset"; entry: CommitEntry }
   | { type: "amend" }
   | { type: "dropStash"; entry: StashEntry }
+  | { type: "deleteLocalBranch"; branch: string }
+  | { type: "deleteRemoteBranch"; branch: string }
   | null
 
 export function RepoDetailPage({
@@ -129,6 +135,8 @@ export function RepoDetailPage({
     branches: [],
     current: null,
   })
+  // 仅远端存在（本地无同名）的分支短名，用于分支列表标签与删除路由
+  const [remoteOnlyBranches, setRemoteOnlyBranches] = useState<string[]>([])
   const [commitTitleText, setCommitTitleText] = useState("")
   const [commitDescription, setCommitDescription] = useState("")
   const [loading, setLoading] = useState(true)
@@ -296,8 +304,9 @@ export function RepoDetailPage({
   }
 
   async function loadBranches() {
-    const b = await getBranches(bookmarkName)
-    setBranchInfo(b)
+    const b = await getManagedBranches(bookmarkName)
+    setBranchInfo({ branches: [...b.locals, ...b.remotes], current: b.current })
+    setRemoteOnlyBranches(b.remotes)
     refreshMeta(b.current)
   }
 
@@ -564,6 +573,59 @@ export function RepoDetailPage({
     }
   }
 
+  // 重命名当前分支（当前分支始终是本地分支）
+  async function handleRenameBranch() {
+    const from = branchInfo.current
+    if (!from) {
+      showAlert("gitgit", "当前没有可重命名的分支")
+      return
+    }
+    try {
+      const input = await Dialog.prompt({
+        title: "重命名分支",
+        message: `将「${from}」重命名为新名称`,
+        defaultValue: from,
+        cancelLabel: "取消",
+        confirmLabel: "重命名",
+      })
+      if (input == null) return
+      let to = ""
+      try {
+        to = validateBranchName(input)
+      } catch (e: any) {
+        showAlert("名称无效", String(e?.message || e))
+        return
+      }
+      if (to === from) return
+      const res = await renameBranch(bookmarkName, from, to)
+      await loadAll()
+      if (!res.oldRemote) {
+        showAlert("已重命名", `${from} → ${to}`)
+      } else if (res.remoteError) {
+        showAlert(
+          "本地已重命名，远端同步失败",
+          `${from} → ${to}。${res.pushedNewBranch ? "新分支已推送，但删除远端旧分支失败" : "推送新分支失败"}：${res.remoteError}`
+        )
+      } else {
+        showAlert(
+          "已重命名并同步远端",
+          `${from} → ${to}。已推送新分支并删除远端旧分支「${from}」。`
+        )
+      }
+    } catch (e: any) {
+      showAlert("重命名失败", String(e?.message || e))
+    }
+  }
+
+  // 请求删除分支：本地分支与仅远端分支分别确认
+  function requestDeleteBranch(branch: string) {
+    if (remoteOnlyBranches.includes(branch)) {
+      setPending({ type: "deleteRemoteBranch", branch })
+    } else {
+      setPending({ type: "deleteLocalBranch", branch })
+    }
+  }
+
   async function handleCreateBranch() {
     try {
       const branchName = await Dialog.prompt({
@@ -817,6 +879,18 @@ export function RepoDetailPage({
         }
         return
       }
+      if (action.type === "deleteLocalBranch") {
+        await deleteBranch(bookmarkName, action.branch)
+        await loadAll()
+        showAlert("已删除", `本地分支 ${action.branch} 已删除`)
+        return
+      }
+      if (action.type === "deleteRemoteBranch") {
+        await deleteRemoteBranch(bookmarkName, "origin", action.branch)
+        await loadAll()
+        showAlert("已删除", `远端分支 origin/${action.branch} 已删除`)
+        return
+      }
       if (action.type === "revert") {
         await beginHistoryBusy("正在撤销", "准备创建反向提交…")
         // 先拉最新，避免在落后 HEAD 上生成反向提交（pull 失败则中止）
@@ -863,7 +937,11 @@ export function RepoDetailPage({
               ? "撤销提交失败"
               : action.type === "amend"
                 ? "重编失败"
-                : "回退失败"
+                : action.type === "deleteLocalBranch"
+                  ? "删除分支失败"
+                  : action.type === "deleteRemoteBranch"
+                    ? "删除远端分支失败"
+                    : "回退失败"
       // revert/reset 失败前可能已改工作区或 HEAD，刷新以避免页面状态与实际不一致
       try {
         if (
@@ -916,6 +994,10 @@ export function RepoDetailPage({
   const mergeSources = branchInfo.branches.filter(
     (b) => b !== currentBranch && b !== `origin/${currentBranch}`
   )
+  // 可删除分支：所有非当前分支（当前分支不可删，需先切走）
+  const deletableBranches = branchInfo.branches.filter(
+    (b) => b !== currentBranch
+  )
 
   async function handleRefresh() {
     // 操作进行中点刷新只重读当前 Tab 的核心数据，避免与 loadAll 竟态
@@ -954,6 +1036,14 @@ export function RepoDetailPage({
   } else if (pending?.type === "dropStash") {
     confirmTitle = "删除 Stash？"
     confirmMessage = `将永久删除「${pending.entry.message}」。`
+    confirmButton = "删除"
+  } else if (pending?.type === "deleteLocalBranch") {
+    confirmTitle = `删除本地分支 ${pending.branch}？`
+    confirmMessage = "仅删除本地分支引用，不影响远端。未合并的提交可能丢失。"
+    confirmButton = "删除"
+  } else if (pending?.type === "deleteRemoteBranch") {
+    confirmTitle = `删除远端分支 origin/${pending.branch}？`
+    confirmMessage = "将从 origin 删除该远端分支，操作不可撤销，需已配置 Token。"
     confirmButton = "删除"
   }
 
@@ -1101,6 +1191,37 @@ export function RepoDetailPage({
           <HStack alignment="center" spacing={8}>
             <Text>分支</Text>
             <Spacer />
+            {/* 分支操作从左到右：删除、合并、重命名、新建 */}
+            {deletableBranches.length > 0 ? (
+              <Menu
+                label={
+                  <HStack alignment="center" spacing={4}>
+                    <Image
+                      systemName="trash"
+                      font="caption"
+                      foregroundStyle={COLOR_RED}
+                    />
+                    <Text font="caption" foregroundStyle={COLOR_RED}>
+                      删除
+                    </Text>
+                  </HStack>
+                }
+              >
+                {deletableBranches.map((b) => (
+                  <Button
+                    key={b}
+                    title={
+                      remoteOnlyBranches.includes(b)
+                        ? `origin/${b}（远端）`
+                        : b
+                    }
+                    role="destructive"
+                    action={() => requestDeleteBranch(b)}
+                    disabled={mutating || mergeInProgress}
+                  />
+                ))}
+              </Menu>
+            ) : null}
             {/* 合并在新建左侧；有候选分支用 Menu，否则点按输入 */}
             {mergeSources.length > 0 ? (
               <Menu
@@ -1149,6 +1270,21 @@ export function RepoDetailPage({
               </Button>
             )}
             <Button
+              action={handleRenameBranch}
+              disabled={mutating || mergeInProgress || !hasCommits || !branchInfo.current}
+            >
+              <HStack alignment="center" spacing={4}>
+                <Image
+                  systemName="pencil"
+                  font="caption"
+                  foregroundStyle={COLOR_ACCENT}
+                />
+                <Text font="caption" foregroundStyle={COLOR_ACCENT}>
+                  重命名
+                </Text>
+              </HStack>
+            </Button>
+            <Button
               action={handleCreateBranch}
               disabled={mutating || mergeInProgress}
             >
@@ -1183,7 +1319,7 @@ export function RepoDetailPage({
           >
             {branchInfo.branches.map((b) => (
               <Text key={b} tag={b}>
-                {b}
+                {remoteOnlyBranches.includes(b) ? `${b} · 远端` : `${b} · 本地`}
               </Text>
             ))}
           </Picker>

@@ -57,6 +57,8 @@ export type Account = {
   passwordKey?: string
   cookieKey?: string
   accessTokenKey?: string
+  // Sub2API JWT 刷新令牌存储键：用它调 /auth/refresh 换新 access_token，避开登录时的 Turnstile
+  refreshTokenKey?: string
   checkinTime?: string
   updatedAt: number
   lastSelf?: SelfInfo
@@ -108,6 +110,7 @@ export type ApiResult<T = any> = {
 export type WebLoginCookieResult = {
   cookieHeader: string
   authToken?: string
+  refreshToken?: string
   storageSelf?: SelfInfo
   pageTitle?: string
 }

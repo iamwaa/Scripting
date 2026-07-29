@@ -56,6 +56,15 @@ import {
   validateRemoteUrl,
 } from "../utils/remote"
 import {
+  branchExists,
+  normalizeBranchName,
+  planDeleteBranch,
+  planDeleteRemoteBranch,
+  planRenameBranch,
+  stripRemotePrefix,
+  validateBranchName,
+} from "../utils/branch"
+import {
   buildConflictFilesFromErrorData,
   buildMergeState,
   conflictKindLabel,
@@ -1862,6 +1871,82 @@ async function testForceCheckoutCleansWorktree(): Promise<void> {
   }
 }
 
+function testBranchHelpers(): void {
+  const locals = ["main", "feature/login", "release-1.2"]
+
+  assert(normalizeBranchName(" refs/heads/main ") === "main", "应去掉 refs/heads/ 前缀并 trim")
+  assert(stripRemotePrefix("origin/dev") === "dev", "应去掉 origin/ 前缀")
+  assert(stripRemotePrefix("dev") === "dev", "无前缀时保持原名")
+
+  assert(validateBranchName(" feature/x ") === "feature/x", "合法分支名应 trim")
+  const badNames = ["", "a b", "a~b", "a^b", "a:b", "/a", "a/", ".a", "a.", "a..b", "a//b", "a@{b", "a.lock"]
+  for (const bad of badNames) {
+    let threw = false
+    try {
+      validateBranchName(bad)
+    } catch (_e) {
+      threw = true
+    }
+    assert(threw, "非法分支名应拒绝：" + JSON.stringify(bad))
+  }
+
+  assert(branchExists(locals, "feature/login"), "应能找到已有分支")
+  assert(branchExists(locals, "refs/heads/main"), "应能匠配去前缀后的名")
+  assert(!branchExists(locals, "nope"), "不存在的分支应返回 false")
+
+  const del = planDeleteBranch(locals, "main", "feature/login")
+  assert(del.branch === "feature/login", "删除规划应返回目标分支")
+
+  let sawCurrent = false
+  try {
+    planDeleteBranch(locals, "main", "main")
+  } catch (_e) {
+    sawCurrent = true
+  }
+  assert(sawCurrent, "不能删除当前分支")
+
+  let sawMissingDel = false
+  try {
+    planDeleteBranch(locals, "main", "ghost")
+  } catch (_e) {
+    sawMissingDel = true
+  }
+  assert(sawMissingDel, "删除不存在的分支应失败")
+
+  const ren = planRenameBranch(locals, "main", "release-1.2", "release-1.3")
+  assert(ren.from === "release-1.2" && ren.to === "release-1.3" && ren.isCurrent === false, "重命名规划应返回 from/to 与非当前")
+
+  const renCur = planRenameBranch(locals, "main", "main", "dev")
+  assert(renCur.isCurrent === true, "重命名当前分支应标记 isCurrent")
+
+  let sawSameName = false
+  try {
+    planRenameBranch(locals, "main", "main", "main")
+  } catch (_e) {
+    sawSameName = true
+  }
+  assert(sawSameName, "新名与原名相同应拒绝")
+
+  let sawConflict = false
+  try {
+    planRenameBranch(locals, "main", "release-1.2", "main")
+  } catch (_e) {
+    sawConflict = true
+  }
+  assert(sawConflict, "重命名到已有分支应拒绝")
+
+  const remoteDel = planDeleteRemoteBranch("origin", "origin/feature/x")
+  assert(remoteDel.remote === "origin" && remoteDel.branch === "feature/x" && remoteDel.track === "origin/feature/x", "删除远端分支应去前缀并给出 track")
+
+  let sawBadRemote = false
+  try {
+    planDeleteRemoteBranch("origin", "origin/")
+  } catch (_e) {
+    sawBadRemote = true
+  }
+  assert(sawBadRemote, "空远端分支名应拒绝")
+}
+
 async function main(): Promise<void> {
   testBranchLastPulledAt()
   testHistoryPagination()
@@ -1880,6 +1965,7 @@ async function main(): Promise<void> {
   testRemoteHelpers()
   testMergeConflictHelpers()
   testBranchMergeHelpers()
+  testBranchHelpers()
   await testRemoteProgressHelpers()
   await testForceCheckoutCleansWorktree()
   console.log("✅ reliability tests passed")

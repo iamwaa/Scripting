@@ -80,11 +80,19 @@ import {
   paginateHistory,
   type HistoryPage,
 } from "../utils/history"
+import {
+  planDeleteBranch,
+  planDeleteRemoteBranch,
+  planRenameBranch,
+  validateBranchName,
+} from "../utils/branch"
 import type {
   FileChange,
   FileChangeStatus,
   CommitEntry,
   BranchInfo,
+  ManagedBranches,
+  RenameBranchResult,
   RepoListStatus,
   MergeConflictState,
   ConflictFile,
@@ -1077,6 +1085,83 @@ export async function getBranches(
 }
 
 /**
+ * 分支管理页数据：分别返回本地分支与仅远端存在的分支。
+ * getBranches 会把两者合并去重，无法区分来源，此处保留 local/remote 两段。
+ */
+export async function getManagedBranches(
+  bookmarkName: string
+): Promise<ManagedBranches> {
+  const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
+  if (!(await isInitialized(bookmarkName))) {
+    return { current: null, locals: [], remotes: [], hasRemote: false }
+  }
+  // 与 getBranches 一致：顺带修复「有提交但工作区为空」的历史仓
+  try {
+    await ensureWorktreeMaterialized(git, fs, dir, gitdir)
+  } catch (_e) {
+    /* 不阻断分支列表 */
+  }
+  let locals: string[] = []
+  try {
+    locals = await git.listBranches({ fs, dir, gitdir })
+  } catch (_e) {
+    locals = []
+  }
+  let hasRemote = false
+  try {
+    const remotes = (await git.listRemotes({ fs, dir, gitdir })) as {
+      remote: string
+    }[]
+    hasRemote = remotes.some((r) => r.remote === "origin")
+  } catch (_e) {
+    hasRemote = false
+  }
+  let remoteBranches: string[] = []
+  try {
+    remoteBranches = await git.listBranches({
+      fs,
+      dir,
+      gitdir,
+      remote: "origin",
+    })
+  } catch (_e) {
+    remoteBranches = []
+  }
+  remoteBranches = remoteBranches
+    .map((b: string) => String(b || "").replace(/^origin\//, ""))
+    .filter((b: string) => !!b && b !== "HEAD")
+
+  let current: string | null = null
+  try {
+    current = await git.currentBranch({ fs, dir, gitdir, fullname: false })
+  } catch (_e) {
+    current = null
+  }
+  if (!current) {
+    current = await readSymbolicHeadBranch(fs)
+  }
+
+  const localSet = new Set<string>(locals)
+  if (current) localSet.add(current)
+  const sortedLocals = Array.from(localSet).sort((a, b) => {
+    if (a === current) return -1
+    if (b === current) return 1
+    return a.localeCompare(b)
+  })
+  // 仅远端存在（本地无同名）的分支单列
+  const remoteOnly = Array.from(new Set<string>(remoteBranches))
+    .filter((b) => !localSet.has(b))
+    .sort((a, b) => a.localeCompare(b))
+
+  return {
+    current,
+    locals: sortedLocals,
+    remotes: remoteOnly,
+    hasRemote,
+  }
+}
+
+/**
  * 分支切换前确认工作区干净。
  * 后续会 force checkout：不干净时继续会覆盖用户未提交改动。
  */
@@ -1210,6 +1295,212 @@ async function checkoutBranchInternal(
     })
   } catch (_e) {
     /* 跟踪配置失败不阻断切换 */
+  }
+}
+
+/** 删除本地分支；禁止删除当前分支 */
+async function deleteBranchInternal(
+  bookmarkName: string,
+  target: string
+): Promise<void> {
+  const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
+  let locals: string[] = []
+  try {
+    locals = await git.listBranches({ fs, dir, gitdir })
+  } catch (_e) {
+    locals = []
+  }
+  let current: string | null = null
+  try {
+    current = await git.currentBranch({ fs, dir, gitdir, fullname: false })
+  } catch (_e) {
+    current = null
+  }
+  const planned = planDeleteBranch(locals, current, target)
+  await git.deleteBranch({ fs, dir, gitdir, ref: planned.branch })
+  // 顺带清理该分支的 upstream 配置，避免残留脏跟踪关系
+  try {
+    await git.setConfig({
+      fs,
+      dir,
+      gitdir,
+      path: `branch.${planned.branch}.remote`,
+      value: undefined,
+    })
+    await git.setConfig({
+      fs,
+      dir,
+      gitdir,
+      path: `branch.${planned.branch}.merge`,
+      value: undefined,
+    })
+  } catch (_e) {
+    /* 清理跟踪配置失败不阻断删除 */
+  }
+}
+
+/** 重命名本地分支；重命名当前分支时 HEAD 由引擎同步更新 */
+async function renameBranchInternal(
+  bookmarkName: string,
+  from: string,
+  to: string,
+  options?: RemoteOpOptions
+): Promise<RenameBranchResult> {
+  const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
+  let locals: string[] = []
+  try {
+    locals = await git.listBranches({ fs, dir, gitdir })
+  } catch (_e) {
+    locals = []
+  }
+  let current: string | null = null
+  try {
+    current = await git.currentBranch({ fs, dir, gitdir, fullname: false })
+  } catch (_e) {
+    current = null
+  }
+  const planned = planRenameBranch(locals, current, from, to)
+  // 改名前先读旧分支的 upstream（引擎 rename 只迁移 HEAD，不迁移配置）
+  let oldRemote: string | null = null
+  try {
+    oldRemote =
+      ((await git.getConfig({
+        fs,
+        dir,
+        gitdir,
+        path: `branch.${planned.from}.remote`,
+      })) as string | undefined) ?? null
+  } catch (_e) {
+    oldRemote = null
+  }
+  let oldMerge: string | null = null
+  if (oldRemote) {
+    try {
+      oldMerge =
+        ((await git.getConfig({
+          fs,
+          dir,
+          gitdir,
+          path: `branch.${planned.from}.merge`,
+        })) as string | undefined) ?? null
+    } catch (_e) {
+      oldMerge = null
+    }
+  }
+  await git.renameBranch({
+    fs,
+    dir,
+    gitdir,
+    oldref: planned.from,
+    ref: planned.to,
+  })
+  // 迁移 upstream 配置到新名，旧名清理
+  if (oldRemote) {
+    try {
+      await git.setConfig({
+        fs,
+        dir,
+        gitdir,
+        path: `branch.${planned.to}.remote`,
+        value: oldRemote,
+      })
+      if (oldMerge) {
+        await git.setConfig({
+          fs,
+          dir,
+          gitdir,
+          path: `branch.${planned.to}.merge`,
+          value: oldMerge,
+        })
+      }
+      await git.setConfig({
+        fs,
+        dir,
+        gitdir,
+        path: `branch.${planned.from}.remote`,
+        value: undefined,
+      })
+      await git.setConfig({
+        fs,
+        dir,
+        gitdir,
+        path: `branch.${planned.from}.merge`,
+        value: undefined,
+      })
+    } catch (_e) {
+      /* 迁移失败不阻断重命名 */
+    }
+  }
+  const result: RenameBranchResult = {
+    from: planned.from,
+    to: planned.to,
+    oldRemote,
+    pushedNewBranch: false,
+    deletedOldRemoteBranch: false,
+    remoteError: null,
+  }
+  // 旧分支发布过则自动同步远端：推送新分支、删除远端旧分支。
+  // 本地 rename 已完成，远端步骤失败不回滚，仅记录错误供 UI 提示。
+  if (oldRemote) {
+    try {
+      await pushInternal(bookmarkName, oldRemote, planned.to, false, options)
+      result.pushedNewBranch = true
+      await deleteRemoteBranchInternal(
+        bookmarkName,
+        oldRemote,
+        planned.from,
+        options
+      )
+      result.deletedOldRemoteBranch = true
+    } catch (e: any) {
+      result.remoteError = String(e?.message || e)
+    }
+  }
+  return result
+}
+
+/** 删除远端分支（push --delete）；需已配置认证 */
+async function deleteRemoteBranchInternal(
+  bookmarkName: string,
+  remote: string,
+  branch: string,
+  options?: RemoteOpOptions
+): Promise<void> {
+  const planned = planDeleteRemoteBranch(remote, branch)
+  const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
+  checkRemoteCancelled(options)
+  await emitRemoteProgress(options, "Connecting")
+  const auth = requireAuth()
+  const http = createHttpTransport(auth.username, auth.password)
+  const onProgress = createGitOnProgress(options)
+  await emitRemoteProgress(options, "Uploading")
+  // isomorphic-git 的 push 在 delete 模式下仍对本地 ref 做 expand（nt.expand），
+  // 对仅远端存在的分支，本地无 refs/heads/<branch>，传短名会 "Could not find <branch>"。
+  // 改传完整 remote-tracking 路径（expand 候选首项即原串，直接命中 gitdir 下的该文件），
+  // 并显式指定 remoteRef 为远端真实分支路径（否则引擎取 branch.*.merge 配置，可能取错）。
+  await git.push({
+    fs,
+    dir,
+    gitdir,
+    http,
+    onAuth: () => auth,
+    remote: planned.remote,
+    ref: `refs/remotes/${planned.remote}/${planned.branch}`,
+    remoteRef: `refs/heads/${planned.branch}`,
+    delete: true,
+    onProgress,
+  })
+  checkRemoteCancelled(options)
+  // 删除本地遗留的 remote-tracking ref，避免分支列表仍显示已删远端分支
+  try {
+    await git.deleteRef({
+      fs,
+      dir,
+      gitdir,
+      ref: `refs/remotes/${planned.remote}/${planned.branch}`,
+    })
+  } catch (_e) {
+    /* 无对应跟踪 ref 时忽略 */
   }
 }
 
@@ -3133,6 +3424,44 @@ export async function checkoutBranch(
 ): Promise<void> {
   return runRepoMutation(bookmarkName, () =>
     checkoutBranchInternal(bookmarkName, ref)
+  )
+}
+
+/** 删除本地分支（不能删当前分支） */
+export async function deleteBranch(
+  bookmarkName: string,
+  target: string
+): Promise<void> {
+  return runRepoMutation(bookmarkName, () =>
+    deleteBranchInternal(bookmarkName, target)
+  )
+}
+
+/** 重命名本地分支；旧分支发布过时自动同步远端（推新分支 + 删远端旧分支） */
+export async function renameBranch(
+  bookmarkName: string,
+  from: string,
+  to: string,
+  options?: RemoteOpOptions
+): Promise<RenameBranchResult> {
+  return runWithBackgroundKeepAlive(() =>
+    runRepoMutation(bookmarkName, () =>
+      renameBranchInternal(bookmarkName, from, to, options)
+    )
+  )
+}
+
+/** 删除远端分支（push --delete） */
+export async function deleteRemoteBranch(
+  bookmarkName: string,
+  remote: string,
+  branch: string,
+  options?: RemoteOpOptions
+): Promise<void> {
+  return runWithBackgroundKeepAlive(() =>
+    runRepoMutation(bookmarkName, () =>
+      deleteRemoteBranchInternal(bookmarkName, remote, branch, options)
+    )
   )
 }
 
