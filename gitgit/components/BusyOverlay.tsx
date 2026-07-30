@@ -1,26 +1,39 @@
 /**
  * components/BusyOverlay.tsx - 中央忙态浮层
  *
- * 与仓库列表「正在更新状态」同款：全屏淡化 + 毛玻璃卡片 + ProgressView。
- * 供列表状态刷新、历史撤销/回退/重编等长操作复用。
+ * 全屏淡化 + 毛玻璃卡片 + ProgressView。
+ * 供移除仓库、历史撤销/回退/重编、分支操作与 push/pull/clone 等长操作复用。
+ * 传 onCancel 时在卡片底部显示取消按钮（协作式取消）；已请求取消后隐藏按钮，
+ * 「取消中…」状态由调用方通过 message 进度文案展示。
  */
 
 import {
   ZStack,
   VStack,
   Text,
+  Button,
   ProgressView,
   RoundedRectangle,
 } from "scripting"
 import type { Color } from "scripting"
-import { COLOR_LABEL, COLOR_SECONDARY_LABEL } from "../constants/colors"
+import {
+  COLOR_LABEL,
+  COLOR_SECONDARY_LABEL,
+  COLOR_RED,
+} from "../constants/colors"
 
 export function BusyOverlay({
   title,
   message,
+  onCancel,
+  cancelling = false,
 }: {
   title: string
   message?: string
+  /** 传入则显示取消按钮 */
+  onCancel?: () => void
+  /** 已请求取消：隐藏取消按钮（「取消中…」由进度文案展示） */
+  cancelling?: boolean
 }) {
   // List overlay 默认按内容收缩；用屏幕尺寸强制全屏
   const screen = Device.screen
@@ -80,6 +93,15 @@ export function BusyOverlay({
             </Text>
           ) : null}
         </VStack>
+        {onCancel && !cancelling ? (
+          <Button
+            title="取消"
+            buttonStyle="plain"
+            font={14}
+            foregroundStyle={COLOR_RED}
+            action={onCancel}
+          />
+        ) : null}
       </VStack>
     </ZStack>
   )

@@ -3,11 +3,7 @@
  */
 import { Script } from "scripting"
 import { createFS } from "../services/gitCore"
-import {
-  computeSyncTopology,
-  repoListStatusFromSnapshot,
-  topologyFromCounts,
-} from "../utils/gitSync"
+import { computeSyncTopology, topologyFromCounts } from "../utils/gitSync"
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error("断言失败: " + message)
@@ -22,20 +18,6 @@ async function main() {
   assert(topologyFromCounts(0, 0).syncState === "upToDate", "0/0 upToDate")
   assert(topologyFromCounts(3, 0).syncState === "ahead", "ahead")
   assert(topologyFromCounts(0, 2).syncState === "behind", "behind")
-
-  const snap = repoListStatusFromSnapshot({
-    branch: "main",
-    uncommitted: 1,
-    ahead: 2,
-    behind: 0,
-  })
-  assert(
-    snap.uncommitted === 1 &&
-      snap.ahead === 2 &&
-      snap.hasRemote === true &&
-      snap.syncState === "ahead",
-    "snapshot map"
-  )
 
   let isFileCalls = 0
   let isDirCalls = 0

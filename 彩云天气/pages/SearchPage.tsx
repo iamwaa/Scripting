@@ -27,7 +27,7 @@ import {
   shadow,
   textColor,
   weatherCardProps,
-  weatherListChrome,
+  searchListChrome,
 } from "../components/tokens"
 import {
   addFavorite,
@@ -167,7 +167,7 @@ function PlaceRow({
           actions: [
             // 不用 role="destructive"：会触发系统自动移除行动画，与确认弹窗叠加导致闪动
             <Button tint="systemBlue" action={() => onRename?.()}>
-              <Label title="修改" systemImage="pencil" />
+              <Label title="重命名" systemImage="pencil" />
             </Button>,
             <Button tint="systemRed" action={() => onRemove?.()}>
               <Label title="删除" systemImage="trash" />
@@ -349,7 +349,7 @@ export function SearchPage({
       {/* 搜索页由外层 NavigationStack 原生 push，系统自动提供返回按钮和右滑手势 */}
       <PageBackground />
       <List
-        {...weatherListChrome}
+        {...searchListChrome}
         navigationTitle="地点"
         navigationBarTitleDisplayMode="inline"
       >

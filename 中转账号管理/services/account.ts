@@ -81,11 +81,17 @@ export function upsertAccount(draft: AccountDraft) {
   const accessTokenKey = prev?.accessTokenKey ?? secretKey(id, "accessToken")
   const refreshTokenKey = prev?.refreshTokenKey ?? secretKey(id, "refreshToken")
 
+  const checkinSite = normalizeBaseUrl(draft.checkinSite)
+  if (checkinSite && !checkinSite.startsWith("http://") && !checkinSite.startsWith("https://")) {
+    throw new Error("签到站点必须以 http:// 或 https:// 开头")
+  }
+
   const account: Account = {
     ...(prev ?? {} as Account),
     id,
     name: draft.name.trim(),
     baseUrl: normalizeBaseUrl(draft.baseUrl),
+    checkinSite: checkinSite || undefined,
     platform: draft.platform ?? prev?.platform ?? "newapi",
     username: draft.username.trim() || undefined,
     passwordKey,

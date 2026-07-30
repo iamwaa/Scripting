@@ -52,6 +52,8 @@ export type Account = {
   id: string
   name: string
   baseUrl: string
+  // 可选：网页签到单独打开的站点；为空时网页签到仍打开 baseUrl
+  checkinSite?: string
   platform?: AccountPlatform
   username?: string
   passwordKey?: string
@@ -77,6 +79,7 @@ export type AccountDraft = {
   id?: string
   name: string
   baseUrl: string
+  checkinSite: string
   platform?: AccountPlatform
   username: string
   password: string

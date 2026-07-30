@@ -17,8 +17,8 @@ export type FetchWeatherOptions = {
   token?: string
 }
 
-// 请求彩云综合天气接口，路径格式为 经度,纬度
-export async function fetchWeather(options: FetchWeatherOptions): Promise<WeatherResponse> {
+// 构造请求 url（缓存 key 同源）
+function buildWeatherUrl(options: FetchWeatherOptions): string {
   const {
     longitude,
     latitude,
@@ -29,10 +29,6 @@ export async function fetchWeather(options: FetchWeatherOptions): Promise<Weathe
   } = options
 
   const apiToken = (token ?? loadApiToken()).trim()
-  if (!apiToken) {
-    throw new Error("请先在设置中填写彩云 Token")
-  }
-
   const lng = Number(longitude.toFixed(6))
   const lat = Number(latitude.toFixed(6))
   const query = new URLSearchParams({
@@ -42,8 +38,25 @@ export async function fetchWeather(options: FetchWeatherOptions): Promise<Weathe
     unit: "metric",
     lang: "zh_CN",
   })
+  return `${CAIYUN_API_HOST}/${apiToken}/${lng},${lat}/weather?${query.toString()}`
+}
 
-  const url = `${CAIYUN_API_HOST}/${apiToken}/${lng},${lat}/weather?${query.toString()}`
+// 同步读缓存：切页重建时首帧直出，避免 loading 闪屏；未命中或过期返回 null
+export function peekCachedWeather(options: FetchWeatherOptions): WeatherResponse | null {
+  const apiToken = (options.token ?? loadApiToken()).trim()
+  if (!apiToken) return null
+  const cached = responseCache.get(buildWeatherUrl(options))
+  return cached && cached.expiresAt > Date.now() ? cached.response : null
+}
+
+// 请求彩云综合天气接口，路径格式为 经度,纬度
+export async function fetchWeather(options: FetchWeatherOptions): Promise<WeatherResponse> {
+  const apiToken = (options.token ?? loadApiToken()).trim()
+  if (!apiToken) {
+    throw new Error("请先在设置中填写彩云 Token")
+  }
+
+  const url = buildWeatherUrl(options)
   const cached = responseCache.get(url)
   if (cached && cached.expiresAt > Date.now()) return cached.response
 

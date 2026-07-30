@@ -176,7 +176,7 @@ export function ChangesTab({
             onChanged={setDescription}
           />
           <Button
-            title={committing ? "提交中…" : "提交"}
+            title="提交"
             action={onCommit}
             disabled={committing || worktreeBusy || !title.trim()}
           />

@@ -15,8 +15,9 @@ import {
   ZStack,
   useEffect,
   useState,
+  type VirtualNode,
 } from "scripting"
-import { fetchWeather } from "../api/weather"
+import { fetchWeather, peekCachedWeather } from "../api/weather"
 import {
   AlertsSection,
   DailySection,
@@ -48,6 +49,7 @@ export function WeatherPage({
   onLocate,
   onSkyconLoaded,
   toolbarMode = "home",
+  bottomAccessory,
 }: {
   place: Place
   onFavoritesChanged?: () => void
@@ -56,14 +58,20 @@ export function WeatherPage({
   // 天气加载后上报 skycon，供根层绘制当前 tab 的全屏背景
   onSkyconLoaded?: (skycon: SkyconCode | null) => void
   toolbarMode?: "home" | "detail"
+  // 首页内嵌模式：挂在 List 底部 safeAreaInset 的分页条（内容自动避开）
+  bottomAccessory?: VirtualNode
 }) {
-  const [weather, setWeather] = useState<WeatherResult | null>(null)
-  const [loading, setLoading] = useState(true)
+  // 首帧直出缓存：单实例分页下切回已看过的地点不闪 loading
+  const [initialWeather] = useState(
+    () => peekCachedWeather({ longitude: place.longitude, latitude: place.latitude })?.result ?? null
+  )
+  const [weather, setWeather] = useState<WeatherResult | null>(initialWeather)
+  const [loading, setLoading] = useState(initialWeather == null)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const loadWeather = async (silent = false) => {
-    if (!silent) setLoading(true)
+  const loadWeather = async () => {
+    setLoading(true)
     setRefreshing(true)
     setError(null)
     try {
@@ -82,8 +90,11 @@ export function WeatherPage({
     }
   }
 
-  // 地点切换时重新加载
+  // 地点切换时重新加载；缓存首帧先上报 skycon，背景同步不闪回退渐变
   useEffect(() => {
+    if (initialWeather) {
+      onSkyconLoaded?.(initialWeather.realtime?.skycon ?? null)
+    }
     loadWeather()
   }, [place.id])
 
@@ -202,15 +213,18 @@ export function WeatherPage({
   ) : null
 
   // 首页内嵌模式：背景与工具栏/标题由根层统一负责，这里只画透明 List，
-  // 避免相邻分页各自向同一系统导航栏挂 toolbar，造成滑动时工具栏错乱（双份按钮）
+  // 避免相邻分页各自向同一系统导航栏挂 toolbar，造成滑动时工具栏错乱（双份按钮）。
+  // 天气列表不开下拉刷新：进入与切换地点时自动加载，60s 缓存避免重复请求
   if (toolbarMode !== "detail") {
     return (
       <List
         {...weatherListChrome}
-        refreshable={async () => {
-          await loadWeather(true)
-        }}
         overlay={overlay}
+        safeAreaInset={
+          bottomAccessory
+            ? { bottom: { alignment: "center" as const, content: bottomAccessory } }
+            : undefined
+        }
       >
         {content}
       </List>
@@ -226,9 +240,6 @@ export function WeatherPage({
         navigationTitle={title}
         navigationBarTitleDisplayMode="inline"
         navigationBarBackButtonHidden={onBack != null}
-        refreshable={async () => {
-          await loadWeather(true)
-        }}
         overlay={overlay}
         toolbar={{
           topBarLeading: onBack ? (

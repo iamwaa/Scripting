@@ -60,38 +60,6 @@ export function topologyFromCounts(
   return { ahead: a, behind: b, syncState }
 }
 
-/** 用 Widget 快照拼列表行状态，供首屏即时展示（冲突字段默认 0） */
-export function repoListStatusFromSnapshot(snapshot: {
-  branch: string | null
-  uncommitted: number
-  ahead: number
-  behind: number
-}): {
-  branch: string | null
-  uncommitted: number
-  ahead: number
-  behind: number
-  syncState: RepoSyncState
-  hasRemote: boolean
-  workdirOk: boolean
-  conflictCount: number
-  mergeInProgress: boolean
-} {
-  const topology = topologyFromCounts(snapshot.ahead, snapshot.behind)
-  return {
-    branch: snapshot.branch,
-    uncommitted: Math.max(0, snapshot.uncommitted || 0),
-    ahead: topology.ahead,
-    behind: topology.behind,
-    syncState: topology.syncState,
-    // 快照无 hasRemote：有 ahead/behind 时暗示曾对过远端
-    hasRemote: topology.ahead > 0 || topology.behind > 0,
-    workdirOk: true,
-    conflictCount: 0,
-    mergeInProgress: false,
-  }
-}
-
 /** 上传时是否复用已创建远端，避免 Push 失败后重复建仓 */
 export function resolveUploadRemoteTarget(input: {
   pendingRemoteUrl?: string | null

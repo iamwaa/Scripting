@@ -150,26 +150,9 @@ export function extractSelfInfoFromStorage(items: Record<string, string>) {
   return undefined
 }
 
-// 已知需要打平跨域 iframe 首页的站点白名单（域名或域名后缀，忽略大小写）
-// 只有账号 host 命中白名单时才启用 flatten，避免误伤其他使用大 iframe 的站点
-const FLATTEN_IFRAME_HOSTS = ["x666.me"]
-
-function shouldEnableFlatten(host: string) {
-  if (!host) return false
-  const h = host.toLowerCase()
-  return FLATTEN_IFRAME_HOSTS.some(rule => h === rule || h.endsWith("." + rule))
-}
-
 // 注入 JS：patch 弹窗、安装进度条
 export async function prepareWebLoginPage(webView: WebViewController, baseUrl = "") {
-  // 提取账号原始站点主机名，作为 flatten iframe 逻辑的守卫：
-  // 只有当前文档仍在这个 host 上时才允许打平，避免打平后跳到 boheapi/qd.x666.me 等子站又被继续打平导致连环跳转
-  const originHost = getUrlHostname(baseUrl)
-  // 只有账号 host 命中白名单时才启用 flatten；其他站点即便有大 iframe 也不打平
-  const flattenEnabled = shouldEnableFlatten(originHost)
   const script = `
-    const __newapiOriginHost = ${JSON.stringify(originHost)};
-    const __newapiFlattenEnabled = ${JSON.stringify(flattenEnabled)};
     // 同页跳转辅助：忽略空/占位 URL，兼容相对路径
     const navigate = (url) => {
       if (!url) return;
@@ -211,34 +194,6 @@ export async function prepareWebLoginPage(webView: WebViewController, baseUrl = 
       });
       return fake;
     };
-    // 打平大面积跨域 iframe：若首页把主要内容放在跨域 iframe 内（例如 new-api 的自定义首页），
-    // shim 无法注入到跨域 iframe，iOS WKWebView 也不响应 iframe 里 target=_blank 弹新窗口。
-    // 检测到跨域 iframe 占据视口 ≥60% 时，直接把主 frame 跳到 iframe URL，让子页的链接落回主 frame 由 shim 接管。
-    // 关键守卫：只允许在账号的原始 host 上打平；打平后当前 host 会变为 iframe 的 host，此时此函数直接跳过，
-    // 避免 boheapi 内又有大 iframe（或后续 qd.x666.me/up.x666.me 有嵌套 iframe）触发链式跳转。
-    const flattenIframe = () => {
-      if (!__newapiFlattenEnabled) return;
-      if (window.__newapiFlattened) return;
-      if (__newapiOriginHost && location.hostname !== __newapiOriginHost) return;
-      const iframes = document.querySelectorAll('iframe[src]');
-      const vw = window.innerWidth || document.documentElement.clientWidth || 0;
-      const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-      const viewportArea = vw * vh;
-      if (viewportArea <= 0) return;
-      for (const iframe of iframes) {
-        const src = iframe.getAttribute('src') || '';
-        if (!/^https?:/i.test(src)) continue;
-        try {
-          const u = new URL(src, location.href);
-          if (u.origin === location.origin) continue;
-          const rect = iframe.getBoundingClientRect();
-          if (rect.width * rect.height < viewportArea * 0.6) continue;
-          window.__newapiFlattened = true;
-          navigate(u.href);
-          return;
-        } catch {}
-      }
-    };
     const patch = () => {
       // window.open 只覆盖一次；有 URL 立即同页跳，无 URL 时也返回代理，后续给 w.location.href 赋值一样能触发跳转
       if (!window.__newapiOpenPatched) {
@@ -258,8 +213,6 @@ export async function prepareWebLoginPage(webView: WebViewController, baseUrl = 
           location.href = a.href;
         }, true);
       }
-      // 检测并打平跨域大 iframe（新 iframe 可能是 SPA 动态渲染，因此需要每次 tick 都试一下）
-      flattenIframe();
       return true;
     };
     patch();
@@ -324,7 +277,6 @@ export async function installWebNavigationBridge(webView: WebViewController, bas
       const targetUrl = resolveWebUrl(String(url ?? ""), baseUrl)
       if (!isHttpUrl(targetUrl)) return false
       const loaded = await loadWebUrlWithFallback(webView, targetUrl, baseUrl)
-      // 始终传入账号原始 baseUrl，避免 flatten iframe 守卫误判当前 host
       setTimeout(() => prepareWebLoginPage(webView, baseUrl), 300)
       setTimeout(() => prepareWebLoginPage(webView, baseUrl), 1200)
       return loaded
@@ -377,7 +329,6 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
       const url = request.url || normalizedBaseUrl
       // 允许 http/https，同时允许站点内部跳转和 OAuth 回调
       if (isHttpUrl(url)) {
-        // 传入账号原始 baseUrl 而非当前 url，让 flatten iframe 守卫按原始 host 判断
         setTimeout(() => prepareWebLoginPage(webView, normalizedBaseUrl), 300)
         setTimeout(() => prepareWebLoginPage(webView, normalizedBaseUrl), 1200)
         return true
@@ -428,13 +379,33 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
   }
 }
 
-// 打开网页签到 WebView
-export async function openManualCheckinWebView(account: Account) {
-  const normalizedBaseUrl = normalizeBaseUrl(account.baseUrl)
-  if (!normalizedBaseUrl) throw new Error("请先填写站点地址")
-  if (!normalizedBaseUrl.startsWith("http://") && !normalizedBaseUrl.startsWith("https://")) {
+// 解析网页签到实际打开地址：优先签到站点，否则回退原站点
+function resolveManualCheckinOpenUrl(account: Account) {
+  const checkinSite = normalizeBaseUrl(account.checkinSite || "")
+  if (checkinSite) {
+    if (!checkinSite.startsWith("http://") && !checkinSite.startsWith("https://")) {
+      throw new Error("签到站点必须以 http:// 或 https:// 开头")
+    }
+    return checkinSite
+  }
+  const baseUrl = normalizeBaseUrl(account.baseUrl)
+  if (!baseUrl) throw new Error("请先填写站点地址")
+  if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
     throw new Error("站点地址必须以 http:// 或 https:// 开头")
   }
+  return baseUrl
+}
+
+// 打开网页签到 WebView
+export async function openManualCheckinWebView(account: Account) {
+  // 账号主站：用于登录态注入/回收 cookie 与 localStorage
+  const accountBaseUrl = normalizeBaseUrl(account.baseUrl)
+  if (!accountBaseUrl) throw new Error("请先填写站点地址")
+  if (!accountBaseUrl.startsWith("http://") && !accountBaseUrl.startsWith("https://")) {
+    throw new Error("站点地址必须以 http:// 或 https:// 开头")
+  }
+  // 实际打开地址：签到站点有内容则用签到站点，否则用原站点
+  const openUrl = resolveManualCheckinOpenUrl(account)
   if (!account.cookieKey) throw new Error("Cookie 存储键缺失，请重新保存账号")
   // 允许在没有已保存凭据的情况下打开网页签到：让用户在 WebView 内自行登录并完成签到，
   // 关闭后再从 Cookie / localStorage 中回收最新的登录信息。
@@ -446,29 +417,30 @@ export async function openManualCheckinWebView(account: Account) {
     const webView = new WebViewController()
     try {
       try { webView.setCustomUserAgent(UA) } catch {}
-      await installWebNavigationBridge(webView, normalizedBaseUrl)
+      await installWebNavigationBridge(webView, accountBaseUrl)
       webView.shouldAllowRequest = async request => {
-        const url = request.url || normalizedBaseUrl
+        const url = request.url || openUrl
         if (isHttpUrl(url)) {
-          // 始终传入账号原始 baseUrl，flatten iframe 守卫依赖它判断当前 host
-          setTimeout(() => prepareWebLoginPage(webView, normalizedBaseUrl), 300)
+          setTimeout(() => prepareWebLoginPage(webView, accountBaseUrl), 300)
           return true
         }
         return /^(about|data|blob):/i.test(url)
       }
-      await webView.loadHTML(getWebViewLoadingHTML(normalizedBaseUrl, "正在打开网页..."), normalizedBaseUrl)
+      await webView.loadHTML(getWebViewLoadingHTML(openUrl, "正在打开网页..."), openUrl)
       const openPage = async () => {
         try {
-          const loaded = await loadWebUrlWithFallback(webView, normalizedBaseUrl, normalizedBaseUrl)
+          const loaded = await loadWebUrlWithFallback(webView, openUrl, accountBaseUrl)
           if (!loaded) throw new Error("页面加载失败")
           // 有已保存令牌则预置 auth_token(+auth_user) 免登录；没有则由用户手动登录
           if (credential) {
             await injectSub2ApiLocalAuth(webView, credential, authUser)
-            await loadWebUrlWithFallback(webView, `${normalizedBaseUrl}/home`, normalizedBaseUrl)
+            // 注入登录态后仍回到签到打开地址；未单独配置签到站点时保持原 /home 行为
+            const nextUrl = openUrl === accountBaseUrl ? `${accountBaseUrl}/home` : openUrl
+            await loadWebUrlWithFallback(webView, nextUrl, accountBaseUrl)
           }
-          await prepareWebLoginPage(webView, normalizedBaseUrl)
+          await prepareWebLoginPage(webView, accountBaseUrl)
         } catch (e: any) {
-          await webView.loadHTML(getWebViewLoadingHTML(normalizedBaseUrl, `网页打开失败：${getErrorMessage(e)}`), normalizedBaseUrl)
+          await webView.loadHTML(getWebViewLoadingHTML(openUrl, `网页打开失败：${getErrorMessage(e)}`), openUrl)
         }
       }
       setTimeout(() => { void openPage() }, 80)
@@ -497,26 +469,25 @@ export async function openManualCheckinWebView(account: Account) {
 
   // new-api：同时注入 cookie + localStorage.user，关闭后用最新会话覆盖旧凭据
   const cookieHeader = credential
-  const hostname = getUrlHostname(normalizedBaseUrl)
-  const secure = normalizedBaseUrl.startsWith("https://")
+  const hostname = getUrlHostname(accountBaseUrl)
+  const secure = accountBaseUrl.startsWith("https://")
   const localUser = buildNewApiLocalUser(account)
   const webView = new WebViewController()
   try {
     try { webView.setCustomUserAgent(UA) } catch {}
-    await installWebNavigationBridge(webView, normalizedBaseUrl)
+    await installWebNavigationBridge(webView, accountBaseUrl)
     webView.shouldAllowRequest = async request => {
-      const url = request.url || normalizedBaseUrl
+      const url = request.url || openUrl
       if (isHttpUrl(url)) {
-        // 始终传入账号原始 baseUrl，flatten iframe 守卫依赖它判断当前 host
-        setTimeout(() => prepareWebLoginPage(webView, normalizedBaseUrl), 300)
-        setTimeout(() => prepareWebLoginPage(webView, normalizedBaseUrl), 1200)
+        setTimeout(() => prepareWebLoginPage(webView, accountBaseUrl), 300)
+        setTimeout(() => prepareWebLoginPage(webView, accountBaseUrl), 1200)
         return true
       }
       return /^(about|data|blob):/i.test(url)
     }
     // 有已保存 Cookie 则预置；没有则打开网页由用户手动登录，关闭后再回收
     if (cookieHeader) await injectWebCookies(webView, hostname, cookieHeader, secure)
-    await presentWebViewAndLoadURL(webView, normalizedBaseUrl, {
+    await presentWebViewAndLoadURL(webView, openUrl, {
       fullscreen: true,
       navigationTitle: "网页签到后关闭页面",
       afterLoad: async controller => {
@@ -527,7 +498,7 @@ export async function openManualCheckinWebView(account: Account) {
 
     // 关闭后：新 cookie 直接替换旧值；同时回收 localStorage.user 中的用户信息
     try {
-      const cookies = await webView.getCookies(normalizedBaseUrl)
+      const cookies = await webView.getCookies(accountBaseUrl)
       const nextCookieHeader = cookiesToHeader(cookies)
       const storage = await readWebLoginStorage(webView)
       const storageItems = {

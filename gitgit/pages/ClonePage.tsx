@@ -11,13 +11,13 @@ import {
   Section,
   Text,
   HStack,
-  Spacer,
   Button,
   Image,
   useState,
   useEffect,
 } from "scripting"
 import { FormRow } from "../components/FormRow"
+import { BusyOverlay } from "../components/BusyOverlay"
 import type { GitHubRepo, RepoMeta } from "../types/git"
 import {
   pickDirectory,
@@ -35,7 +35,6 @@ import { notifySync } from "../services/notifyService"
 import { listMyRepos, getRepo } from "../api/githubApi"
 import { repoNameFromUrl } from "../utils/format"
 import {
-  formatBusyActionLabel,
   yieldForUi,
   type RemoteProgressInfo,
 } from "../utils/remoteProgress"
@@ -151,7 +150,7 @@ export function ClonePage({ onCloned }: { onCloned: (repo: RepoMeta) => void }) 
     const token = new RemoteCancelToken()
     setCancelToken(token)
     setCloneCancelling(false)
-    setCloneBusyLabel(formatBusyActionLabel("克隆中"))
+    setCloneBusyLabel(null)
     setCloning(true)
     // 先分配 repoId，clone 的 gitdir 与注册元数据共用，避免路径当 gitdir 名
     const repoId = createRepoId()
@@ -165,7 +164,7 @@ export function ClonePage({ onCloned }: { onCloned: (repo: RepoMeta) => void }) 
             }
           : undefined,
         onProgress: async (info: RemoteProgressInfo) => {
-          setCloneBusyLabel(formatBusyActionLabel("克隆中", info))
+          setCloneBusyLabel(info.label)
           await yieldForUi()
         },
       })
@@ -221,6 +220,21 @@ export function ClonePage({ onCloned }: { onCloned: (repo: RepoMeta) => void }) 
       navigationTitle="克隆仓库"
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
+      overlay={
+        cloning
+          ? {
+              alignment: "center",
+              content: (
+                <BusyOverlay
+                  title="正在克隆"
+                  message={cloneBusyLabel || undefined}
+                  onCancel={handleCancelClone}
+                  cancelling={cloneCancelling}
+                />
+              ),
+            }
+          : undefined
+      }
       alert={{
         title: alertState?.title ?? "",
         message: <Text>{alertState?.message ?? ""}</Text>,
@@ -273,28 +287,11 @@ export function ClonePage({ onCloned }: { onCloned: (repo: RepoMeta) => void }) 
           value={url}
           onChanged={setUrl}
         />
-        <HStack alignment="center">
-          <Button
-            title={
-              cloning
-                ? cloneBusyLabel || formatBusyActionLabel("克隆中")
-                : "克隆"
-            }
-            action={() => handleClone()}
-            disabled={cloning || !parentPath || !url.trim()}
-          />
-          <Spacer />
-          {cloning ? (
-            <Button
-              title="取消"
-              foregroundStyle="red"
-              font="caption"
-              buttonStyle="plain"
-              action={handleCancelClone}
-              disabled={cloneCancelling}
-            />
-          ) : null}
-        </HStack>
+        <Button
+          title="克隆"
+          action={() => handleClone()}
+          disabled={cloning || !parentPath || !url.trim()}
+        />
       </Section>
 
       {/* 从我的 GitHub 仓库选择 */}

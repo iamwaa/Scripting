@@ -361,15 +361,23 @@ export const weatherCardProps = {
   listRowSeparator: "hidden" as const,
 }
 
-// 天气页列表：卡片正向间距（紧凑），互不重叠
+// 天气页/设置页列表 chrome：每 Section 一张玻璃卡，片距用 listSectionSpacing 显式管理。
+// 不要再加 listRowSpacing 负值——那是为"同 Section 多行"场景抵消系统行 padding 的，
+// 对单卡片 Section 会把整列卡片向上拉、叠到导航栏下（首页 TabView 滑动切换时尤其明显）
 export const weatherListChrome = {
   scrollContentBackground: "hidden" as const,
   scrollIndicator: "hidden" as const,
   listStyle: "plain" as const,
-  // 缩小搜索结果行与收藏列表行之间的行间距
-  listRowSpacing: -15,
+  listSectionSpacing: "compact" as const,
   listRowSeparator: "hidden" as const,
   listRowBackground: <></>,
+}
+
+// 搜索页列表 chrome：与天气页同底，但搜索结果/收藏是同 Section 多行玻璃卡，
+// 用负 listRowSpacing 抵消系统行 padding 压缩行距（详见 liquid-glass-ui「行距」）
+export const searchListChrome = {
+  ...weatherListChrome,
+  listRowSpacing: -15,
 }
 
 /**

@@ -1093,7 +1093,7 @@ export async function getManagedBranches(
 ): Promise<ManagedBranches> {
   const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
   if (!(await isInitialized(bookmarkName))) {
-    return { current: null, locals: [], remotes: [], hasRemote: false }
+    return { current: null, locals: [], remotes: [], remoteNames: [], hasRemote: false }
   }
   // 与 getBranches 一致：顺带修复「有提交但工作区为空」的历史仓
   try {
@@ -1148,15 +1148,18 @@ export async function getManagedBranches(
     if (b === current) return 1
     return a.localeCompare(b)
   })
+  // 全部远端分支名（去重排序）：标签按「远端是否存在」判定
+  const remoteNames = Array.from(new Set<string>(remoteBranches)).sort(
+    (a, b) => a.localeCompare(b)
+  )
   // 仅远端存在（本地无同名）的分支单列
-  const remoteOnly = Array.from(new Set<string>(remoteBranches))
-    .filter((b) => !localSet.has(b))
-    .sort((a, b) => a.localeCompare(b))
+  const remoteOnly = remoteNames.filter((b) => !localSet.has(b))
 
   return {
     current,
     locals: sortedLocals,
     remotes: remoteOnly,
+    remoteNames,
     hasRemote,
   }
 }
@@ -1373,20 +1376,6 @@ async function renameBranchInternal(
   } catch (_e) {
     oldRemote = null
   }
-  let oldMerge: string | null = null
-  if (oldRemote) {
-    try {
-      oldMerge =
-        ((await git.getConfig({
-          fs,
-          dir,
-          gitdir,
-          path: `branch.${planned.from}.merge`,
-        })) as string | undefined) ?? null
-    } catch (_e) {
-      oldMerge = null
-    }
-  }
   await git.renameBranch({
     fs,
     dir,
@@ -1394,7 +1383,10 @@ async function renameBranchInternal(
     oldref: planned.from,
     ref: planned.to,
   })
-  // 迁移 upstream 配置到新名，旧名清理
+  // 迁移 upstream 到新名。merge 必须改写为 refs/heads/<to>：
+  // isomorphic-git push 在未传 remoteRef 时会读 branch.<ref>.merge，
+  // 若仍保留旧名 refs/heads/<from>，会把新本地分支推到远端旧分支名，
+  // 随后再删远端旧分支 → 表现为「旧远端没了、新远端也没出现」。
   if (oldRemote) {
     try {
       await git.setConfig({
@@ -1404,15 +1396,13 @@ async function renameBranchInternal(
         path: `branch.${planned.to}.remote`,
         value: oldRemote,
       })
-      if (oldMerge) {
-        await git.setConfig({
-          fs,
-          dir,
-          gitdir,
-          path: `branch.${planned.to}.merge`,
-          value: oldMerge,
-        })
-      }
+      await git.setConfig({
+        fs,
+        dir,
+        gitdir,
+        path: `branch.${planned.to}.merge`,
+        value: `refs/heads/${planned.to}`,
+      })
       await git.setConfig({
         fs,
         dir,
@@ -1441,9 +1431,17 @@ async function renameBranchInternal(
   }
   // 旧分支发布过则自动同步远端：推送新分支、删除远端旧分支。
   // 本地 rename 已完成，远端步骤失败不回滚，仅记录错误供 UI 提示。
+  // push 显式 remoteRef，避免任何残留 merge 配置再次指向旧远端名。
   if (oldRemote) {
     try {
-      await pushInternal(bookmarkName, oldRemote, planned.to, false, options)
+      await pushInternal(
+        bookmarkName,
+        oldRemote,
+        planned.to,
+        false,
+        options,
+        `refs/heads/${planned.to}`
+      )
       result.pushedNewBranch = true
       await deleteRemoteBranchInternal(
         bookmarkName,
@@ -1819,13 +1817,14 @@ function requireAuth(): { username: string; password: string } {
   return auth
 }
 
-/** 推送到远端 */
+/** 推送到远端；remoteRef 显式指定远端更新目标（重命名后推新分支时必传） */
 async function pushInternal(
   bookmarkName: string,
   remote = "origin",
   ref?: string,
   force = false,
-  options?: RemoteOpOptions
+  options?: RemoteOpOptions,
+  remoteRef?: string
 ): Promise<void> {
   const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
   checkRemoteCancelled(options)
@@ -1843,6 +1842,7 @@ async function pushInternal(
     onAuth: () => auth,
     remote,
     ref,
+    remoteRef,
     force,
     onProgress,
   })

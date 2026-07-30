@@ -61,7 +61,6 @@ import {
 } from "../services/gitService"
 import { validateBranchName } from "../utils/branch"
 import {
-  formatBusyActionLabel,
   yieldForUi,
   type RemoteProgressInfo,
 } from "../utils/remoteProgress"
@@ -137,6 +136,8 @@ export function RepoDetailPage({
   })
   // 仅远端存在（本地无同名）的分支短名，用于分支列表标签与删除路由
   const [remoteOnlyBranches, setRemoteOnlyBranches] = useState<string[]>([])
+  // 全部 origin 分支名：Picker 标签按「远端是否存在」显示 本地/远端
+  const [remoteBranchNames, setRemoteBranchNames] = useState<string[]>([])
   const [commitTitleText, setCommitTitleText] = useState("")
   const [commitDescription, setCommitDescription] = useState("")
   const [loading, setLoading] = useState(true)
@@ -146,14 +147,6 @@ export function RepoDetailPage({
   const [committing, setCommitting] = useState(false)
   const [stagingBusy, setStagingBusy] = useState(false)
   const [stashBusy, setStashBusy] = useState(false)
-  const [pushing, setPushing] = useState(false)
-  const [pulling, setPulling] = useState(false)
-  // 同步区按钮文案（百分比/阶段，无独立进度条）
-  const [syncBusyLabel, setSyncBusyLabel] = useState<string | null>(null)
-  const [syncCancelling, setSyncCancelling] = useState(false)
-  const [syncCancelToken, setSyncCancelToken] =
-    useState<RemoteCancelToken | null>(null)
-  const [merging, setMerging] = useState(false)
   const [hasRemote, setHasRemote] = useState(false)
   const [upstream, setUpstream] = useState<UpstreamConfig | null>(null)
   const [lastPulledAt, setLastPulledAt] = useState<number | null>(null)
@@ -168,10 +161,13 @@ export function RepoDetailPage({
   const [alertState, setAlertState] = useState<AlertState>(null)
   const [pending, setPending] = useState<PendingAction>(null)
   const [amendMessage, setAmendMessage] = useState("")
-  // 撤销 / 回退 / 重编 忙态（同款中央遮罩）
-  const [historyBusy, setHistoryBusy] = useState<{
+  // 仓库级操作忙态（中央全屏遮罩）：撤销/回退/重编/分支操作/合并/推送/拉取等
+  // onCancel 存在时遮罩带取消按钮；cancelling 后副标题冻结为「取消中…」
+  const [opBusy, setOpBusy] = useState<{
     title: string
     message?: string
+    onCancel?: () => void
+    cancelling?: boolean
   } | null>(null)
 
   function showAlert(title: string, message: string) {
@@ -307,6 +303,7 @@ export function RepoDetailPage({
     const b = await getManagedBranches(bookmarkName)
     setBranchInfo({ branches: [...b.locals, ...b.remotes], current: b.current })
     setRemoteOnlyBranches(b.remotes)
+    setRemoteBranchNames(b.remoteNames)
     refreshMeta(b.current)
   }
 
@@ -352,32 +349,26 @@ export function RepoDetailPage({
 
   async function handlePush() {
     const token = new RemoteCancelToken()
-    setSyncCancelToken(token)
-    setSyncCancelling(false)
-    setSyncBusyLabel(formatBusyActionLabel("推送中"))
-    setPushing(true)
-    // 推送前若先 pull，进度文案基词切换
-    let busyBase = "推送中"
     const remoteOpts = {
       cancelToken: token,
       onProgress: async (info: RemoteProgressInfo) => {
-        setSyncBusyLabel(formatBusyActionLabel(busyBase, info))
-        await yieldForUi()
+        await updateOpBusy("正在推送", info.label)
       },
     }
     try {
+      await beginOpBusy("正在推送", undefined, makeSyncCancel(token))
       const branch = branchInfo.current
       if (!branch) throw new Error("当前没有可推送的分支")
 
       // 已发布分支先拉最新；新分支远端尚不存在，必须直接 push 创建
       if (hasRemote && (await hasRemoteBranch(bookmarkName, branch, "origin"))) {
         try {
-          busyBase = "推送中"
-          setSyncBusyLabel(formatBusyActionLabel("推送中", { phase: "先拉取最新" }))
+          await updateOpBusy("正在推送", "先拉取最新…")
           await pull(bookmarkName, "origin", branch, undefined, remoteOpts)
           const now = Date.now()
           updateBranchLastPulledAt(bookmarkName, branch, now)
           setLastPulledAt(now)
+          await updateOpBusy("正在推送")
         } catch (e: any) {
           if (isRemoteOperationCancelled(e)) throw e
           // pull 失败（冲突/网络）则不继续推送，避免盲目覆盖远端
@@ -391,8 +382,6 @@ export function RepoDetailPage({
           throw new Error("先拉取最新失败：" + msg)
         }
       }
-      busyBase = "推送中"
-      setSyncBusyLabel(formatBusyActionLabel("推送中"))
       await push(bookmarkName, "origin", branch, false, remoteOpts)
       await notifySync("push", displayName, branch)
       showAlert("推送成功", `已发布到 GitHub：origin/${branch}`)
@@ -421,26 +410,19 @@ export function RepoDetailPage({
       } catch (_e) {
         /* 忽略刷新失败 */
       }
-      setPushing(false)
-      setSyncBusyLabel(null)
-      setSyncCancelling(false)
-      setSyncCancelToken(null)
+      setOpBusy(null)
     }
   }
 
   async function handlePull() {
     const token = new RemoteCancelToken()
-    setSyncCancelToken(token)
-    setSyncCancelling(false)
-    setSyncBusyLabel(formatBusyActionLabel("拉取中"))
-    setPulling(true)
     try {
+      await beginOpBusy("正在拉取", undefined, makeSyncCancel(token))
       // pull 内会 resolveAuthor；不传 ref 时 fetch 全部分支列表，合并仅当前 ← origin/同名
       const result = await pull(bookmarkName, "origin", undefined, undefined, {
         cancelToken: token,
         onProgress: async (info: RemoteProgressInfo) => {
-          setSyncBusyLabel(formatBusyActionLabel("拉取中", info))
-          await yieldForUi()
+          await updateOpBusy("正在拉取", info.label)
         },
       })
       const now = Date.now()
@@ -475,35 +457,15 @@ export function RepoDetailPage({
       } catch (_e) {
         /* 忽略刷新失败 */
       }
-      setPulling(false)
-      setSyncBusyLabel(null)
-      setSyncCancelling(false)
-      setSyncCancelToken(null)
+      setOpBusy(null)
     }
-  }
-
-  function handleCancelSync() {
-    syncCancelToken?.cancel()
-    setSyncCancelling(true)
-    setSyncBusyLabel("取消中…")
   }
 
   /** 将指定分支合并进当前分支；冲突复用 ConflictsPage */
   async function handleMergeIntoCurrent(source: string) {
-    if (
-      merging ||
-      mergeInProgress ||
-      committing ||
-      stagingBusy ||
-      stashBusy ||
-      pushing ||
-      pulling ||
-      historyBusy
-    ) {
-      return
-    }
-    setMerging(true)
+    if (mutating || mergeInProgress) return
     try {
+      await beginOpBusy("正在合并", `${source} → ${branchInfo.current || "当前分支"}`)
       const result = await mergeBranchIntoCurrent(bookmarkName, source)
       const alert = formatMergeSuccessAlert(result)
       showAlert(alert.title, alert.message)
@@ -527,23 +489,12 @@ export function RepoDetailPage({
       } catch (_e) {
         /* 忽略刷新失败 */
       }
-      setMerging(false)
+      setOpBusy(null)
     }
   }
 
   async function handleMergePrompt() {
-    if (
-      merging ||
-      mergeInProgress ||
-      committing ||
-      stagingBusy ||
-      stashBusy ||
-      pushing ||
-      pulling ||
-      historyBusy
-    ) {
-      return
-    }
+    if (mutating || mergeInProgress) return
     try {
       const input = await Dialog.prompt({
         title: "合并到当前",
@@ -565,11 +516,15 @@ export function RepoDetailPage({
   }
 
   async function handleSwitchBranch(ref: string) {
+    if (mutating) return
     try {
+      await beginOpBusy("正在切换分支", ref)
       await checkoutBranch(bookmarkName, ref)
       await loadAll()
     } catch (e: any) {
       showAlert("切换失败", String(e?.message || e))
+    } finally {
+      setOpBusy(null)
     }
   }
 
@@ -597,6 +552,7 @@ export function RepoDetailPage({
         return
       }
       if (to === from) return
+      await beginOpBusy("正在重命名分支", `${from} → ${to}`)
       const res = await renameBranch(bookmarkName, from, to)
       await loadAll()
       if (!res.oldRemote) {
@@ -614,6 +570,8 @@ export function RepoDetailPage({
       }
     } catch (e: any) {
       showAlert("重命名失败", String(e?.message || e))
+    } finally {
+      setOpBusy(null)
     }
   }
 
@@ -642,6 +600,7 @@ export function RepoDetailPage({
         return
       }
       const emptyBefore = !hasCommits
+      await beginOpBusy("正在新建分支", name)
       await createBranch(bookmarkName, name)
       await loadAll()
       showAlert(
@@ -654,6 +613,8 @@ export function RepoDetailPage({
       )
     } catch (e: any) {
       showAlert("创建失败", String(e?.message || e))
+    } finally {
+      setOpBusy(null)
     }
   }
 
@@ -759,6 +720,7 @@ export function RepoDetailPage({
     }
     setCommitting(true)
     try {
+      await beginOpBusy("正在提交")
       const msg = buildCommitMessage(title, commitDescription)
       const oid = await commit(bookmarkName, msg)
       setCommitTitleText("")
@@ -772,6 +734,7 @@ export function RepoDetailPage({
       showAlert("提交失败", String(e?.message || e))
     } finally {
       setCommitting(false)
+      setOpBusy(null)
     }
   }
 
@@ -817,15 +780,35 @@ export function RepoDetailPage({
     }
   }
 
-  // 设置历史操作忙态，并让出一帧以便遮罩先渲染
-  async function beginHistoryBusy(title: string, message?: string) {
-    setHistoryBusy({ title, message })
+  // 设置操作忙态遮罩，并让出一帧以便遮罩先渲染；传 onCancel 则遮罩带取消按钮
+  async function beginOpBusy(
+    title: string,
+    message?: string,
+    onCancel?: () => void
+  ) {
+    setOpBusy({ title, message, onCancel })
     await yieldForUi()
   }
 
-  async function updateHistoryBusy(title: string, message?: string) {
-    setHistoryBusy({ title, message })
+  // 更新遮罩标题/副标题；保留取消按钮，已请求取消后冻结副标题为「取消中…」
+  async function updateOpBusy(title: string, message?: string) {
+    setOpBusy((cur) => ({
+      title,
+      message: cur?.cancelling ? cur.message : message,
+      onCancel: cur?.onCancel,
+      cancelling: cur?.cancelling,
+    }))
     await yieldForUi()
+  }
+
+  // 推送/拉取的遮罩取消回调：请求协作式取消并冻结副标题
+  function makeSyncCancel(token: RemoteCancelToken) {
+    return () => {
+      token.cancel()
+      setOpBusy((cur) =>
+        cur ? { ...cur, message: "取消中…", cancelling: true } : cur
+      )
+    }
   }
 
   async function submitAmend() {
@@ -835,26 +818,26 @@ export function RepoDetailPage({
       return
     }
     try {
-      await beginHistoryBusy("正在重编", "准备改写最近一次提交…")
+      await beginOpBusy("正在重编", "准备改写最近一次提交…")
       // 先 fetch 刷新远端跟踪引用，让 amend 内的「未推送」安全判定基于最新远端 tip
       if (hasRemote) {
         try {
-          await updateHistoryBusy("正在重编", "刷新远端引用…")
+          await updateOpBusy("正在重编", "刷新远端引用…")
           await fetchRemote(bookmarkName, "origin", branchInfo.current || undefined)
         } catch (_e) {
           /* fetch 失败则沿用旧引用，交由 amend 内 guard 判定 */
         }
       }
-      await updateHistoryBusy("正在重编", "改写提交…")
+      await updateOpBusy("正在重编", "改写提交…")
       const oid = await amendHeadCommit(bookmarkName, msg)
       setAmendMessage("")
-      await updateHistoryBusy("正在重编", "刷新仓库状态…")
+      await updateOpBusy("正在重编", "刷新仓库状态…")
       await loadAll()
       showAlert("已重编", shortOid(oid))
     } catch (e: any) {
       showAlert("重编失败", String(e?.message || e))
     } finally {
-      setHistoryBusy(null)
+      setOpBusy(null)
     }
   }
 
@@ -864,6 +847,7 @@ export function RepoDetailPage({
     if (!action) return
     try {
       if (action.type === "restore") {
+        await beginOpBusy("正在丢弃改动", action.filepath)
         await restoreFile(bookmarkName, action.filepath)
         await loadAll()
         return
@@ -880,45 +864,47 @@ export function RepoDetailPage({
         return
       }
       if (action.type === "deleteLocalBranch") {
+        await beginOpBusy("正在删除分支", action.branch)
         await deleteBranch(bookmarkName, action.branch)
         await loadAll()
         showAlert("已删除", `本地分支 ${action.branch} 已删除`)
         return
       }
       if (action.type === "deleteRemoteBranch") {
+        await beginOpBusy("正在删除远端分支", `origin/${action.branch}`)
         await deleteRemoteBranch(bookmarkName, "origin", action.branch)
         await loadAll()
         showAlert("已删除", `远端分支 origin/${action.branch} 已删除`)
         return
       }
       if (action.type === "revert") {
-        await beginHistoryBusy("正在撤销", "准备创建反向提交…")
+        await beginOpBusy("正在撤销", "准备创建反向提交…")
         // 先拉最新，避免在落后 HEAD 上生成反向提交（pull 失败则中止）
         if (hasRemote) {
-          await updateHistoryBusy("正在撤销", "先拉取最新…")
+          await updateOpBusy("正在撤销", "先拉取最新…")
           await pull(bookmarkName, "origin", branchInfo.current || undefined)
         }
-        await updateHistoryBusy("正在撤销", "生成反向提交…")
+        await updateOpBusy("正在撤销", "生成反向提交…")
         const oid = await revertCommit(bookmarkName, action.entry.oid)
-        await updateHistoryBusy("正在撤销", "刷新仓库状态…")
+        await updateOpBusy("正在撤销", "刷新仓库状态…")
         await loadAll()
         showAlert("已撤销", `新建反向提交 ${shortOid(oid)}`)
         return
       }
       if (action.type === "softReset") {
-        await beginHistoryBusy("正在回退", "准备 soft 回退 HEAD…")
+        await beginOpBusy("正在回退", "准备 soft 回退 HEAD…")
         // 先 fetch 刷新远端跟踪引用，让 reset 内判定基于最新远端 tip
         if (hasRemote) {
           try {
-            await updateHistoryBusy("正在回退", "刷新远端引用…")
+            await updateOpBusy("正在回退", "刷新远端引用…")
             await fetchRemote(bookmarkName, "origin", branchInfo.current || undefined)
           } catch (_e) {
             /* fetch 失败则沿用旧引用，交由 reset 内 guard 判定 */
           }
         }
-        await updateHistoryBusy("正在回退", "移动 HEAD…")
+        await updateOpBusy("正在回退", "移动 HEAD…")
         await softResetHead(bookmarkName)
-        await updateHistoryBusy("正在回退", "刷新仓库状态…")
+        await updateOpBusy("正在回退", "刷新仓库状态…")
         await loadAll()
         showAlert("已回退", "已 soft 回退 HEAD，改动保留在工作区/暂存区")
         return
@@ -949,7 +935,7 @@ export function RepoDetailPage({
           action.type === "softReset" ||
           action.type === "amend"
         ) {
-          await updateHistoryBusy(
+          await updateOpBusy(
             action.type === "revert"
               ? "正在撤销"
               : action.type === "softReset"
@@ -964,14 +950,8 @@ export function RepoDetailPage({
       }
       showAlert(title, String(e?.message || e))
     } finally {
-      // 历史改写类操作统一收尾；submitAmend 也会清，重复赋值无害
-      if (
-        action.type === "revert" ||
-        action.type === "softReset" ||
-        action.type === "amend"
-      ) {
-        setHistoryBusy(null)
-      }
+      // 操作遮罩统一收尾；submitAmend 内也会清，重复赋值无害
+      setOpBusy(null)
     }
   }
 
@@ -980,14 +960,7 @@ export function RepoDetailPage({
     : "尚未拉取"
 
   // 仓库级互斥：任一写操作进行中时禁用分支切换、暂存、提交、同步、合并、撤销等
-  const mutating =
-    committing ||
-    stagingBusy ||
-    stashBusy ||
-    pushing ||
-    pulling ||
-    merging ||
-    historyBusy != null
+  const mutating = committing || stagingBusy || stashBusy || opBusy != null
 
   // 可合并源：排除当前分支及其 origin/同名（自合并）
   const currentBranch = branchInfo.current || ""
@@ -1072,13 +1045,15 @@ export function RepoDetailPage({
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
       overlay={
-        historyBusy
+        opBusy
           ? {
             alignment: "center",
             content: (
               <BusyOverlay
-                title={historyBusy.title}
-                message={historyBusy.message}
+                title={opBusy.title}
+                message={opBusy.message}
+                onCancel={opBusy.onCancel}
+                cancelling={opBusy.cancelling}
               />
             ),
           }
@@ -1233,7 +1208,7 @@ export function RepoDetailPage({
                       foregroundStyle={COLOR_ACCENT}
                     />
                     <Text font="caption" foregroundStyle={COLOR_ACCENT}>
-                      {merging ? "合并中…" : "合并"}
+                      合并
                     </Text>
                   </HStack>
                 }
@@ -1264,7 +1239,7 @@ export function RepoDetailPage({
                     foregroundStyle={COLOR_ACCENT}
                   />
                   <Text font="caption" foregroundStyle={COLOR_ACCENT}>
-                    {merging ? "合并中…" : "合并"}
+                    合并
                   </Text>
                 </HStack>
               </Button>
@@ -1319,7 +1294,7 @@ export function RepoDetailPage({
           >
             {branchInfo.branches.map((b) => (
               <Text key={b} tag={b}>
-                {remoteOnlyBranches.includes(b) ? `${b} · 远端` : `${b} · 本地`}
+                {remoteBranchNames.includes(b) ? `${b} · 远端` : `${b} · 本地`}
               </Text>
             ))}
           </Picker>
@@ -1349,7 +1324,7 @@ export function RepoDetailPage({
             }
             systemImage="exclamationmark.triangle"
             action={openConflictsPage}
-            disabled={pushing || pulling || merging}
+            disabled={mutating}
           />
         </Section>
       ) : null}
@@ -1367,7 +1342,7 @@ export function RepoDetailPage({
                   setShowConflicts(false)
                   setShowRemotes(true)
                 }}
-                disabled={pushing || pulling || merging}
+                disabled={mutating}
               >
                 <HStack alignment="center" spacing={4}>
                   <Image
@@ -1390,58 +1365,24 @@ export function RepoDetailPage({
             </Text>
           }
         >
-          <HStack alignment="center">
-            <Button
-              action={handlePush}
-              disabled={pushing || pulling || merging || mergeInProgress}
-            >
-              <HStack alignment="center" spacing={6}>
-                <Image systemName="arrow.up.circle" />
-                <Text>
-                  {pushing
-                    ? syncBusyLabel || formatBusyActionLabel("推送中")
-                    : "推送 Push"}
-                </Text>
-              </HStack>
-            </Button>
-            <Spacer />
-            {pushing ? (
-              <Button
-                title="取消"
-                foregroundStyle="red"
-                font="caption"
-                buttonStyle="plain"
-                action={handleCancelSync}
-                disabled={syncCancelling}
-              />
-            ) : null}
-          </HStack>
-          <HStack alignment="center">
-            <Button
-              action={handlePull}
-              disabled={pushing || pulling || merging || mergeInProgress}
-            >
-              <HStack alignment="center" spacing={6}>
-                <Image systemName="arrow.down.circle" />
-                <Text>
-                  {pulling
-                    ? syncBusyLabel || formatBusyActionLabel("拉取中")
-                    : "拉取 Pull"}
-                </Text>
-              </HStack>
-            </Button>
-            <Spacer />
-            {pulling ? (
-              <Button
-                title="取消"
-                foregroundStyle="red"
-                font="caption"
-                buttonStyle="plain"
-                action={handleCancelSync}
-                disabled={syncCancelling}
-              />
-            ) : null}
-          </HStack>
+          <Button
+            action={handlePush}
+            disabled={mutating || mergeInProgress}
+          >
+            <HStack alignment="center" spacing={6}>
+              <Image systemName="arrow.up.circle" />
+              <Text>推送 Push</Text>
+            </HStack>
+          </Button>
+          <Button
+            action={handlePull}
+            disabled={mutating || mergeInProgress}
+          >
+            <HStack alignment="center" spacing={6}>
+              <Image systemName="arrow.down.circle" />
+              <Text>拉取 Pull</Text>
+            </HStack>
+          </Button>
         </Section>
       ) : canUpload ? (
         <Section

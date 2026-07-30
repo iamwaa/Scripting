@@ -21,7 +21,6 @@ import {
   computeSyncTopology,
   desiredOriginAfterFailedPush,
   releaseRepoMutationLock,
-  repoListStatusFromSnapshot,
   resolveUploadRemoteTarget,
   topologyFromCounts,
 } from "../utils/gitSync"
@@ -758,34 +757,6 @@ function testSyncTopology(): void {
     topologyFromCounts(-1.2, 1.8).ahead === 0 &&
       topologyFromCounts(-1.2, 1.8).behind === 1,
     "负值与小数应规整"
-  )
-
-  // 快照 → 列表状态
-  const fromSnap = repoListStatusFromSnapshot({
-    branch: "main",
-    uncommitted: 4,
-    ahead: 2,
-    behind: 0,
-  })
-  assert(
-    fromSnap.branch === "main" &&
-      fromSnap.uncommitted === 4 &&
-      fromSnap.ahead === 2 &&
-      fromSnap.syncState === "ahead" &&
-      fromSnap.hasRemote === true &&
-      fromSnap.workdirOk === true &&
-      fromSnap.conflictCount === 0,
-    "快照应映射为列表状态且推断 hasRemote"
-  )
-  const cleanSnap = repoListStatusFromSnapshot({
-    branch: "main",
-    uncommitted: 0,
-    ahead: 0,
-    behind: 0,
-  })
-  assert(
-    cleanSnap.hasRemote === false && cleanSnap.syncState === "upToDate",
-    "无 ahead/behind 的快照不推断 hasRemote"
   )
 }
 

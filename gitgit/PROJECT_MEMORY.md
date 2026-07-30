@@ -8,7 +8,7 @@
   - **Git 引擎（项目内置）**：`vendor/index.umd.min.js`（isomorphic-git UMD）+ `vendor/buffer-bundle.js`，由 `services/gitCore.ts` 的 `loadGitEngine()` eval 包装加载。**不依赖** `scripting-skills/isomorphic-git` skill，也不通过 `scripting-ts run .../git.ts` 调外部脚本；skill 可删，gitgit 仍可独立运行。HTTP 传输 `createHttpTransport` 同样在 gitCore 内。
   - **自定义仓库存储位置**：用 `DocumentPicker.pickDirectory()` 取得普通目录路径，并把路径保存到 `Storage` private 域；不再创建书签。旧仓库记录仍可通过 `FileManager.bookmarkedPath()` 兼容读取。`.git` 仍分离存于 App Group `git-repos/<safeName>/`。
   - **fs 适配器**：createFS(gitdir, workdir) 把 .git 内部路径映射到 App Group，工作区文件映射到用户授权目录。自定义 FileManager FS 下，非 `force` 的 `git.checkout` 常不完整删除/覆盖文件，分支切换必须 force（见 P2.20）。`stat` 并行 `FileManager.stat + isDirectory`（真机 `FileStat.type` 对目录也可能是 `file`，不能只靠 type；见 P2.21）。
-  - **设置/元数据持久化**：仓库列表、同步快照、Git 身份统一走 `services/storage.ts` 封装的 `Storage` API（**private 域**，键名前缀 `gitgit.`）。Token 仍存 Keychain。旧实现是 App Group 下的 repos.json/snapshots.json/git-identity.json 文件，已废弃（不兼容旧数据）。真正的 .git 内部文件与工作区文件仍走 FileManager。private 域同样能被 widget 读取（widget 与主脚本同属一个脚本，共享 private 域）。
+  - **设置/元数据持久化**：仓库列表、同步快照、Git 身份统一走 `services/storage.ts` 封装的 `Storage` API（**private 域**，键名前缀 `gitgit.`；同步快照仅供 widget 读取，列表页不使用）。Token 仍存 Keychain。旧实现是 App Group 下的 repos.json/snapshots.json/git-identity.json 文件，已废弃（不兼容旧数据）。真正的 .git 内部文件与工作区文件仍走 FileManager。private 域同样能被 widget 读取（widget 与主脚本同属一个脚本，共享 private 域）。
 - 已完成阶段：
   - **P0 骨架**（gitCore + repoStore + gitService + 仓库列表页 + 仓库详情页[改动/历史 Tab + commit] + widget + 通知封装）。已验证 Git 链路跑通（init/add/commit/log/branch）。
   - **P1 远端同步闭环**（token 管理 authStore + gitCore 加 createHttpTransport + gitService push/pull/clone/remote + githubApi REST + SettingsPage + ClonePage + 详情页 push/pull 按钮）。HTTP 传输适配器移植自 isomorphic-git 技能（只读 ArrayBuffer 复制修复）。
@@ -36,7 +36,7 @@
   - **Pull 读 Upstream**：`resolvePullTarget`；有 `branch.*.remote/merge` 则当前←remote/merge，无则 origin/同名；Push 仍 origin/同名；RemotesPage/详情 footer 已说明。
   - **M6 远程进度与取消**：`utils/remoteProgress.ts`；push/pull/clone 的 `onProgress` + `RemoteCancelToken`（无 AbortSignal，协作式抛 `RemoteOperationCancelled`）；ClonePage/详情同步区进度与取消；clone 取消仍走 `cleanupCloneAttempt`；测试 `testRemoteProgressHelpers`。
   - **历史搜索与分页**（2026-07-22）：`utils/history.ts` 提供查询规范化、提交标题/描述/作者/邮箱/OID 匹配与页切分；`getLogPage()` 接入详情页固定页大小加载；历史 Tab 支持显式搜索、匹配总数、空结果和加载更多。完整仓库提交状态与筛选结果分离，避免搜索无结果误判空仓库；独立测试 `tests/history.test.ts`。
-  - **M7-1 分支管理**（2026-07-27）：纯函数 `utils/branch.ts`（`validateBranchName` 走 check-ref-format 子集、`planDeleteBranch`/`planRenameBranch`/`planDeleteRemoteBranch`）；服务层 `getManagedBranches`（区分本地/仅远端分支）、`deleteBranch`（禁删当前分支 + 清 upstream 配置）、`renameBranch`（本地 `git.renameBranch` + 迁移 upstream 配置；旧分支发布过时自动同步远端：推新分支 `pushInternal` + 删远端旧分支 `deleteRemoteBranchInternal`，同一 mutation 内、远端失败不回滚本地、返回 `RenameBranchResult` 供 UI 提示，需 Token）、`deleteRemoteBranch`（`push({delete:true})` + 清 remote-tracking ref，需 Token），均接 `runRepoMutation`；UI 内联到详情页（**无独立管理页**，`BranchesPage.tsx` 已删）：`getManagedBranches` 拆本地/仅远端，`loadBranches` 存 `remoteOnlyBranches`；分支区 Picker 每项带「· 本地 / · 远端」标签，header 平铺四个操作（从左到右：删除、合并、重命名、新建）：删除为 Menu（`trash`/`COLOR_RED`，列所有非当前分支，远端项标注并走 `deleteRemoteBranch`），重命名为 Button（`pencil`，作用于当前分支），删除复用详情页 `PendingAction`/`runPending` 声明式确认 alert（`deleteLocalBranch`/`deleteRemoteBranch`）；测试 `testBranchHelpers`。
+  - **M7-1 分支管理**（2026-07-27）：纯函数 `utils/branch.ts`（`validateBranchName` 走 check-ref-format 子集、`planDeleteBranch`/`planRenameBranch`/`planDeleteRemoteBranch`）；服务层 `getManagedBranches`（区分本地/仅远端分支）、`deleteBranch`（禁删当前分支 + 清 upstream 配置）、`renameBranch`（本地 `git.renameBranch` + 迁移 upstream；`branch.<to>.merge` **必须改写为** `refs/heads/<to>`，不可原样保留旧 merge——isomorphic-git `push` 未传 `remoteRef` 时会读该配置，旧 merge 会把新本地分支推到远端旧名，再删旧远端就变成「旧没了、新也没有」；推送时另显式 `remoteRef: refs/heads/<to>` 双保险；同一 mutation 内删远端旧分支，远端失败不回滚本地、返回 `RenameBranchResult`，需 Token）、`deleteRemoteBranch`（`push({delete:true, ref: refs/remotes/... , remoteRef: refs/heads/...})` + 清 remote-tracking ref，需 Token），均接 `runRepoMutation`；UI 内联到详情页（**无独立管理页**，`BranchesPage.tsx` 已删）：`getManagedBranches` 拆本地/仅远端，`loadBranches` 存 `remoteOnlyBranches`；分支区 Picker 每项带「· 本地 / · 远端」标签，header 平铺四个操作（从左到右：删除、合并、重命名、新建）：删除为 Menu（`trash`/`COLOR_RED`，列所有非当前分支，远端项标注并走 `deleteRemoteBranch`），重命名为 Button（`pencil`，作用于当前分支），删除复用详情页 `PendingAction`/`runPending` 声明式确认 alert（`deleteLocalBranch`/`deleteRemoteBranch`）；测试 `testBranchHelpers`。
   - **P2.19 Stash 可靠性修复**（UI + 写入/解析 + drop）：
     - **独立于 skill**：运行期只依赖项目内 `vendor/index.umd.min.js`（`gitCore.ts`），不调用 `scripting-skills/isomorphic-git` 脚本；删掉 skill 不影响 gitgit。
     - **UI**：`StashTab` 列表只显示 `entry.message`，不显示 `stash@{N}`；应用/删除提示也用 message。`key` 用 `entry.index`。
@@ -54,9 +54,9 @@
   - **P2.21 大仓库状态加载优化**（克隆大仓后列表/详情「正在更新状态」过久）：
     - **根因**：① `statusMatrix` 扫全树时 `createFS.stat` 曾串行 `stat+isFile+isDirectory`；② `getSyncTopology` / `getLog` unpushed 用全量 `collectReachableCommits`，深历史极慢；③ 列表对每个仓库串 `getChanges+getBranches+listRemotes+topology` 且并行扫多仓；④ 详情首屏一次拉改动/Stash/文件/历史等。
     - **FS**：`createFS.stat` 改为并行 `stat + isDirectory`，去掉多余 `isFile`；`FileStat.type` 不可单独信任。
-    - **拓扑**：`findMergeBase` + 沿第一父 `countCommitsUntil` 算 ahead/behind；`getLog` unpushed 只走到 merge-base；失败再回退全量可达差集。纯逻辑：`utils/gitSync.ts` 的 `topologyFromCounts` / `repoListStatusFromSnapshot`。
-    - **列表**：`getRepoListStatus` 单次 `getCtx`（直接 statusMatrix + currentBranch + listRemotes，不做 materialize/完整分支表）；`RepoListPage` 首屏用 `storage.readSnapshots` 即时展示，再**串行**刷新各仓，有快照时不挡全屏遮罩。
-    - **返回列表旧改动数**：列表组件常不卸载，`statusMap` 会残留进详情前的 uncommitted；详情写操作虽在 `runRepoMutation` finally 里 `writeSnapshot`，但 `onAppear→refreshAll` 原先只开 live 刷新、未先盖快照，大仓 live 慢时会长时间显示旧改动。修复：`refreshAll` 先 `applySnapshotsToStatusMap` 再 `getRepoListStatus`。
+    - **拓扑**：`findMergeBase` + 沿第一父 `countCommitsUntil` 算 ahead/behind；`getLog` unpushed 只走到 merge-base；失败再回退全量可达差集。纯逻辑：`utils/gitSync.ts` 的 `topologyFromCounts`（`repoListStatusFromSnapshot` 已随 P2.29 删除）。
+    - **列表**：`getRepoListStatus` 单次 `getCtx`（直接 statusMatrix + currentBranch + listRemotes，不做 materialize/完整分支表）；`RepoListPage` **串行**刷新各仓（P2.28 起状态刷新不再用全屏遮罩，改行内加载图标；P2.29 起列表完全不再读快照）。
+    - **返回列表旧改动数**：列表组件常不卸载，`statusMap` 残留进详情前的值；曾用 `applySnapshotsToStatusMap` 先盖快照再 live 刷新（P2.29 已随列表快照移除）。现行为：返回时短暂显示内存旧值，`getRepoListStatus` 串行覆盖。
     - **详情**：首屏改动 + 历史 + 分支/远端/合并态；Stash、文件 Tab 懒加载（`handleTabChange`）。
     - **测试**：`tests/status-perf-helpers.test.ts`（轻量探针，优先跑）；`reliability.test.ts` 补 topologyFromCounts/快照映射与 stat 语义。完整 reliability 集成段可能很久。
     - **备份**：`backup/gitgit/gitgit_优化大仓库状态加载_20260721_170453`；返回列表旧改动另备 `gitgit_修复列表返回仍显示旧改动数_20260721_211655`。
@@ -84,6 +84,9 @@
     - **兼容策略**：不保留旧仓库级 `lastPulledAt` 字段，也不提供读取或迁移逻辑。升级后未拉取过的分支显示“尚未拉取”，首次成功拉取后建立自己的时间。
     - **测试**：`tests/reliability.test.ts` 的 `testBranchLastPulledAt` 覆盖 main/feature 隔离、更新一个分支时保留其它分支和非法输入。完整 reliability 测试及项目 TypeScript 诊断通过。
     - **备份**：`gitgit_最近拉取时间改为按分支管理_20260722_155408`、`gitgit_移除旧仓库级拉取时间_20260722_160028`。
+  - **P2.27 操作全屏进度遮罩补齐**（2026-07-29）：详情页 `historyBusy` 泛化为 `opBusy`（`beginOpBusy`/`updateOpBusy` + BusyOverlay；`runPending` finally 统一 `setOpBusy(null)`）；重命名/删除本地/删除远端/切换/新建分支、合并到当前、丢弃改动均接入全屏遮罩；`handleSwitchBranch` 补 `mutating` 守卫；列表页移除仓库（删 gitdir 缓存，大仓耗时）加 `removingName` 遮罩。克隆/拉取/推送仍为行内进度（remoteProgress + 取消）；提交/暂存/Stash/远端管理/冲突页保持按钮行内「处理中…」。备份：`gitgit_分支等操作补全屏进度动画_20260729_132559`。
+   - **P2.28 首页行内加载图标**（2026-07-30）：移除列表「正在更新状态」全屏遮罩与 `statusLoading` 状态；`RepoRow` 在无状态时行尾显示 `ProgressView`，加载完成后显示实际摘要；移除仓库的全屏遮罩保留。备份：`gitgit_首页仓库列表行内加载图标_20260730_122558`。
+   - **P2.29 列表页移除快照使用**（2026-07-30）：列表不再读 Storage 快照（删 `applySnapshotsToStatusMap`、statusMap 初始为空、`utils/gitSync.ts` 删 `repoListStatusFromSnapshot` 及两处测试中的用例）；快照机制保留仅供 widget——`writeSnapshot`（runRepoMutation finally）、`repoStore.readSnapshots`、removeRepo 快照清理均保留。备份：`gitgit_列表页移除快照使用_20260730_123905`。
   - 第四阶段及以后：交互式 Widget、富通知、Issues/PR、多仓库批量同步等。
 - 待做（旧 P3 标签，已并入第四阶段及以后）：
   - 交互式 widget、富通知 UI（notification.tsx）、远端 Issues/PR 浏览

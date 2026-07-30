@@ -157,8 +157,10 @@ export interface ManagedBranches {
   current: string | null
   /** 本地分支短名（含 current） */
   locals: string[]
-  /** origin 跟踪分支短名（去掉 origin/ 前缀、去掉 HEAD） */
+  /** 仅远端存在（本地无同名）的分支短名 */
   remotes: string[]
+  /** 全部 origin 跟踪分支短名（去掉 origin/ 前缀、去掉 HEAD），用于「远端是否存在」标签 */
+  remoteNames: string[]
   /** 是否存在 origin 远端 */
   hasRemote: boolean
 }

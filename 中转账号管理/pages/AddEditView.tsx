@@ -12,6 +12,7 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
   const dismiss = Navigation.useDismiss()
   const [name, setName] = useState(initial?.name ?? "")
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "")
+  const [checkinSite, setCheckinSite] = useState(initial?.checkinSite ?? "")
   const [platform, setPlatform] = useState<AccountPlatform>(initial?.platform ?? "newapi")
   const [username, setUsername] = useState(initial?.username ?? "")
   const [password, setPassword] = useState("")
@@ -94,6 +95,7 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
         id: initial?.id,
         name,
         baseUrl,
+        checkinSite,
         platform,
         username,
         password,
@@ -137,9 +139,10 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
     </Toolbar>}
     toast={{ message: toastMessage, isPresented: showToast, onChanged: setShowToast, position: "top" }}
   >
-    <Section title="基础信息">
+    <Section header={<Text>基础信息</Text>} footer={<Text>签到站点仅用于网页签到；留空则打开上方站点地址。适合签到页与主站分离的场景。</Text>}>
       <LabeledTextField title="显示名称" value={name} onChanged={setName} prompt="主站 / 小号 A" />
       <LabeledTextField title="站点地址" value={baseUrl} onChanged={setBaseUrl} prompt={"https://example.com"} />
+      <LabeledTextField title="签到站点" value={checkinSite} onChanged={setCheckinSite} prompt="可选，如 https://qd.example.com" />
       <Picker title="平台类型" value={platform} onChanged={(value: string) => setPlatform(value === "sub2api" ? "sub2api" : "newapi")}>
         <Text tag="newapi">NewAPI</Text>
         <Text tag="sub2api">Sub2API</Text>
