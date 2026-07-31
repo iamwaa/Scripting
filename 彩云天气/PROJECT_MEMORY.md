@@ -18,8 +18,11 @@
 ## home_screen_default_ui.tsx 首页 Tab
 
 - 默认导出函数组件 `HomeScreenTab`；直接 `return` 视图，禁止 `Navigation.present` / `Script.exit()`（Tab 常驻，退出会卡死需 Reload）。运行时 `Script.env === "home_screen"`。
-- 薄壳：初始地点取 `loadLastPlace()`，无历史则 `useEffect` 自动 `getCurrentPlace(true)` 定位一次并 `saveLastPlace`。
-- 有地点时复用 `WeatherPage` 的 `toolbarMode="detail"`（自绘背景 + 工具栏 + 自加载天气），`onLocate` 回切当前位置；不动 HomePage。
+- 薄壳：初始地点取 `loadLastPlace()` 作缓存兼底；进入 Tab 无条件 `getCurrentPlace(true)` 定位一次并 `saveLastPlace`，拿到新坐标后 WeatherPage 重拉天气（60s 缓存兼底）。定位失败保留 lastPlace；无 lastPlace 时回退首个收藏。
+- 收藏接通：WeatherPage 用 `toolbarMode="home"`（透明 List）+ 根层 ZStack 自绘 `WeatherBackground`（skycon 由 `onSkyconLoaded` 上报）；地址切换在导航栏左上 `Menu`（label 显示当前地点名，项含当前位置 + 收藏、选中项 checkmark）。
+- toolbar 必须挂在**不带 key 的 ZStack 包装层**（`<ZStack toolbar={<Toolbar><ToolbarItem placement="topBarLeading">…}>`），跨地点切换身份稳定只更新内容；**禁止挂进 `key={place.id}` 的 WeatherPage 子树**——切换时整个 List 卸载重建，旧项清理不掉会在导航栏左上叠出双份菜单。
+- WeatherPage 必须加 `key={place.id}` 强制按地点重建，否则 place 切换时旧 weather 会和新地点名串帧（WeatherPage 的 peek 缓存 useState 初始化只在挂载时跑一次）。
+- 星标收藏/取消收藏：`onFavoritesChanged` → `setFavorites(loadFavorites())` 同步菜单；收藏增删/重命名/排序仍在主 App 搜索页，Tab 只读切换。
 - 空态/定位中/失败：自绘 `WeatherBackground skycon={null}` 时段渐变 + `ContentUnavailableView`，含无 Token 提示。
 - 改代码不热重载，需 Reload（导航栏菜单或长按 Tab 栏 Home 图标）。
 

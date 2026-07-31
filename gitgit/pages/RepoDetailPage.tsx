@@ -76,6 +76,7 @@ import { FilesTab } from "./FilesTab"
 import { StashTab } from "./StashTab"
 import { UploadGitHubPage } from "./UploadGitHubPage"
 import { CommitDetailPage } from "./CommitDetailPage"
+import { ComparePage } from "./ComparePage"
 import { RemotesPage } from "./RemotesPage"
 import { ConflictsPage } from "./ConflictsPage"
 import {
@@ -155,6 +156,7 @@ export function RepoDetailPage({
   const [showUpload, setShowUpload] = useState(false)
   const [showRemotes, setShowRemotes] = useState(false)
   const [showConflicts, setShowConflicts] = useState(false)
+  const [showCompare, setShowCompare] = useState(false)
   const [mergeInProgress, setMergeInProgress] = useState(false)
   const [conflictCount, setConflictCount] = useState(0)
   const [selectedCommitOid, setSelectedCommitOid] = useState<string | null>(null)
@@ -1077,12 +1079,14 @@ export function RepoDetailPage({
           showUpload ||
           showRemotes ||
           showConflicts ||
+          showCompare ||
           selectedCommitOid != null,
         onChanged: (presented: boolean) => {
           if (!presented) {
             setShowUpload(false)
             setShowRemotes(false)
             setShowConflicts(false)
+            setShowCompare(false)
             setSelectedCommitOid(null)
             // 从冲突页返回时刷新合并状态
             loadMergeState()
@@ -1122,6 +1126,8 @@ export function RepoDetailPage({
               loadLog()
             }}
           />
+        ) : showCompare ? (
+          <ComparePage bookmarkName={bookmarkName} />
         ) : selectedCommitOid ? (
           // key 强制按提交重建，防止 navigationDestination 复用旧实例
           <CommitDetailPage
@@ -1335,6 +1341,27 @@ export function RepoDetailPage({
             <HStack alignment="center" spacing={8}>
               <Text>同步</Text>
               <Spacer />
+              <Button
+                action={() => {
+                  setSelectedCommitOid(null)
+                  setShowUpload(false)
+                  setShowRemotes(false)
+                  setShowConflicts(false)
+                  setShowCompare(true)
+                }}
+                disabled={mutating}
+              >
+                <HStack alignment="center" spacing={4}>
+                  <Image
+                    systemName="arrow.left.arrow.right"
+                    font="caption"
+                    foregroundStyle={COLOR_ACCENT}
+                  />
+                  <Text font="caption" foregroundStyle={COLOR_ACCENT}>
+                    对比差异
+                  </Text>
+                </HStack>
+              </Button>
               <Button
                 action={() => {
                   setSelectedCommitOid(null)

@@ -2,96 +2,18 @@ import {
   List,
   Section,
   Text,
-  HStack,
-  NavigationLink,
-  DisclosureGroup,
-  Image,
   useEffect,
   useState,
 } from "scripting"
 import type { CommitDetail } from "../types/git"
-import type { FileTreeNode } from "../utils/fileTree"
 import { buildFileTree } from "../utils/fileTree"
 import { getCommitDetail } from "../services/gitService"
-import { CommitDiffPage } from "./CommitDiffPage"
+import { CommitFileTreeNode } from "../components/CommitFileTree"
 import { shortOid, commitTitle } from "../utils/format"
 import {
   COLOR_LABEL,
   COLOR_SECONDARY_LABEL,
-  COLOR_GREEN,
-  COLOR_RED,
-  COLOR_ORANGE,
-  COLOR_ACCENT,
 } from "../constants/colors"
-
-function CommitFileTreeNode({
-  node,
-  statusByPath,
-  bookmarkName,
-  oid,
-  parentOid,
-}: {
-  node: FileTreeNode
-  statusByPath: Map<string, "added" | "modified" | "deleted">
-  bookmarkName: string
-  oid: string
-  parentOid: string | null
-}) {
-  if (node.type === "directory") {
-    return (
-      <DisclosureGroup
-        label={
-          <HStack alignment="center" spacing={10}>
-            <Image systemName="folder" foregroundStyle={COLOR_ACCENT} />
-            <Text foregroundStyle={COLOR_LABEL}>{node.name}</Text>
-          </HStack>
-        }
-      >
-        {node.children.map((child) => (
-          <CommitFileTreeNode
-            key={child.path}
-            node={child}
-            statusByPath={statusByPath}
-            bookmarkName={bookmarkName}
-            oid={oid}
-            parentOid={parentOid}
-          />
-        ))}
-      </DisclosureGroup>
-    )
-  }
-
-  const status = statusByPath.get(node.path) || "modified"
-  const color =
-    status === "added"
-      ? COLOR_GREEN
-      : status === "deleted"
-        ? COLOR_RED
-        : COLOR_ORANGE
-  const label = status === "added" ? "A" : status === "deleted" ? "D" : "M"
-  return (
-    <NavigationLink
-      destination={
-        <CommitDiffPage
-          bookmarkName={bookmarkName}
-          oid={oid}
-          parentOid={parentOid}
-          filepath={node.path}
-        />
-      }
-    >
-      <HStack spacing={10}>
-        <Text font="headline" foregroundStyle={color}>
-          {label}
-        </Text>
-        <Image systemName="doc" foregroundStyle={COLOR_SECONDARY_LABEL} />
-        <Text foregroundStyle={COLOR_LABEL} lineLimit={2}>
-          {node.name}
-        </Text>
-      </HStack>
-    </NavigationLink>
-  )
-}
 
 export function CommitDetailPage({
   bookmarkName,

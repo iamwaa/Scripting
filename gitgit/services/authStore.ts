@@ -5,6 +5,7 @@
  *  1. GitHub PAT 的 Keychain 存取（敏感凭据仍走系统 Keychain）
  *  2. Git 提交身份（user.name / user.email）的持久化（Storage private 域，旧实现为 JSON 文件）
  *  3. 构造 isomorphic-git 认证对象（{ username, password }）
+ *  4. Token 验证状态（GitHub 用户名）持久化到 Storage private 域，token 变更/清除时作废
  */
 
 import {
@@ -13,7 +14,12 @@ import {
   GITHUB_DEFAULT_USERNAME,
   DEFAULT_GIT_IDENTITY,
 } from "../constants/auth"
-import { readIdentity, writeIdentity } from "./storage"
+import {
+  readIdentity,
+  writeIdentity,
+  readGithubUser,
+  writeGithubUser,
+} from "./storage"
 import type { GitIdentity } from "../types/git"
 
 // 重新导出类型，保持调用处 `import type { GitIdentity } from authStore` 可用
@@ -44,6 +50,8 @@ export function setToken(token: string, username?: string): void {
     if (usernameSaved) Keychain.remove(KC_USERNAME_KEY)
     throw new Error("GitHub Token 保存到 Keychain 失败")
   }
+  // 凭据已更换，旧的验证结果作废
+  writeGithubUser(null)
 }
 
 /** 清除 token */
@@ -55,6 +63,17 @@ export function clearToken(): void {
   if (!tokenRemoved || !usernameRemoved) {
     throw new Error("GitHub Token 从 Keychain 清除失败")
   }
+  writeGithubUser(null)
+}
+
+/** 读取 Token 上次验证成功的 GitHub 用户名（未验证/已作废返回 null） */
+export function getVerifiedUser(): string | null {
+  return readGithubUser()
+}
+
+/** 保存 Token 验证成功的 GitHub 用户名，供设置页重进时恢复验证状态 */
+export function saveVerifiedUser(login: string): void {
+  writeGithubUser(login)
 }
 
 /**

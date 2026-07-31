@@ -346,6 +346,15 @@ export function updateBranchLastPulledAt(
   return patch ? updateRepo(bookmarkName, patch) : null
 }
 
+/** 删除 gitdir；删除失败或删除后仍存在时必须抛错，避免静默留下缓存。 */
+async function removeGitdir(path: string): Promise<void> {
+  if (!(await FileManager.exists(path))) return
+  await FileManager.remove(path)
+  if (await FileManager.exists(path)) {
+    throw new Error(`Git 缓存目录删除后仍存在：${path}`)
+  }
+}
+
 /**
  * 移除仓库：
  *  - 元数据
@@ -360,27 +369,22 @@ export async function removeRepo(bookmarkName: string): Promise<void> {
 
   // 1) 删 gitdir 缓存
   if (repo) {
-    const gitdir = getGitdirPath(repo)
-    try {
-      if (await FileManager.exists(gitdir)) {
-        await FileManager.remove(gitdir)
-      }
-    } catch (_e) {
-      /* 尽量继续清理其它项 */
-    }
-    // 兼容旧数据：按 bookmarkName 规整名再试一次
-    const legacyGitdir =
-      GIT_REPOS_DIR +
-      "/" +
-      bookmarkName.replace(/[^a-zA-Z0-9_-]/g, "_")
-    if (legacyGitdir !== gitdir) {
+    const cleanupErrors: string[] = []
+    const gitdirs = new Set<string>([getGitdirPath(repo)])
+    // 兼容旧版以 bookmarkName 规整后作为目录名的缓存。
+    gitdirs.add(
+      GIT_REPOS_DIR + "/" + bookmarkName.replace(/[^a-zA-Z0-9_-]/g, "_")
+    )
+
+    for (const gitdir of gitdirs) {
       try {
-        if (await FileManager.exists(legacyGitdir)) {
-          await FileManager.remove(legacyGitdir)
-        }
-      } catch (_e) {
-        /* 忽略 */
+        await removeGitdir(gitdir)
+      } catch (e: any) {
+        cleanupErrors.push(String(e?.message || e))
       }
+    }
+    if (cleanupErrors.length > 0) {
+      throw new Error(`无法删除本地 Git 缓存：${cleanupErrors.join("；")}`)
     }
     // 2) 删访问书签
     if (

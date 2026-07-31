@@ -146,6 +146,39 @@ export interface CommitDetail {
   files: CommitFileChange[]
 }
 
+/**
+ * origin 当前同名分支与远端管理中设置的目标分支的差异对比结果。
+ * 文件差异为三点语义：merge-base → 各侧 tip；无共同祖先时相对空树。
+ */
+export interface RefCompareResult {
+  /** 基准远端分支，如 origin/main */
+  baseTrack: string
+  /** 远端管理中为当前分支设置的目标远端分支 */
+  targetTrack: string
+  /** 兼容旧字段：本地分支名与目标标识 */
+  localBranch: string
+  track: string
+  baseOid: string
+  targetOid: string
+  localOid: string
+  remoteOid: string
+  /** 共同祖先 oid；无共同祖先为 null */
+  mergeBaseOid: string | null
+  syncState: RepoSyncState
+  /** 仅基准远端拥有的提交总数 */
+  ahead: number
+  /** 仅设置远端拥有的提交总数 */
+  behind: number
+  /** 仅基准远端拥有的提交列表（最新在前，超出上限时截断） */
+  aheadCommits: CommitEntry[]
+  /** 仅设置远端拥有的提交列表（最新在前，超出上限时截断） */
+  behindCommits: CommitEntry[]
+  /** merge-base → 基准远端 tip 的文件变化 */
+  localFiles: CommitFileChange[]
+  /** merge-base → 设置远端 tip 的文件变化 */
+  remoteFiles: CommitFileChange[]
+}
+
 /** 分支列表结果 */
 export interface BranchInfo {
   branches: string[]

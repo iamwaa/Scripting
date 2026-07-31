@@ -29,6 +29,8 @@ export const STORAGE_KEYS = {
   identity: PREFIX + "identity",
   /** 操作完成本地通知开关（默认 true） */
   notifyEnabled: PREFIX + "notifyEnabled",
+  /** Token 验证成功的 GitHub 用户名（非敏感缓存；token 变更时作废） */
+  githubUser: PREFIX + "githubUser",
 } as const
 
 // private 域（widget 与主脚本同属一个脚本，共享同一 private 域）
@@ -72,6 +74,24 @@ export function readIdentity(): GitIdentity | null {
 export function writeIdentity(identity: GitIdentity): void {
   if (!Storage.set(STORAGE_KEYS.identity, identity)) {
     throw new Error("Git 身份保存失败")
+  }
+}
+
+// === GitHub 已验证用户 ===
+
+/** 读取 Token 上次验证成功的 GitHub 用户名（未验证过返回 null） */
+export function readGithubUser(): string | null {
+  return Storage.get<string>(STORAGE_KEYS.githubUser)
+}
+
+/** 保存已验证的 GitHub 用户名；传 null 清除（token 变更/清除时调用） */
+export function writeGithubUser(login: string | null): void {
+  if (login == null) {
+    Storage.remove(STORAGE_KEYS.githubUser)
+    return
+  }
+  if (!Storage.set(STORAGE_KEYS.githubUser, login)) {
+    throw new Error("GitHub 用户保存失败")
   }
 }
 

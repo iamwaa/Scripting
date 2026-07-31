@@ -28,6 +28,8 @@ import {
   hasToken,
   setToken,
   clearToken,
+  getVerifiedUser,
+  saveVerifiedUser,
 } from "../services/authStore"
 import {
   readNotifyEnabled,
@@ -75,7 +77,10 @@ export function SettingsPage() {
       setName(identity.name)
       setEmail(identity.email)
     }
-    setTokenConfigured(hasToken())
+    const configured = hasToken()
+    setTokenConfigured(configured)
+    // 恢复上次验证成功的用户名；token 不存在时验证状态已随清除作废
+    setGithubUser(configured ? getVerifiedUser() : null)
   }
 
   function handleNotifyChanged(value: boolean) {
@@ -137,6 +142,12 @@ export function SettingsPage() {
     try {
       const login = await verifyToken()
       setGithubUser(login)
+      // 持久化失败仅影响下次进入页面的验证状态显示，不吞掉本次验证成功
+      try {
+        saveVerifiedUser(login)
+      } catch {
+        // 忽略持久化失败
+      }
       showAlert("验证成功", `已认证为 @${login}`)
     } catch (e: any) {
       setGithubUser(null)
@@ -169,6 +180,12 @@ export function SettingsPage() {
     try {
       const login = await verifyToken()
       setGithubUser(login)
+      // 持久化失败仅影响下次进入页面的验证状态显示，不吞掉本次验证成功
+      try {
+        saveVerifiedUser(login)
+      } catch {
+        // 忽略持久化失败
+      }
       showAlert("验证成功", `已认证为 @${login}`)
     } catch (e: any) {
       showAlert("验证失败", String(e?.message || e))
