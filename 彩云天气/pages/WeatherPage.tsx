@@ -14,6 +14,7 @@ import {
   VStack,
   ZStack,
   useEffect,
+  useRef,
   useState,
   type VirtualNode,
 } from "scripting"
@@ -50,6 +51,7 @@ export function WeatherPage({
   onSkyconLoaded,
   toolbarMode = "home",
   bottomAccessory,
+  refreshToken = 0,
 }: {
   place: Place
   onFavoritesChanged?: () => void
@@ -60,6 +62,8 @@ export function WeatherPage({
   toolbarMode?: "home" | "detail"
   // 首页内嵌模式：挂在 List 底部 safeAreaInset 的分页条（内容自动避开）
   bottomAccessory?: VirtualNode
+  // 外部刷新信号：数值变化时强制跳过缓存重新拉取（右上角刷新按钮）
+  refreshToken?: number
 }) {
   // 首帧直出缓存：单实例分页下切回已看过的地点不闪 loading
   const [initialWeather] = useState(
@@ -70,7 +74,7 @@ export function WeatherPage({
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const loadWeather = async () => {
+  const loadWeather = async (force = false) => {
     setLoading(true)
     setRefreshing(true)
     setError(null)
@@ -78,6 +82,7 @@ export function WeatherPage({
       const response = await fetchWeather({
         longitude: place.longitude,
         latitude: place.latitude,
+        force,
       })
       setWeather(response.result)
       onSkyconLoaded?.(response.result.realtime?.skycon ?? null)
@@ -89,6 +94,15 @@ export function WeatherPage({
       setRefreshing(false)
     }
   }
+
+  // 外部刷新信号：仅在数值真正变化时强制刷新；挂载/重建（含翻页切换地点）时不误触发
+  const prevRefreshTokenRef = useRef(refreshToken)
+  useEffect(() => {
+    if (refreshToken !== prevRefreshTokenRef.current) {
+      prevRefreshTokenRef.current = refreshToken
+      if (refreshToken > 0) void loadWeather(true)
+    }
+  }, [refreshToken])
 
   // 地点切换时重新加载；缓存首帧先上报 skycon，背景同步不闪回退渐变
   useEffect(() => {

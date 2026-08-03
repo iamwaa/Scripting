@@ -54,10 +54,9 @@
 修改页面、组件、小部件、Live Activity 或通知时：
 
 - 必须适配 Light/Dark；优先系统语义色，禁止只适合浅色的硬编码配色。自定义颜色必须分别提供 light/dark 值。
-- 可见 UI 默认先读取并遵循 `liquid-glass-ui`；用户明确要求普通系统 `List`/设置风格，或场景不适合玻璃时跳过。
-- Liquid Glass 仅用于 iOS 26+；更低版本必须使用 `Material` 等回退，不得裸用未做版本保护的 `UIGlass`、`glassEffect`、`GlassEffectContainer`。
-- 复用 skill 提供的版本感知 surface props、页面骨架和标准目录，不自行复制双套玻璃分支。
-- 交付前核对 Light/Dark 与 iOS 26+/<26；避免不透明白卡、grouped List 灰底残留、圆角混乱和过度厚重材质。
+- 创建页面/可见 UI 时默认读取并遵循 `create-ios-page` 技能（普通系统风格），不主动使用液态玻璃；仅在用户明确要求 Liquid Glass / 液态玻璃风格时，才改为读取并遵循 `liquid-glass-ui`。
+- 使用 Liquid Glass 时：仅用于 iOS 26+，更低版本必须使用 `Material` 等回退，不得裸用未做版本保护的 `UIGlass`、`glassEffect`、`GlassEffectContainer`；复用 skill 提供的版本感知 surface props、页面骨架和标准目录，不自行复制双套玻璃分支。
+- 玻璃 UI 交付前核对 Light/Dark 与 iOS 26+/<26；避免不透明白卡、grouped List 灰底残留、圆角混乱和过度厚重材质。
 - 字号一律用数字（如 `font={16}`），不要用 `title`、`headline`、`body`、`caption` 等语义字号名。
 - 列表行距：独立玻璃卡片行（`listRowBackground: <></>`、每行 self-contained 卡）压缩行距时用**负 `listRowSpacing`** 抵消系统行 padding（详见 `liquid-glass-ui`「行距」）；原生 inset 行仍用正向小间距。这是布局结构属性、与 Liquid Glass/Material 无关。不要因「卡片不重叠」原则字面回避负值——该原则禁的是制造卡片重叠/叠穿导航栏，而非压缩独立卡片行距。
 

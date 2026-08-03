@@ -1,0 +1,50 @@
+{
+  "description": "在局域网或热点下与任意设备的浏览器互传文件、图片和文字，扫码即连，无需安装应用。",
+  "runInApp": true,
+  "entry": "index.tsx",
+  "iconImage": "",
+  "localizedDescriptions": {
+    "it": "",
+    "ja": "",
+    "en": "",
+    "pt": "",
+    "de": "",
+    "fr": "",
+    "es": "",
+    "zh": "",
+    "ru": ""
+  },
+  "permissions": null,
+  "author": {
+    "email": null,
+    "homepage": "https://github.com/Keywos",
+    "name": "Keywos"
+  },
+  "remoteResource": null,
+  "intentInputTypes": [
+    "FileURLs",
+    "Images"
+  ],
+  "localizedNames": {
+    "it": "",
+    "ja": "",
+    "en": "",
+    "pt": "",
+    "de": "",
+    "fr": "",
+    "es": "",
+    "zh": "",
+    "ru": ""
+  },
+  "version": "2.0.0",
+  "name": "局域网文件传输",
+  "color": "rgba(0, 198, 165,1)",
+  "icon": "document.badge.arrow.up",
+  "contributors": [
+    {
+      "name": "Waa",
+      "homepage": "https://github.com/iamwaa",
+      "email": null
+    }
+  ]
+}

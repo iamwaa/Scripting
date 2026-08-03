@@ -1,9 +1,7 @@
-// 温度显示：保留一位小数并去掉多余 0
+// 温度显示：统一四舍五入为整数
 export function formatTemp(value?: number | null, unit = "°"): string {
   if (value == null || Number.isNaN(value)) return "—"
-  const rounded = Math.round(value * 10) / 10
-  const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
-  return `${text}${unit}`
+  return `${Math.round(value)}${unit}`
 }
 
 export function formatPercent(ratio?: number | null): string {

@@ -38,9 +38,6 @@ function distanceKm(
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)))
 }
 
-// 定位坐标为核心，POI 名称仅作展示；距离过远的 POI 地名不适合代表当前位置
-const POI_MAX_DISTANCE_KM = 0.5
-
 async function tryGetOrigin(): Promise<{ longitude: number; latitude: number } | null> {
   try {
     await Location.setAccuracy("hundredMeters")
@@ -58,61 +55,8 @@ async function tryGetOrigin(): Promise<{ longitude: number; latitude: number } |
   return null
 }
 
-// 获取当前位置：先以 GPS 坐标为基准，再逆地理得到地名，
-// 最后用 MapKit 搜索附近 POI，仅借用最近的 POI 名称；核心坐标始终不变。
-// 返回的是地点名称元数据（不含坐标替换），让外层统一拼入真实定位坐标。
-async function reverseSearchNearbyPoi(
-  longitude: number,
-  latitude: number,
-  placemark: LocationPlacemark
-): Promise<{ name: string; subtitle?: string } | null> {
-  // 从逆地理结果提取关键词；name 通常已是最近的道路/门牌或地标，优先使用
-  const keyword =
-    placemark.name ||
-    placemark.subLocality ||
-    placemark.locality ||
-    placemark.administrativeArea ||
-    ""
-  if (!keyword) return null
-
-  try {
-    const results = await MapSearch.locate({
-      query: keyword,
-      region: {
-        center: { latitude, longitude },
-        span: { latitudeDelta: 0.05, longitudeDelta: 0.05 },
-      },
-      resultTypes: ["pointOfInterest"],
-    })
-    if (results.length === 0) return null
-
-    // 取距离最近的 POI，并加阈值过滤
-    let best: (typeof results)[0] | null = null
-    let bestDist = Infinity
-    for (const item of results) {
-      const d = distanceKm(
-        longitude,
-        latitude,
-        item.coordinate.longitude,
-        item.coordinate.latitude
-      )
-      if (d < bestDist) {
-        best = item
-        bestDist = d
-      }
-    }
-    if (!best || bestDist > POI_MAX_DISTANCE_KM) return null
-
-    const poiName = best.name?.trim() || keyword
-    return {
-      name: poiName,
-      subtitle: formatLocationSubtitle(best.formattedAddress, poiName),
-    }
-  } catch {
-    return null
-  }
-}
-
+// 获取当前位置：以 GPS 坐标为基准，地名只取系统逆地理的真实地址，
+// 不再搜附近 POI 做名称覆盖，避免显示成隔壁的地标名。
 export async function getCurrentPlace(forceRequest = false): Promise<Place> {
   await Location.setAccuracy("hundredMeters")
   const location = await Location.requestCurrent({ forceRequest })
@@ -146,21 +90,10 @@ export async function getCurrentPlace(forceRequest = false): Promise<Place> {
 
   if (!placemark) return current
 
-  // 先用逆地理结果填充地名
+  // 直接采用逆地理的真实地名与行政区划副标题
   current.name = pickName(placemark)
   const geoSubtitle = pickSubtitle(placemark)
   if (geoSubtitle) current.subtitle = geoSubtitle
-
-  // 再尝试用 MapKit 找更近、更具体的 POI 名称；只改展示名，不改坐标
-  const poiMeta = await reverseSearchNearbyPoi(
-    location.longitude,
-    location.latitude,
-    placemark
-  )
-  if (poiMeta) {
-    current.name = poiMeta.name
-    if (poiMeta.subtitle) current.subtitle = poiMeta.subtitle
-  }
 
   return current
 }

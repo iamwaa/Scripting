@@ -15,6 +15,8 @@ export type FetchWeatherOptions = {
   alert?: boolean
   // 可选覆盖 Token；默认读 Storage
   token?: string
+  // 强制跳过 60s 缓存，手动刷新时使用
+  force?: boolean
 }
 
 // 构造请求 url（缓存 key 同源）
@@ -58,7 +60,7 @@ export async function fetchWeather(options: FetchWeatherOptions): Promise<Weathe
 
   const url = buildWeatherUrl(options)
   const cached = responseCache.get(url)
-  if (cached && cached.expiresAt > Date.now()) return cached.response
+  if (!options.force && cached && cached.expiresAt > Date.now()) return cached.response
 
   const inFlight = inFlightRequests.get(url)
   if (inFlight) return inFlight

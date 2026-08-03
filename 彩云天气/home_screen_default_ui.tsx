@@ -57,6 +57,8 @@ export default function HomeScreenTab() {
   const [favorites, setFavorites] = useState<Place[]>(() => loadFavorites())
   // 当前展示地点的实时 skycon，驱动根层全屏背景
   const [skycon, setSkycon] = useState<SkyconCode | null>(null)
+  // 右上角刷新信号：数值变化时当前 WeatherPage 强制跳过缓存重新拉取
+  const [refreshToken, setRefreshToken] = useState(0)
 
   // WeatherPage 星标收藏/取消收藏后同步菜单列表
   const syncFavorites = () => setFavorites(loadFavorites())
@@ -125,8 +127,9 @@ export default function HomeScreenTab() {
             </Text>
             <Image
               systemName="chevron.up.chevron.down"
-              font={10}
-              foregroundStyle={textColor.tertiary}
+              font={9}
+              fontWeight="semibold"
+              foregroundStyle={textColor.secondary}
             />
           </HStack>
         }
@@ -154,6 +157,13 @@ export default function HomeScreenTab() {
           toolbar={
             <Toolbar>
               <ToolbarItem placement="topBarLeading">{placeMenu}</ToolbarItem>
+              <ToolbarItem placement="topBarTrailing">
+                <Button
+                  title=""
+                  systemImage="arrow.clockwise"
+                  action={() => setRefreshToken(token => token + 1)}
+                />
+              </ToolbarItem>
             </Toolbar>
           }
         >
@@ -165,6 +175,7 @@ export default function HomeScreenTab() {
             toolbarMode="home"
             onSkyconLoaded={setSkycon}
             onFavoritesChanged={syncFavorites}
+            refreshToken={refreshToken}
           />
         </ZStack>
       </NavigationStack>
