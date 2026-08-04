@@ -5,41 +5,28 @@ import {
   useState,
   useEffect,
 } from "scripting"
+import type { MessageDetail } from "../types"
 import { fetchMessageContent } from "../api/client"
-import { formatDate, getSender, getSubject } from "../utils/format"
+import { copyText } from "../utils/ui"
+import { CopyableRow } from "../components/CopyableRow"
+import {
+  formatDate,
+  getMessageBody,
+  getSender,
+  getSubject,
+} from "../utils/format"
 
 export type MessagePageProps = {
   token: string
   messageId: string | number
 }
 
-// 提取可读正文
-function extractBody(detail: any): string {
-  if (!detail) {
-    return "（无正文内容）"
-  }
-  if (typeof detail.text === "string" && detail.text.trim()) {
-    return detail.text
-  }
-  if (typeof detail.body === "string" && detail.body.trim()) {
-    return detail.body
-  }
-  if (typeof detail.html === "string" && detail.html.trim()) {
-    return detail.html
-  }
-  if (Array.isArray(detail.html) && detail.html.length > 0) {
-    return detail.html.join("\n")
-  }
-  if (typeof detail.intro === "string" && detail.intro.trim()) {
-    return detail.intro
-  }
-  return "（无正文内容）"
-}
-
 export function MessagePage({ token, messageId }: MessagePageProps) {
   const [loading, setLoading] = useState(true)
-  const [detail, setDetail] = useState<any>(null)
+  const [detail, setDetail] = useState<MessageDetail | null>(null)
   const [error, setError] = useState<string>("")
+  const [copiedMessage, setCopiedMessage] = useState("")
+  const [showCopiedToast, setShowCopiedToast] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -68,39 +55,66 @@ export function MessagePage({ token, messageId }: MessagePageProps) {
     }
   }, [token, messageId])
 
-  const body = extractBody(detail)
+  const subject = getSubject(detail)
+  const sender = getSender(detail)
+  const date = formatDate(detail?.createdAt || detail?.date || detail?.created_at)
+  const body = getMessageBody(detail)
+
+  async function copyValue(label: string, value: string) {
+    await copyText(value)
+    setCopiedMessage(`${label}已复制`)
+    setShowCopiedToast(true)
+  }
 
   return (
     <List
       navigationTitle="邮件详情"
       navigationBarTitleDisplayMode="inline"
+      toast={{
+        message: copiedMessage,
+        position: "top",
+        duration: 2,
+        isPresented: showCopiedToast,
+        onChanged: setShowCopiedToast,
+      }}
     >
-      {loading && (
+      {loading ? (
         <Section>
           <Text>正在加载邮件内容…</Text>
         </Section>
-      )}
-      {error && (
+      ) : null}
+      {error ? (
         <Section>
           <Text>错误：{error}</Text>
         </Section>
-      )}
-      {!loading && detail && (
-        <>
-          <Section title="主题">
-            <Text>{getSubject(detail)}</Text>
-          </Section>
-          <Section title="发件人">
-            <Text>{getSender(detail)}</Text>
-          </Section>
-          <Section title="时间">
-            <Text>{formatDate(detail.createdAt || detail.date || detail.created_at)}</Text>
-          </Section>
-          <Section title="正文">
-            <Text>{body}</Text>
-          </Section>
-        </>
-      )}
+      ) : null}
+      {!loading && detail ? (
+        <Section
+          header={<Text>主题</Text>}
+        >
+          <CopyableRow label="主题" value={subject} onCopy={copyValue} />
+        </Section>
+      ) : null}
+      {!loading && detail ? (
+        <Section title="发件人">
+          <CopyableRow label="发件人" value={sender} onCopy={copyValue} />
+        </Section>
+      ) : null}
+      {!loading && detail ? (
+        <Section title="时间">
+          <CopyableRow label="时间" value={date} onCopy={copyValue} />
+        </Section>
+      ) : null}
+      {!loading && detail ? (
+        <Section title="正文">
+          <CopyableRow label="正文" value={body} onCopy={copyValue} />
+        </Section>
+      ) : null}
+      {!loading && !detail && !error ? (
+        <Section>
+          <Text>未获取到邮件内容</Text>
+        </Section>
+      ) : null}
     </List>
   )
 }

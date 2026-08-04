@@ -17,7 +17,9 @@ import {
   clearHistory,
   getDomainFromEmail,
   getPrefixFromEmail,
+  loadActiveSession,
   loadHistory,
+  saveActiveSession,
   type HistoryItem,
 } from "../utils/storage"
 import { copyText, showAlert } from "../utils/ui"
@@ -37,11 +39,21 @@ export function HomePage() {
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [showCopiedToast, setShowCopiedToast] = useState(false)
 
-  // 初次进入时创建随机邮箱并加载历史
+  // 初次进入时恢复当前邮箱，失效后再创建新邮箱
   useEffect(() => {
     async function init() {
       try {
         setHistory(loadHistory())
+        const activeSession = loadActiveSession()
+        if (activeSession) {
+          try {
+            const result = await restoreSession(activeSession.email)
+            applySession(result.data.email, result.auth.token)
+            return
+          } catch {
+            // 会话失效时回退到创建新邮箱
+          }
+        }
         await buildSession()
       } catch (err: any) {
         showAlert(`初始化失败：${err?.message || "未知错误"}`)
@@ -60,6 +72,7 @@ export function HomePage() {
     setPrefix(getPrefixFromEmail(newEmail))
     setDomain(getDomainFromEmail(newEmail))
     addToHistory(newEmail)
+    saveActiveSession(newEmail, newToken)
     setHistory(loadHistory())
     setActiveSession(newEmail, newToken)
   }

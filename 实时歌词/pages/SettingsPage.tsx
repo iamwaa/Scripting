@@ -94,8 +94,8 @@ export function SettingsPage(props: SettingsPageProps) {
                 value={adaptiveKeepAlive}
                 onChanged={onAdaptiveKeepAliveChanged}
               />
-              <Text font="caption" foregroundStyle="gray">
-                暂停播放时自动停止定位，恢复播放后再次启动。
+              <Text font={13} foregroundStyle="gray">
+                暂停时停止定位以节省电量，实时活动保持显示；恢复播放后再次启动定位。
               </Text>
             </VStack>
           ) : null}

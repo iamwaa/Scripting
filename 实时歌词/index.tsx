@@ -36,7 +36,7 @@ const TICK_MS = 800
 const SETTING_OPEN_MUSIC = "setting_open_music"
 // 后台定位保活（耗电更高，需「始终」定位权限）
 const SETTING_LOCATION_KEEPALIVE = "setting_location_keepalive"
-// 自适应保活：播放时启定位，暂停时停定位（仅在定位保活开启时生效）
+// 自适应保活：播放时启定位，暂停时停定位（实时活动保持显示）
 const SETTING_ADAPTIVE_KEEPALIVE = "setting_adaptive_keepalive"
 // 仅控制应用内歌词页是否应用已设置的时间偏移
 const SETTING_LYRICS_PAGE_OFFSET = "setting_lyrics_page_offset"
@@ -85,6 +85,8 @@ const ctx: {
   updateChain: Promise<void>
   // 上次播放状态，用于检测播放/暂停切换以启停定位保活
   lastPlayingState: boolean
+  // 每次创建实时活动递增，防止旧更新或旧回调影响新实例
+  activityGeneration: number
 } = {
   activity: null,
   lyric: null,
@@ -100,6 +102,7 @@ const ctx: {
   seq: 0,
   updateChain: Promise.resolve(),
   lastPlayingState: false,
+  activityGeneration: 0,
 }
 
 /** 按文档：后台事件后申请 keepAlive，前台时释放；同一脚本只持有一次请求 */
@@ -240,6 +243,25 @@ function buildEndedState(): LyricActivityState {
   }
 }
 
+/** 仅清理本项目残留的实时歌词活动，不影响 Scripting 中其他脚本的活动 */
+async function endExistingLyricsActivities() {
+  try {
+    const activities = await LiveActivity.getAllActivities()
+    await Promise.all(activities.map(async ({ id }) => {
+      try {
+        const activity = await LiveActivity.from<LyricActivityState>(id, "LyricsLiveActivity")
+        if (activity) {
+          await activity.end(buildEndedState(), { dismissTimeInterval: 0 })
+        }
+      } catch {
+        // 不是本项目注册名或实例已结束，忽略
+      }
+    }))
+  } catch {
+    // 查询失败时忽略，由调用方决定是否继续
+  }
+}
+
 /** 结束实时活动并释放全部资源（关闭脚本时必须同步结束锁屏活动） */
 async function cleanup() {
   // 先停 ticker，再清空引用，避免后续 update 与 end 竞态
@@ -248,6 +270,7 @@ async function cleanup() {
   stopLocationKeepAlive()
   ctx.started = false
   ctx.starting = false
+  ctx.activityGeneration += 1
   ctx.lastPushKey = ""
   const activity = ctx.activity
   ctx.activity = null
@@ -268,12 +291,8 @@ async function cleanup() {
     }
   }
 
-  // 兜底清掉本脚本可能残留的实时活动（重启后 ctx 丢失时也有效）
-  try {
-    await LiveActivity.endAllActivities({ dismissTimeInterval: 0 })
-  } catch {
-    // 忽略
-  }
+  // 兜底清掉本项目残留实例（重启后 ctx 丢失时也有效）。
+  await endExistingLyricsActivities()
 }
 
 /** 写入供小组件读取的快照 */
@@ -377,9 +396,19 @@ function Page() {
         }
       }
     }
+    const onPlaybackStateChanged = () => {
+      if (!ctx.started) return
+      try {
+        pushUpdate()
+      } catch {
+        // 忽略单次播放状态事件失败，ticker 仍会兜底
+      }
+    }
     AppEvents.scenePhase.addListener(onPhase)
+    SystemMusicPlayer.addEventListener("playbackStateDidChange", onPlaybackStateChanged)
     return () => {
       AppEvents.scenePhase.removeListener(onPhase)
+      SystemMusicPlayer.removeEventListener("playbackStateDidChange", onPlaybackStateChanged)
     }
   }, [])
 
@@ -387,8 +416,10 @@ function Page() {
   function createActivity() {
     const ins = LyricsLiveActivity()
     ins.addUpdateListener((s: LiveActivityState) => {
+      // 旧实例的迟到回调不得清掉恢复播放后创建的新实例。
+      if (ctx.activity !== ins) return
       if (s === "dismissed" || s === "ended") {
-        // 实时活动被关闭或结束后，停止定时器与后台保活。
+        // 用户关闭当前实时活动时，才停止整个歌词会话。
         void stopTimer()
         stopLocationKeepAlive()
         ctx.started = false
@@ -410,18 +441,20 @@ function Page() {
     return ins
   }
 
-  /** 串行推送实时活动，避免并发 update 被系统合并 */
+  /** 串行推送到指定实例，防止旧更新落入恢复播放后创建的新活动 */
   function pushActivityUpdate(contentState: LyricActivityState, pushKey: string) {
-    if (!ctx.activity) return
-    // 排队串行，防止上一笔 update 未完成又发下一笔导致系统合并/延迟展示
+    const activity = ctx.activity
+    const generation = ctx.activityGeneration
+    if (!activity) return
     ctx.updateChain = ctx.updateChain.then(async () => {
-      if (!ctx.activity) return
+      if (ctx.activity !== activity || ctx.activityGeneration !== generation) return
       try {
         // staleDate + relevance 提高系统刷新优先级
-        const ok = await ctx.activity.update(contentState, {
+        const ok = await activity.update(contentState, {
           staleDate: Date.now() + 15 * 60 * 1000,
           relevanceScore: 100,
         })
+        if (ctx.activity !== activity || ctx.activityGeneration !== generation) return
         if (ok === false) {
           // 失败时清空，下一 tick 允许重试
           ctx.lastPushKey = ""
@@ -429,7 +462,9 @@ function Page() {
           ctx.lastPushKey = pushKey
         }
       } catch {
-        ctx.lastPushKey = ""
+        if (ctx.activity === activity && ctx.activityGeneration === generation) {
+          ctx.lastPushKey = ""
+        }
       }
     }).catch(() => {
       // 单次失败不中断后续串行链
@@ -462,7 +497,7 @@ function Page() {
     const item = SystemMusicPlayer.getNowPlayingItem()
     const playing = isNowPlaying()
 
-    // 播放/暂停切换时启停定位保活，暂停时省电（仅在自适应开启时生效）
+    // 播放/暂停切换时启停定位保活；实时活动始终保留显示。
     const stateChanged = playing !== ctx.lastPlayingState
     ctx.lastPlayingState = playing
     const adaptiveOn = Storage.get<boolean>(SETTING_ADAPTIVE_KEEPALIVE) ?? true
@@ -484,7 +519,7 @@ function Page() {
         })
       } else if (!playing && locActive) {
         stopLocationKeepAlive()
-        setDisp((d) => ({ ...d, status: "已暂停，定位保活已停止" }))
+        setDisp((d) => ({ ...d, status: "已暂停，实时活动保留，定位保活已停止" }))
       }
     }
 
@@ -609,10 +644,10 @@ function Page() {
     // 运行中切换则立刻启停，避免必须重开实时活动
     if (!ctx.started) return
     if (v) {
-      // 自适应开启且当前暂停：先不启动，等恢复播放时自动启动
+      // 自适应开启且当前暂停：先不启动定位，实时活动继续保留。
       const adaptiveOn = Storage.get<boolean>(SETTING_ADAPTIVE_KEEPALIVE) ?? true
       if (adaptiveOn && !isNowPlaying()) {
-        setDisp((d) => ({ ...d, status: "定位保活将在恢复播放时启动" }))
+        setDisp((d) => ({ ...d, status: "已暂停，实时活动保留；定位将在恢复播放时启动" }))
         return
       }
       void startLocationKeepAlive(() => {
@@ -630,7 +665,7 @@ function Page() {
     }
   }
 
-  // 自适应开关：开启时暂停自动停定位；关闭时定位一直运行
+  // 自适应开关：开启时暂停自动停定位；实时活动始终保持显示
   function toggleAdaptiveKeepAlive(v: boolean) {
     setAdaptiveKeepAlive(v)
     Storage.set(SETTING_ADAPTIVE_KEEPALIVE, v)
@@ -639,15 +674,14 @@ function Page() {
     if (!locEnabled) return
     const locActive = isLocationKeepAliveActive()
     if (v) {
-      // 开启自适应：若当前暂停但定位仍在跑，立即停
       if (!isNowPlaying() && locActive) {
         stopLocationKeepAlive()
-        setDisp((d) => ({ ...d, status: "已开启自适应保活，暂停中已停定位" }))
+        setDisp((d) => ({ ...d, status: "已开启自适应保活，实时活动保留，暂停中已停定位" }))
       } else {
         setDisp((d) => ({ ...d, status: "已开启自适应保活" }))
       }
     } else {
-      // 关闭自适应：定位应一直保活，未运行则立即启动
+      // 关闭自适应后定位恢复常驻；暂停期间不主动重建已隐藏的活动。
       if (!locActive) {
         void startLocationKeepAlive(() => {
           try {
@@ -665,8 +699,10 @@ function Page() {
   }
 
   async function startImpl() {
+    // 先结束本项目残留实例，再创建新的唯一活动。
+    setDisp((d) => ({ ...d, status: "正在清理旧实时活动…" }))
+    await endExistingLyricsActivities()
     const activity = createActivity()
-    // 先在 Scripting 前台启动实时活动，成功后再打开 Apple Music。
     setDisp((d) => ({ ...d, status: "正在启动实时活动…" }))
 
     const item = SystemMusicPlayer.getNowPlayingItem()
@@ -716,14 +752,14 @@ function Page() {
       return
     }
 
+    ctx.activityGeneration += 1
     ctx.activity = activity
     ctx.started = true
     ctx.lastKeepAliveAt = 0
     ctx.lastPlayingState = isNowPlaying()
     startTicker()
 
-    // 可选定位保活——用系统定位回调唤醒，尽量在后台继续 update；
-    // 自适应开启时仅在播放中启动，关闭时无视播放状态都启动
+    // 可选定位保活：自适应开启时仅在播放中启动，暂停不影响实时活动显示。
     let statusText = item ? "实时活动中" : "等待播放音乐…"
     if (locationKeepAlive && (!adaptiveKeepAlive || ctx.lastPlayingState)) {
       const loc = await startLocationKeepAlive(() => {

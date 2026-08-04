@@ -1,10 +1,32 @@
 import { fetch } from "scripting"
 import { API_BASE_URL } from "../constants"
 import { MessageDetail, MessageSummary } from "../types"
-import { getApiKey, getToken, saveToken } from "../utils/storage"
+import {
+  getApiKey,
+  getToken,
+  loadCachedMessages,
+  saveCachedMessages,
+  saveToken,
+} from "../utils/storage"
 
 // v2 每次读取会清空服务端收件箱，本地缓存已读邮件
 const messageCache = new Map<string, MessageSummary[]>()
+
+function getCachedMessages(token: string): MessageSummary[] {
+  const memoryCache = messageCache.get(token)
+  if (memoryCache) {
+    return memoryCache
+  }
+
+  const storedCache = loadCachedMessages(token)
+  messageCache.set(token, storedCache)
+  return storedCache
+}
+
+function setCachedMessages(token: string, messages: MessageSummary[]): void {
+  messageCache.set(token, messages)
+  saveCachedMessages(token, messages)
+}
 
 // 统一请求 JSON 接口
 async function requestJson<T>(
@@ -83,11 +105,11 @@ function mapEmail(email: any, index: number): MessageSummary {
 
 // 合并新邮件到本地缓存（按 id 去重，新邮件在前）
 function mergeMessages(token: string, incoming: MessageSummary[]): MessageSummary[] {
-  const existing = messageCache.get(token) || []
+  const existing = getCachedMessages(token)
   const known = new Set(existing.map((item) => String(item.id)))
   const fresh = incoming.filter((item) => !known.has(String(item.id)))
   const merged = [...fresh, ...existing]
-  messageCache.set(token, merged)
+  setCachedMessages(token, merged)
   return merged
 }
 
@@ -102,7 +124,7 @@ async function pullInbox(token: string): Promise<{
   )
 
   if (payload?.expired) {
-    return { messages: messageCache.get(token) || [], expired: true }
+    return { messages: getCachedMessages(token), expired: true }
   }
 
   const emails = Array.isArray(payload?.emails) ? payload.emails : []
@@ -143,7 +165,7 @@ export async function createSession(options?: {
   }
 
   saveToken(email, token)
-  messageCache.set(token, [])
+  setCachedMessages(token, [])
 
   return {
     success: true,
@@ -201,7 +223,7 @@ export async function fetchMessageContent(
   success: boolean
   data: MessageDetail
 }> {
-  const cached = (messageCache.get(token) || []).find(
+  const cached = getCachedMessages(token).find(
     (item) => String(item.id) === String(messageId),
   )
   if (cached) {

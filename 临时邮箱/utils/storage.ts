@@ -1,11 +1,21 @@
+import type { MessageSummary } from "../types"
+
 const HISTORY_KEY = "tempMail.history.v1"
 const TOKEN_KEY = "tempMail.tokens.v1"
 const API_KEY_KEY = "tempMail.apiKey.v1"
+const ACTIVE_SESSION_KEY = "tempMail.activeSession.v1"
+const MESSAGE_CACHE_KEY = "tempMail.messageCache.v1"
 const MAX_HISTORY = 20
+const MAX_CACHED_MESSAGES = 50
 
 export type HistoryItem = {
   email: string
   lastUsedAt: number
+}
+
+export type ActiveSession = {
+  email: string
+  token: string
 }
 
 // 通用 Storage 读写
@@ -102,10 +112,54 @@ export function saveApiKey(apiKey: string): void {
   storageSet(API_KEY_KEY, trimmed)
 }
 
+// 保存当前邮箱会话，避免界面重开时生成新邮箱
+export function saveActiveSession(email: string, token: string): void {
+  storageSet(ACTIVE_SESSION_KEY, { email, token })
+}
+
+// 读取最近使用的邮箱会话
+export function loadActiveSession(): ActiveSession | null {
+  const value = storageGet(ACTIVE_SESSION_KEY)
+  if (
+    value &&
+    typeof value.email === "string" &&
+    typeof value.token === "string"
+  ) {
+    return { email: value.email, token: value.token }
+  }
+  return null
+}
+
+function loadMessageCacheMap(): Record<string, MessageSummary[]> {
+  const value = storageGet(MESSAGE_CACHE_KEY)
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, MessageSummary[]>
+  }
+  return {}
+}
+
+// 保存已读取邮件，因为 v2 接口读取后会清空服务端收件箱
+export function saveCachedMessages(
+  token: string,
+  messages: MessageSummary[],
+): void {
+  const cache = loadMessageCacheMap()
+  cache[token] = messages.slice(0, MAX_CACHED_MESSAGES)
+  storageSet(MESSAGE_CACHE_KEY, cache)
+}
+
+// 读取指定邮箱已保存的邮件
+export function loadCachedMessages(token: string): MessageSummary[] {
+  const messages = loadMessageCacheMap()[token]
+  return Array.isArray(messages) ? messages : []
+}
+
 // 清空所有历史记录与 token 缓存
 export function clearHistory(): void {
   storageRemove(HISTORY_KEY)
   storageRemove(TOKEN_KEY)
+  storageRemove(ACTIVE_SESSION_KEY)
+  storageRemove(MESSAGE_CACHE_KEY)
 }
 
 // 从邮箱地址提取前缀
