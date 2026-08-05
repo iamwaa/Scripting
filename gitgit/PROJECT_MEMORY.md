@@ -19,7 +19,7 @@
   - **P2.8 交互改造**：① 加号 `Menu` 合并「添加本地仓库 / 克隆仓库」；② 仓库列表左滑「移除」（仅元数据，不删工作区）；③ 改动文件「暂存 / 撤销」改左滑；④ Diff 页去掉自定义顶栏，改用 `navigationTitle` + plain List，修复顶部留白与标题重叠。
   - **P2.9 六项修复**：① `lastPulledAt` 持久化并在同步区显示最近拉取时间；② 提交对齐 GitHub（标题必填 + 描述选填，`buildCommitMessage`）；③ 关键页面提示改声明式 `List.alert`，减少命令式弹窗不显示；④ 克隆落到「父目录/仓库名/」子目录；⑤ Diff 去掉内容区重复标题，header 显示 `+N / -M`；⑥ 状态误判：`readdir` 强制 basename、安全访问书签、`getChanges` 校验工作区。
   - **P2.10 路径/缓存/列表**：① 仓库用短 `repoId` 作主键与 gitdir 名，不再把完整路径当目录名；② 访问优先 `pickDirectoryBookmark` / `accessBookmarkName` + `bookmarkedPath`（克隆保留父目录书签，workdir 可为子目录）；③ **移除仓库时删除** App Group `git-repos/<repoId>/`、访问书签与快照，避免旧 index 污染；④ clone 前若 gitdir 残留先清掉；⑤ 列表显示来源（本地/克隆）+ 改动数 + 待推送数。
-  - **P2.11 上传/历史/身份**：① 本地仓库「上传到 GitHub」（`createRepo` + `setOriginAndPush`，成功后 `source=clone`）；② 历史标识待推送/远端/本地 + 复制完整 commit；③ HEAD 撤销（revert 提交）、未推送 soft reset / amend；④ `resolveAuthor` 默认 `gitgit/gitgit@local`，修复 pull「No name was provided」；⑤ 设置页注明默认身份；⑥ 列表改动摘要移到 `>` 左侧居中。`gitService` 因 getCtx/远端/历史强内聚暂未拆分（约 970 行）。
+  - **P2.11 上传/历史/身份**：① 本地仓库「上传到 GitHub」（`createRepo` + `setOriginAndPush`，成功后 `source=clone`）；② 历史标识待推送/远端/本地 + 复制完整 commit；③ HEAD 撤销（revert 提交）、未推送 soft reset / amend；④ `resolveAuthor` 默认 `gitgit/gitgit@local`，修复 pull「No name was provided」；⑤ 设置页注明默认身份；⑥ 列表改动摘要移到 `>` 左侧居中。
   - **P2.12–P2.13 UI 细化**：复制按钮贴 shortOid、只复制完整 oid；新建分支用 `Dialog.prompt`；输入行用 `TextField title`；Section 有备注时用 header+footer。
   - **P2.14 TabView + 历史徽标**：入口改为 `TabView`（仓库 / 设置各包 `NavigationStack`）；仓库列表左上角原设置齿轮改为 `xmark` 关闭（`Navigation.useDismiss`）；历史行同步徽标（待推送/远端/本地）用 `Spacer` 顶到右上角。
   - **P2.15 设置关闭 + 子页隐藏 Tab**：设置页同步左上角 `xmark` 关闭；详情/克隆/Diff/上传等子页 `tabBarVisibility="hidden"`，进入后不显示底部 Tab 栏。
@@ -28,7 +28,9 @@
 - **P2.18 文件与历史详情**：仓库详情新增“文件”视图，基于当前 `HEAD` 展示已跟踪文件；历史提交行可进入详情页，展示完整 OID、作者、时间、父提交和相对第一父提交的新增/修改/删除文件，并支持单文件行级 Diff（根提交、删除文件、二进制文件均有对应处理）。当前文件与历史变更都通过 `buildFileTree()` 按可展开目录树显示，目录优先并支持任意深度；历史叶子保留 A/M/D 和 Diff 跳转。`getTrackedFiles()` 只将明确缺少 HEAD 视为空仓，其它读取错误继续抛出；测试覆盖 A/M/D、未变化、根提交及多级文件树排序。
 - **代码审查三阶段**（详见 `CODE_REVIEW_PROGRESS.md`）：
   - 第一阶段数据安全、第二阶段可靠性与失败恢复：已完成。
-  - **第三阶段进行中**：M1–M6 已完成（含 stash 可靠性修复、合并到当前、Pull 读 Upstream、远程进度与取消）。M7-1（分支管理：删除/重命名/远端分支）已完成；下一步可选 Tag 管理或仓库健康检查；结构债在写路径稳定后渐进拆分。
+  - **第三阶段进行中**：M1–M7-1 与结构债拆分已完成（含 stash 可靠性修复、合并到当前、Pull 读 Upstream、远程进度与取消、分支管理）；下一步可选 Tag 管理或仓库健康检查。
+  - **结构债拆分（2026-08-04）**：`services/gitService.ts` 从 3960 行收缩为 515 行 facade，只保留仓库 mutation 锁、快照刷新、后台保活与公开 API 包装；职责模块位于 `services/git/`：`runtime`、`worktreeService`、`branchQueryService`、`branchService`、`remoteConfigService`、`remoteService`、`mergeService`、`mergeConflictService`、`statusQueryService`、`repoStatusService`、`commitService`、`compareService`、`stashService`、`historyMutationService`。子服务不得反向导入 facade，跨模块写流程通过 facade 包装或回调注入。`RepoDetailPage.tsx` 从 1534 行降至 971 行；分支/远端视图、导航目标、Tab 内容位于 `components/`，分支与同步动作编排位于 `hooks/`。公开页面仍只从 `services/gitService.ts` 导入 Git API。
+  - **服务 facade 约定**：新增 Git 行为优先落到 `services/git/*Service.ts` 的对应职责模块；`services/gitService.ts` 只维持公开签名、mutation 锁、快照刷新与后台保活。页面不得绕过 facade 直接调用 internal mutation。
   - **M4 Remote/upstream**：`utils/remote.ts` + `setRemoteUrl`/`deleteRemote`/`getBranchUpstream`/`setBranchUpstream`；`pages/RemotesPage.tsx`；详情页「远端管理」入口；测试 `testRemoteHelpers`。
   - **M5 冲突**：`utils/mergeConflict.ts`；pull=fetch+merge(abortOnConflict:false)；状态文件 `gitgit-merge-state.json`；`resolveConflictFile`/`completeMerge`/`abortMerge`；`pages/ConflictsPage.tsx`；测试 `testMergeConflictHelpers`。
   - **列表冲突摘要**：`RepoListStatus.conflictCount/mergeInProgress`；`getRepoListStatus` 读 merge-state；列表右侧优先显示「N 冲突」/「待完成合并」（`formatRepoListMergeSummary`）。
@@ -90,7 +92,17 @@
     - **P2.30 Token 验证状态持久化**（2026-07-31）：修复「验证成功后重进设置页回退为未验证」。根因：`githubUser` 仅存页面内存 state，`loadSettings` 不恢复。修复：`STORAGE_KEYS.githubUser`（Storage private 域）存已验证用户名；`storage.ts` 增 `readGithubUser`/`writeGithubUser(null 清除)`；`authStore` 增 `getVerifiedUser`/`saveVerifiedUser`，且 **`setToken`/`clearToken` 会作废该缓存**（换 token 不残留旧用户名）；设置页 `loadSettings` 恢复、两处验证成功后持久化（持久化失败单独 catch，不吞验证成功）。Token 本身仍只在 Keychain。备份：`gitgit_Token验证状态持久化_20260731_080238`。
     - **P2.31 分支/远端差异对比页**（2026-07-31）：详情页同步区「与远端差异」按钮（`showCompare` 接入受控 navigationDestination）→ `pages/ComparePage.tsx`。服务层 `compareWithUpstream(bookmarkName, ctx?)`（gitService，**ctx 可注入供测试绕过 repoStore**，与 getSyncTopology 同模式）：当前分支 + upstream（缺省 origin/同名，走 `resolvePullTarget` 与 Pull 同语义）→ 本地/远端 tip、`findMergeBase`、`countCommitsUntil` 精确计数 + `collectFirstParentEntries` 沿第一父收集提交列表（每侧上限 200 条，超出 UI footer 提示截断）。**文件差异为三点语义**（merge-base → 各侧 tip；无共同祖先时相对空树、全为 added），复用 `readTreeFiles` + `compareCommitTrees`；本地/远端无 ref 返回 null（UI 空态「尚未推送或拉取」），对比纯读本地 refs 不联网。`CommitFileTreeNode` 从 CommitDetailPage 抽到 `components/CommitFileTree.tsx` 供两页共用（点文件仍走 `CommitDiffPage`，oid=tip、parentOid=mergeBase/null）。测试 `tests/compare.test.ts`（7 例：同步/领先/落后/分叉/无基点/无远端 ref/upstream 配置；`git.commit` 显式 `ref`+`parent` 造分叉与 orphan 提交）。备份：`gitgit_分支与远端差异对比页_20260731_091311`。
      - **进度改全屏遮罩**（2026-07-31）：对比加载从行内 Section（ProgressView + 取消按钮）改为 `List overlay` + `BusyOverlay`，title 为「正在对比」，message 取 `progress.phase`（不显示百分比），取消中显示「取消中…」，与移除仓库/克隆同一交互模式；loading 时列表不再渲染占位 Section。取消仍走 `RemoteCancelToken`，由浮层 onCancel 触发。备份：`gitgit_对比差异进度改为BusyOverlay_20260731_121718`。
-  - 第四阶段及以后：交互式 Widget、富通知、Issues/PR、多仓库批量同步等。
+  - **P2.32 远端分支自动获取**（2026-08-04）：`RemotesPage` 打开时对当前 upstream remote（失效时回退 origin/首个 remote）执行全分支 `fetch`，切换 remote 时重新获取；`getRemoteBranches(bookmarkName, remote)` 读取任意 remote 的跟踪分支并过滤 `HEAD`；远端分支用 Picker 选择（P2.33 已移除分支手动输入）。仅管理页刷新传 `prune=true` 清理远端已删除分支，普通 fetch/Pull/Push 语义不变；自动获取失败回退本地缓存并显示提示。页面移除重复 `onAppear` 加载，避免与 `useEffect` 并发 fetch。备份：`gitgit_远端分支自动获取_20260804_223532`。
+  - **P2.33 分支选择入口精简**（2026-08-04）：远端管理页取消 upstream 分支的 `FormRow` 手动输入，只用远端分支 Picker（选项仍并入当前跟踪分支，避免获取失败或远端已删时选中值不在列表）；详情页合并菜单删除「其它分支」手输入口，无可合并分支时直接隐藏合并按钮，`useRepoBranchActions` 同步移除 `handleMergePrompt`。合并候选仍为 `mergeSources`（本地 + 远端跟踪分支，排除当前分支及其 origin 同名）。备份：`gitgit_精简分支选择入口_20260804_233253`。
+  - **P2.34 半屏表单弹窗统一**（2026-08-05）：新增 `components/FormSheet.tsx` 作为所有半屏表单弹窗的外壳（可拖拽 `presentationDetents={["medium","large"]}` + `presentationBackground="thinMaterial"` + `scrollContentBackground="hidden"` + `scrollDismissesKeyboard="interactively"`，左取消右确认 toolbar）。修复三个问题：
+    - **下滑收键盘后输入框不可点**：旧实现固定单 detent `["medium"]` 且草稿存在父页 `useState` 逐字符回写，导致 sheet 内容反复重建。现改为可拖拽双 detent，且弹窗草稿由弹窗自己的 `useObservable` 持有，确认时一次性回传父页。
+    - **输入时背景变实色**：`presentationBackground="thinMaterial"` + `scrollContentBackground="hidden"`，保持半透明。
+    - **FormRow 双模式**：`components/FormRow.tsx` 支持互斥的 `value`+`onChanged`（List 表单）与 `observable`（弹窗内，直接把 `Observable<string>` 交给 TextField/SecureField 的 `value` 不传 `onChanged`）；另支持 `labelWidth`。
+    - **添加远端改弹窗**：`RemotesPage` 删除「添加远端」Section，入口移到右上角 `toolbar.topBarTrailing` 的 `plus` 按钮，弹出 `components/AddRemoteSheet.tsx`。
+    - **提交表单接口变更**：`CommitMessageSheet` 改为 `initialTitle`/`initialDescription` + `onConfirm(title, description)`；重编场景需 `key={`amend-${draft.title}`}` 确保换提交时重建初始值。
+    - 备份：`gitgit_修复半屏弹窗输入与远端添加入口_20260805_133119`。
+  - **P2.35 自动填入提交标题**（2026-08-05）：普通提交弹窗打开时，根据已暂存改动自动生成可编辑标题；单文件分别为「新增/更新/删除 路径」，多文件为「更新 N 个文件」，未暂存文件不计入。重编提交继续使用原提交标题与描述，不套用自动标题。纯函数 `utils/format.ts::suggestCommitTitle`，测试在 `tests/reliability.test.ts::testSuggestedCommitTitle`。备份：`gitgit_自动填入提交标题_20260805_142204`。
+   - 第四阶段及以后：交互式 Widget、富通知、Issues/PR、多仓库批量同步等。
 - 待做（旧 P3 标签，已并入第四阶段及以后）：
   - 交互式 widget、富通知 UI（notification.tsx）、远端 Issues/PR 浏览
 - Scripting UI API 要点（避免再踩坑）：
@@ -110,5 +122,5 @@
   - `ProgressView` 是加载指示器组件；没有 `Spinner` 导出。
   - isomorphic-git 远端操作（push/pull/clone）必须传 `http` 传输适配器（createHttpTransport）+ `onAuth`。
   - **Fork 克隆远端约定**：从 GitHub「我的仓库」选择 fork 时，先查询 `/repos/{owner}/{repo}` 详情；克隆地址写入 `origin`，`parent.clone_url` 写入 `upstream`。普通仓库与手动 URL 克隆不添加 upstream。克隆后不自动写 `branch.*.remote/merge`，默认 Pull 仍使用 origin；用户在「远端管理」手动选择 upstream 并保存后，Pull 才使用源仓库。
-  - **同步区提示位置**：远端管理页只维护远端地址与当前分支跟踪设置；`拉取：当前分支 ← 远端/分支` 与 `最近拉取：时间` 均显示在仓库详情同步区页脚，且拉取目标提示位于最近拉取下一行。远端配置变更后详情页需刷新 `loadRemote`、`loadBranches`、`loadUpstream`。
-  - **后台远端操作**：Scripting 没有独立后台线程；`services/gitService.ts` 用全局 `BackgroundKeeper` 包装 `push`、`pull`、`fetch`、`clone`，操作开始调用 `keepAlive()`，结束在 `finally` 调用 `stopKeepAlive()`。仅请求有限后台保活，系统仍可能因资源或电量策略终止进程；尚未改造成 `BackgroundURLSession` 可恢复任务。
+  - **同步区提示位置**：远端管理页只维护远端地址与当前分支跟踪设置；`远端拉取：当前分支 ← 远端/分支` 与 `最近拉取：时间` 均显示在仓库详情同步区页脚，且拉取目标提示位于最近拉取下一行。远端配置变更后详情页需刷新 `loadRemote`、`loadBranches`、`loadUpstream`。
+  - **后台远端操作**：Scripting 没有独立后台线程；`services/gitService.ts` facade 用 `services/git/runtime.ts` 的 `runWithBackgroundKeepAlive` 包装 `push`、`pull`、`fetch`、`clone`，操作开始调用 `keepAlive()`，结束在 `finally` 调用 `stopKeepAlive()`。远端传输实现位于 `services/git/remoteService.ts`，Pull/merge 编排位于 `services/git/mergeService.ts`。仅请求有限后台保活，系统仍可能因资源或电量策略终止进程；尚未改造成 `BackgroundURLSession` 可恢复任务。

@@ -16,7 +16,12 @@ import {
 } from "scripting"
 import type { CommitEntry } from "../types/git"
 import { HistorySearchBar } from "../components/HistorySearchBar"
-import { shortOid, relativeTime, commitTitle } from "../utils/format"
+import {
+  shortOid,
+  relativeTime,
+  commitTitle,
+  commitBody,
+} from "../utils/format"
 import {
   COLOR_LABEL,
   COLOR_SECONDARY_LABEL,
@@ -43,6 +48,7 @@ function HistoryRow({
   onAmend: (entry: CommitEntry) => void
 }) {
   const oid = entry.oid
+  const body = commitBody(entry.message)
   const canRewrite =
     !!entry.isHead &&
     (entry.syncStatus === "unpushed" || entry.syncStatus === "local")
@@ -125,6 +131,15 @@ function HistoryRow({
             <Text font="body" foregroundStyle={COLOR_LABEL} lineLimit={2}>
               {commitTitle(entry.message) || "(无提交信息)"}
             </Text>
+            {body ? (
+              <Text
+                font="caption"
+                foregroundStyle={COLOR_SECONDARY_LABEL}
+                lineLimit={2}
+              >
+                {body}
+              </Text>
+            ) : null}
             <Text font="caption2" foregroundStyle={COLOR_SECONDARY_LABEL}>
               {entry.author.name || "unknown"} · {relativeTime(entry.date)}
             </Text>

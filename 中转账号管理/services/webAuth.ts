@@ -2,7 +2,6 @@
 declare const fetch: any
 
 import type { Account, SelfInfo, WebLoginCookieResult } from "../types"
-import { UA } from "../constants"
 import { isSub2ApiAccount, normalizeBaseUrl, shortUrl } from "../utils/format"
 import { getErrorMessage } from "../utils/error"
 import { cookiesToHeader, getUrlHostname, isHttpUrl, resolveWebUrl, escapeHTML } from "../utils/cookie"
@@ -323,7 +322,6 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
   let capturedTitle: string | undefined
   
   try {
-    try { webView.setCustomUserAgent(UA) } catch {}
     await installWebNavigationBridge(webView, normalizedBaseUrl)
     webView.shouldAllowRequest = async request => {
       const url = request.url || normalizedBaseUrl
@@ -416,7 +414,6 @@ export async function openManualCheckinWebView(account: Account) {
     const authUser = buildSub2ApiAuthUser(account)
     const webView = new WebViewController()
     try {
-      try { webView.setCustomUserAgent(UA) } catch {}
       await installWebNavigationBridge(webView, accountBaseUrl)
       webView.shouldAllowRequest = async request => {
         const url = request.url || openUrl
@@ -474,7 +471,6 @@ export async function openManualCheckinWebView(account: Account) {
   const localUser = buildNewApiLocalUser(account)
   const webView = new WebViewController()
   try {
-    try { webView.setCustomUserAgent(UA) } catch {}
     await installWebNavigationBridge(webView, accountBaseUrl)
     webView.shouldAllowRequest = async request => {
       const url = request.url || openUrl

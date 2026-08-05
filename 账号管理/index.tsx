@@ -1,15 +1,16 @@
 import { useState, useEffect, useObservable, TabView, Tab, Navigation, Script } from "scripting"
 
-import { AccountItem, BookmarkItem, WebDAVConfig, GroupItem, loadAccounts, loadBookmarks, loadAccountGroups, loadBookmarkGroups, loadWebDAVConfig, saveAccounts, saveBookmarks, saveAccountGroups, saveBookmarkGroups, migrateOldGroups } from "./utils"
+import { AccountItem, BookmarkItem, WebDAVConfig, GroupItem, loadAccounts, loadBookmarks, loadAccountGroups, loadBookmarkGroups, loadWebDAVConfig, loadLaunchBiometricsEnabled, saveAccounts, saveBookmarks, saveAccountGroups, saveBookmarkGroups, migrateOldGroups } from "./utils"
 
 import { ApiListPage, BookmarkListPage, SearchPage, SettingsPage } from "./pages"
 
-const App = () => {
+const App = ({ initialLaunchBiometricsEnabled }: { initialLaunchBiometricsEnabled: boolean }) => {
   const [accounts, setAccounts] = useState<AccountItem[]>([])
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([])
   const [accountGroups, setAccountGroups] = useState<GroupItem[]>([])
   const [bookmarkGroups, setBookmarkGroups] = useState<GroupItem[]>([])
   const [webdavConfig, setWebdavConfig] = useState<WebDAVConfig | null>(null)
+  const [launchBiometricsEnabled, setLaunchBiometricsEnabled] = useState(initialLaunchBiometricsEnabled)
   const [loaded, setLoaded] = useState<boolean>(false)
 
   const selection = useObservable<string>("api")
@@ -59,14 +60,33 @@ const App = () => {
         <SearchPage accounts={accounts} setAccounts={setAccounts} bookmarks={bookmarks} setBookmarks={setBookmarks} accountGroups={accountGroups} bookmarkGroups={bookmarkGroups} />
       </Tab>
       <Tab title="设置" systemImage="gearshape.fill" value="settings">
-        <SettingsPage accounts={accounts} setAccounts={setAccounts} bookmarks={bookmarks} setBookmarks={setBookmarks} webdavConfig={webdavConfig} setWebdavConfig={setWebdavConfig} />
+        <SettingsPage accounts={accounts} setAccounts={setAccounts} bookmarks={bookmarks} setBookmarks={setBookmarks} webdavConfig={webdavConfig} setWebdavConfig={setWebdavConfig} launchBiometricsEnabled={launchBiometricsEnabled} setLaunchBiometricsEnabled={setLaunchBiometricsEnabled} />
       </Tab>
     </TabView>
   )
 }
 
 const run = async () => {
-  await Navigation.present({ element: <App />, modalPresentationStyle: "fullScreen" })
+  const launchBiometricsEnabled = await loadLaunchBiometricsEnabled()
+  if (launchBiometricsEnabled) {
+    try {
+      if (!LocalAuth.isBiometricsAvailable || LocalAuth.biometryType !== "faceID") {
+        Script.exit()
+        return
+      }
+
+      const authenticated = await LocalAuth.authenticate("验证身份以访问账号管理", true)
+      if (!authenticated) {
+        Script.exit()
+        return
+      }
+    } catch {
+      Script.exit()
+      return
+    }
+  }
+
+  await Navigation.present({ element: <App initialLaunchBiometricsEnabled={launchBiometricsEnabled} />, modalPresentationStyle: "fullScreen" })
   Script.exit()
 }
 

@@ -1,5 +1,4 @@
 import type { Account } from "../types"
-import { UA } from "../constants"
 import { normalizeBaseUrl } from "../utils/format"
 import { cookiesToHeader, getUrlHostname, parseCookieHeader } from "../utils/cookie"
 import { getSecret, setSecret } from "./storage"
@@ -60,7 +59,6 @@ async function runWebChallengeRefresh(account: Account) {
 
   const webView = new WebViewController()
   try {
-    try { webView.setCustomUserAgent(UA) } catch {}
     const cookie = getSecret(account.cookieKey)
     if (cookie) {
       await injectWebCookies(webView, getUrlHostname(baseUrl), cookie, baseUrl.startsWith("https://"))

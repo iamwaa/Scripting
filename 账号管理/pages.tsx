@@ -1,6 +1,6 @@
 import {
   useState, useEffect, useMemo, useCallback, useRef, NavigationStack, List, Section, HStack, VStack, Text, Button, Spacer, Image, Rectangle,
-  Navigation, Script, TextField, Menu, Picker, ToolbarItem, Toolbar, ToolbarSpacer
+  Navigation, Script, TextField, Menu, Picker, Toggle, ToolbarItem, Toolbar, ToolbarSpacer
 } from "scripting"
 
 // 状态 setter 类型，支持直接值和函数式更新
@@ -9,7 +9,7 @@ import {
   AccountItem, BookmarkItem, WebDAVConfig, CustomField, GroupItem,
   generateId, getGroupLetter, processUrl, fetchSiteInfo, loadFilePassword, saveFilePassword, clearWebDAVConfigFile,
   encryptPayload, decryptPayload, normalizeSyncPayload, uploadToWebDAV, downloadFromWebDAV, testWebDAVConnection, saveWebDAVConfig, isEncryptedFormat,
-  maskPassword, maskApiKey, sortByDisplayTitle
+  maskPassword, maskApiKey, sortByDisplayTitle, saveLaunchBiometricsEnabled
 } from "./utils"
 
 import { AvatarIcon, FormRow, AccountRow, BookmarkRow } from "./components"
@@ -36,6 +36,8 @@ export type SettingsPageProps = {
   setBookmarks: StateSetter<BookmarkItem[]>
   webdavConfig: WebDAVConfig | null
   setWebdavConfig: (cfg: WebDAVConfig | null) => void
+  launchBiometricsEnabled: boolean
+  setLaunchBiometricsEnabled: (enabled: boolean) => void
 }
 
 // 分组子页面 Props
@@ -1424,9 +1426,36 @@ export const SearchPage = ({ accounts, setAccounts, bookmarks, setBookmarks, acc
   )
 }
 
-export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, webdavConfig, setWebdavConfig }: SettingsPageProps) => {
+export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, webdavConfig, setWebdavConfig, launchBiometricsEnabled, setLaunchBiometricsEnabled }: SettingsPageProps) => {
   const [toast, setToast] = useState({ msg: "", isError: false, isPresented: false })
   const showToast = useCallback((msg: string, isError = false) => { setToast(prev => ({ ...prev, isPresented: false })); setTimeout(() => setToast({ msg, isError, isPresented: true }), 150) }, [])
+
+  const handleLaunchBiometricsChanged = async (enabled: boolean) => {
+    if (!LocalAuth.isBiometricsAvailable || LocalAuth.biometryType !== "faceID") {
+      showToast("此设备暂时无法使用 Face ID", true)
+      return
+    }
+
+    try {
+      const reason = enabled ? "验证身份以启用启动保护" : "验证身份以关闭启动保护"
+      const authenticated = await LocalAuth.authenticate(reason, true)
+      if (!authenticated) {
+        showToast("Face ID 验证未通过", true)
+        return
+      }
+    } catch {
+      showToast("Face ID 验证未通过", true)
+      return
+    }
+
+    try {
+      await saveLaunchBiometricsEnabled(enabled)
+      setLaunchBiometricsEnabled(enabled)
+      showToast(enabled ? "已启用启动时 Face ID 验证" : "已关闭启动时 Face ID 验证")
+    } catch {
+      showToast("安全设置保存失败", true)
+    }
+  }
 
   // 文件密码输入
   const promptForPassword = async (title: string, message: string, defaultValue?: string): Promise<string | null> => {
@@ -1555,6 +1584,14 @@ export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, w
         toast={{ isPresented: toast.isPresented, onChanged: (v) => { if (!v) setToast(prev => ({ ...prev, isPresented: false })) }, message: toast.msg || " ", position: "top", textColor: toast.isError ? "#FF3B30" : undefined }}
         toolbar={{ topBarLeading: <Button action={() => Script.exit()}><Image systemName="xmark" foregroundStyle="#FF3B30" fontWeight="semibold" /></Button> }}
       >
+        <Section header={<Text>安全</Text>} footer={<Text font="footnote" foregroundStyle="#8E8E93">启用后，每次启动账号管理都需要先通过 Face ID。</Text>}>
+          <Toggle value={launchBiometricsEnabled} onChanged={handleLaunchBiometricsChanged}>
+            <HStack spacing={12} alignment="center">
+              <Image systemName="faceid" foregroundStyle="#007AFF" />
+              <Text>启动时 Face ID 验证</Text>
+            </HStack>
+          </Toggle>
+        </Section>
         <Section header={<Text>WebDAV 云端同步</Text>} footer={<Text font="footnote" foregroundStyle="#8E8E93">配置您的云端服务以确保数据安全不丢失，所有数据均经过严格端到端加密。</Text>}>
           <HStack padding={{ vertical: 8 }} alignment="center">
             <VStack alignment="leading" spacing={4}>

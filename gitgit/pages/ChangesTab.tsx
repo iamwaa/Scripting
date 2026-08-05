@@ -15,7 +15,6 @@ import {
   NavigationLink,
 } from "scripting"
 import type { FileChange } from "../types/git"
-import { FormRow } from "../components/FormRow"
 import { FileStatusRow } from "../components/FileStatusRow"
 import { DiffPage } from "./DiffPage"
 import {
@@ -29,13 +28,9 @@ export function ChangesTab({
   bookmarkName,
   changes,
   loading,
-  title,
-  setTitle,
-  description,
-  setDescription,
+  onOpenCommitForm,
   committing,
   stagingBusy,
-  onCommit,
   onStage,
   onStageAll,
   onUnstageAll,
@@ -44,13 +39,9 @@ export function ChangesTab({
   bookmarkName: string
   changes: FileChange[]
   loading: boolean
-  title: string
-  setTitle: (v: string) => void
-  description: string
-  setDescription: (v: string) => void
   committing: boolean
   stagingBusy: boolean
-  onCommit: () => void
+  onOpenCommitForm: () => void
   onStage: (filepath: string) => void
   onStageAll: () => void
   onUnstageAll: () => void
@@ -160,25 +151,14 @@ export function ChangesTab({
         )}
       </Section>
 
-      {/* 无可提交内容时隐藏，避免空表单占位 */}
+      {/* 无可提交内容时隐藏，避免空操作占位 */}
       {hasStaged ? (
-        <Section header={<Text>提交信息</Text>}>
-          <FormRow
-            label="标题"
-            prompt="简要描述本次改动（必填）"
-            value={title}
-            onChanged={setTitle}
-          />
-          <FormRow
-            label="描述"
-            prompt="补充说明（可选）"
-            value={description}
-            onChanged={setDescription}
-          />
+        <Section header={<Text>提交</Text>}>
           <Button
-            title="提交"
-            action={onCommit}
-            disabled={committing || worktreeBusy || !title.trim()}
+            title={committing ? "提交中…" : "填写提交信息"}
+            systemImage="square.and.pencil"
+            action={onOpenCommitForm}
+            disabled={committing || worktreeBusy}
           />
         </Section>
       ) : null}

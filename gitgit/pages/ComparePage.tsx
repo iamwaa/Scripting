@@ -18,7 +18,12 @@ import {
 import type { RemoteProgressInfo } from "../utils/remoteProgress"
 import { CommitDetailPage } from "./CommitDetailPage"
 import { BusyOverlay } from "../components/BusyOverlay"
-import { shortOid, relativeTime, commitTitle } from "../utils/format"
+import {
+  shortOid,
+  relativeTime,
+  commitTitle,
+  commitBody,
+} from "../utils/format"
 import {
   COLOR_LABEL,
   COLOR_SECONDARY_LABEL,
@@ -34,6 +39,8 @@ function CompareCommitRow({
   entry: CommitEntry
   bookmarkName: string
 }) {
+  const body = commitBody(entry.message)
+
   return (
     <NavigationLink
       destination={
@@ -44,6 +51,15 @@ function CompareCommitRow({
         <Text foregroundStyle={COLOR_LABEL} lineLimit={2}>
           {commitTitle(entry.message) || "(无提交信息)"}
         </Text>
+        {body ? (
+          <Text
+            font="caption"
+            foregroundStyle={COLOR_SECONDARY_LABEL}
+            lineLimit={2}
+          >
+            {body}
+          </Text>
+        ) : null}
         <Text font="caption2" foregroundStyle={COLOR_SECONDARY_LABEL}>
           {entry.author.name || "unknown"} · {relativeTime(entry.date)} ·{" "}
           {shortOid(entry.oid)}

@@ -9,7 +9,7 @@ import type { CommitDetail } from "../types/git"
 import { buildFileTree } from "../utils/fileTree"
 import { getCommitDetail } from "../services/gitService"
 import { CommitFileTreeNode } from "../components/CommitFileTree"
-import { shortOid, commitTitle } from "../utils/format"
+import { shortOid, commitTitle, commitBody } from "../utils/format"
 import {
   COLOR_LABEL,
   COLOR_SECONDARY_LABEL,
@@ -48,6 +48,8 @@ export function CommitDetailPage({
   const changeTree = detail
     ? buildFileTree(detail.files.map((file) => file.filepath))
     : []
+  // 提交补充说明（首行标题之后的正文）
+  const body = detail ? commitBody(detail.message) : ""
   const statusByPath = new Map(
     detail?.files.map((file) => [file.filepath, file.status] as const) || []
   )
@@ -72,6 +74,11 @@ export function CommitDetailPage({
             <Text font="headline" foregroundStyle={COLOR_LABEL}>
               {commitTitle(detail.message) || "(无提交信息)"}
             </Text>
+            {body ? (
+              <Text font="subheadline" foregroundStyle={COLOR_LABEL}>
+                {body}
+              </Text>
+            ) : null}
             <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
               完整 ID：{detail.oid}
             </Text>

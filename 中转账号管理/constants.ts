@@ -8,9 +8,6 @@ export const SORT_FILE = Path.join(DATA_DIR, 'sort.json')
 export const SECRETS_FILE = Path.join(DATA_DIR, 'secrets.json')
 export const SECRET_PREFIX = "newapi.secret."
 
-// 浏览器 User-Agent
-export const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.2 Mobile/15E148 Safari/604.1"
-
 // 每美元对应配额值
 export const QUOTA_PER_USD = 500000
 

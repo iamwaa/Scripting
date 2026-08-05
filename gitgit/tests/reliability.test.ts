@@ -6,9 +6,16 @@ import {
   getBranchLastPulledAt,
 } from "../services/repoStore"
 import { compareCommitTrees } from "../services/gitService"
+import { normalizeRemoteBranches } from "../services/git/branchQueryService"
 import { lineDiff } from "../services/diffService"
 import { readRepos, writeRepos } from "../services/storage"
 import { buildFileTree } from "../utils/fileTree"
+import {
+  buildCommitMessage,
+  commitBody,
+  commitTitle,
+  suggestCommitTitle,
+} from "../utils/format"
 import {
   matchesHistoryQuery,
   normalizeHistoryQuery,
@@ -1500,14 +1507,14 @@ function testBranchMergeHelpers(): void {
   )
 
   assert(
-    pullActionFooterHint("main") === "拉取：main ← origin/main",
+    pullActionFooterHint("main") === "远端拉取：main ← origin/main",
     "无 upstream 时 footer 默认 origin/同名"
   )
   assert(
     pullActionFooterHint("main", {
       remote: "upstream",
       merge: "refs/heads/main",
-    }) === "拉取：main ← upstream/main",
+    }) === "远端拉取：main ← upstream/main",
     "有 upstream 时 footer 应展示实际跟踪"
   )
   assert(
@@ -1842,6 +1849,24 @@ async function testForceCheckoutCleansWorktree(): Promise<void> {
   }
 }
 
+function testRemoteBranchNormalization(): void {
+  const branches = normalizeRemoteBranches(
+    [
+      "upstream/main",
+      "upstream/feature/nested",
+      "upstream/HEAD",
+      "upstream/main",
+      "topic/upstream/keep",
+      "",
+    ],
+    "upstream"
+  )
+  assert(
+    branches.join(",") === "feature/nested,main,topic/upstream/keep",
+    "远端分支应去前缀、过滤 HEAD、去重并保留多级名称"
+  )
+}
+
 function testBranchHelpers(): void {
   const locals = ["main", "feature/login", "release-1.2"]
 
@@ -1918,6 +1943,66 @@ function testBranchHelpers(): void {
   assert(sawBadRemote, "空远端分支名应拒绝")
 }
 
+// 提交信息「标题 + 补充说明」拆分与重组必须无损，否则重编会丢描述
+function testCommitMessageParts(): void {
+  const message = buildCommitMessage("修复登录", "顺带补充了错误提示文案")
+  assert(commitTitle(message) === "修复登录", "标题应为首行")
+  assert(
+    commitBody(message) === "顺带补充了错误提示文案",
+    "正文应为首行之后的内容"
+  )
+  assert(
+    buildCommitMessage(commitTitle(message), commitBody(message)) === message,
+    "拆分后重组应还原原提交信息"
+  )
+
+  assert(commitBody("只有标题") === "", "无正文时应返回空串")
+  assert(
+    buildCommitMessage(commitTitle("只有标题"), commitBody("只有标题")) ===
+      "只有标题",
+    "无正文时重组不应追加空行"
+  )
+
+  const multiline = "标题\n\n第一段\n第二段"
+  assert(
+    commitBody(multiline) === "第一段\n第二段",
+    "多行正文应保留内部换行"
+  )
+}
+
+function testSuggestedCommitTitle(): void {
+  const change = (
+    filepath: string,
+    status: "added" | "modified" | "deleted" | "*modified",
+    staged = true
+  ) => ({ filepath, status, staged, unstaged: false })
+
+  assert(
+    suggestCommitTitle([change("src/index.ts", "added")]) === "新增 src/index.ts",
+    "单个新增文件应使用新增标题"
+  )
+  assert(
+    suggestCommitTitle([change("README.md", "modified")]) === "更新 README.md",
+    "单个修改文件应使用更新标题"
+  )
+  assert(
+    suggestCommitTitle([change("legacy.ts", "deleted")]) === "删除 legacy.ts",
+    "单个删除文件应使用删除标题"
+  )
+  assert(
+    suggestCommitTitle([
+      change("a.ts", "modified"),
+      change("b.ts", "added"),
+      change("draft.ts", "*modified", false),
+    ]) === "更新 2 个文件",
+    "多文件标题应只统计已暂存文件"
+  )
+  assert(
+    suggestCommitTitle([change("draft.ts", "*modified", false)]) === "",
+    "没有已暂存文件时不应生成标题"
+  )
+}
+
 async function main(): Promise<void> {
   testBranchLastPulledAt()
   testHistoryPagination()
@@ -1936,9 +2021,12 @@ async function main(): Promise<void> {
   testRemoteHelpers()
   testMergeConflictHelpers()
   testBranchMergeHelpers()
+  testRemoteBranchNormalization()
   testBranchHelpers()
   await testRemoteProgressHelpers()
   await testForceCheckoutCleansWorktree()
+  testCommitMessageParts()
+  testSuggestedCommitTitle()
   console.log("✅ reliability tests passed")
 }
 

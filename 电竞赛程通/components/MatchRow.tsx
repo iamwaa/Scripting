@@ -153,7 +153,7 @@ function CenterBlock({ match }: { match: Match }) {
           </Text>
         </HStack>
         {isRunning ? (
-          <Text foregroundStyle="red" font="caption2" fontWeight="semibold">
+          <Text foregroundStyle="green" font="caption2" fontWeight="semibold">
             进行中
           </Text>
         ) : null}

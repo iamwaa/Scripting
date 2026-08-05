@@ -28,6 +28,8 @@ export const STAGE_TERMS: { en: string; zh: string }[] = [
   { en: "Rise Group", zh: "崛起组" },
   { en: "Group Ascend", zh: "登峰组" },
   { en: "Group Nirvana", zh: "涅槃组" },
+  { en: "Challenge Group", zh: "挑战组" },
+  { en: "Trial Group", zh: "试炼组" },
   { en: "Lucky Losers Group", zh: "幸运落败者组" },
   // 循环赛
   { en: "Round Robin Stage", zh: "单循环赛" },

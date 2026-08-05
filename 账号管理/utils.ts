@@ -22,6 +22,7 @@ const FILE_PASSWORD_FILE = Path.join(DATA_DIR, 'file_password.json')
 const GROUPS_FILE = Path.join(DATA_DIR, 'groups.json')
 const ACCOUNT_GROUPS_FILE = Path.join(DATA_DIR, 'account_groups.json')
 const BOOKMARK_GROUPS_FILE = Path.join(DATA_DIR, 'bookmark_groups.json')
+const SECURITY_SETTINGS_FILE = Path.join(DATA_DIR, 'security_settings.json')
 
 const LOCAL_APP_SECRET = "Scripting_App_Local_Shield_2024!@#"
 const PAYLOAD_SIGNATURE = "SCRIPTING_SECURE_PAYLOAD_V1"
@@ -185,6 +186,22 @@ export const clearWebDAVConfigFile = async (): Promise<void> => {
   if (await FileManager.exists(WEBDAV_FILE)) {
     try { await FileManager.remove(WEBDAV_FILE) } catch {}
   }
+}
+
+export const loadLaunchBiometricsEnabled = async (): Promise<boolean> => {
+  try {
+    if (!(await FileManager.exists(SECURITY_SETTINGS_FILE))) return false
+    const raw = await FileManager.readAsString(SECURITY_SETTINGS_FILE)
+    if (!raw || typeof raw !== "string") return false
+    const settings = JSON.parse(decryptString(raw, LOCAL_APP_SECRET)) as { launchBiometricsEnabled?: boolean }
+    return settings.launchBiometricsEnabled === true
+  } catch { return false }
+}
+
+export const saveLaunchBiometricsEnabled = async (enabled: boolean): Promise<void> => {
+  await ensureDataDir()
+  const encrypted = encryptString(JSON.stringify({ launchBiometricsEnabled: enabled }), LOCAL_APP_SECRET)
+  await FileManager.writeAsString(SECURITY_SETTINGS_FILE, encrypted)
 }
 
 // --- 基础工具函数 ---

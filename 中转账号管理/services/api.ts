@@ -1,6 +1,5 @@
 declare const fetch: any
 import type { Account, SelfInfo, CheckinStatus, CheckinRecord, ApiJson, ApiResult } from "../types"
-import { UA } from "../constants"
 import { normalizeBaseUrl, quotaFromUsd, localDateString, localMonthString } from "../utils/format"
 import { translateErrorMessage } from "../utils/error"
 import { mergeCookies } from "../utils/cookie"
@@ -53,7 +52,6 @@ export async function refreshSub2ApiToken(account: Account): Promise<boolean> {
     const response = await fetch(`${baseUrl}/api/v1/auth/refresh`, {
       method: "POST",
       headers: {
-        "User-Agent": UA,
         "Accept": "application/json, text/plain, */*",
         "Content-Type": "application/json",
         "Origin": baseUrl,
@@ -93,7 +91,6 @@ export async function sub2ApiRequest<T = any>(account: Account, method: string, 
   const url = `${baseUrl}/api/v1${path}${method.toUpperCase() === "GET" ? `${hasQuery ? "&" : "?"}timezone=${timezone}` : ""}`
 
   const headers: Record<string, string> = {
-    "User-Agent": UA,
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     "Accept-Encoding": "gzip, deflate, br",
@@ -302,7 +299,6 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
   const cookie = getSecret(account.cookieKey)
   const accessToken = getSecret(account.accessTokenKey)
   const headers: Record<string, string> = {
-    "User-Agent": UA,
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     "Accept-Encoding": "gzip, deflate, br",

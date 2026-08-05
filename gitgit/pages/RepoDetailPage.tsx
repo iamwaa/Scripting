@@ -6,17 +6,20 @@
 
 import {
   List,
-  Section,
   Text,
   Button,
-  Menu,
-  Picker,
-  HStack,
-  Spacer,
-  Image,
   useState,
 } from "scripting"
 import { BusyOverlay } from "../components/BusyOverlay"
+import { RepoBranchSection } from "../components/RepoBranchSection"
+import { RepoRemoteSections } from "../components/RepoRemoteSections"
+import {
+  MergeConflictSection,
+  RepoDetailTabContent,
+  type RepoDetailTab,
+} from "../components/RepoDetailContent"
+import { RepoDetailDestination } from "../components/RepoDetailDestination"
+import { CommitMessageSheet } from "../components/CommitMessageSheet"
 import type {
   FileChange,
   CommitEntry,
@@ -39,63 +42,40 @@ import {
   getLogPage,
   getTrackedFiles,
   getManagedBranches,
-  createBranch,
   deleteBranch,
-  renameBranch,
   deleteRemoteBranch,
-  checkoutBranch,
   restoreFile,
-  push,
+  fetchRemote,
   pull,
-  mergeBranchIntoCurrent,
-  hasRemoteBranch,
+  getMergeConflictState,
   listRemotes,
   getBranchUpstream,
   revertCommit,
   softResetHead,
   amendHeadCommit,
-  fetchRemote,
-  getMergeConflictState,
-  isRemoteOperationCancelled,
   RemoteCancelToken,
 } from "../services/gitService"
-import { validateBranchName } from "../utils/branch"
-import {
-  yieldForUi,
-  type RemoteProgressInfo,
-} from "../utils/remoteProgress"
+import { useRepoBranchActions } from "../hooks/useRepoBranchActions"
+import { useRepoSyncActions } from "../hooks/useRepoSyncActions"
+import { yieldForUi } from "../utils/remoteProgress"
 import {
   findRepo,
   getBranchLastPulledAt,
   updateBranchLastPulledAt,
 } from "../services/repoStore"
 import { notifySync } from "../services/notifyService"
-import { ChangesTab } from "./ChangesTab"
-import { HistoryTab } from "./HistoryTab"
-import { FilesTab } from "./FilesTab"
-import { StashTab } from "./StashTab"
-import { UploadGitHubPage } from "./UploadGitHubPage"
-import { CommitDetailPage } from "./CommitDetailPage"
-import { ComparePage } from "./ComparePage"
-import { RemotesPage } from "./RemotesPage"
-import { ConflictsPage } from "./ConflictsPage"
 import {
   shortOid,
   buildCommitMessage,
   relativeTime,
   commitTitle,
+  commitBody,
+  suggestCommitTitle,
 } from "../utils/format"
-import {
-  formatMergeSuccessAlert,
-  formatPullSuccessAlert,
-  pullActionFooterHint,
-} from "../utils/branchMerge"
+import { getRepoPendingAlert, type RepoPendingAction } from "../utils/repoDetailAlerts"
 import type { UpstreamConfig } from "../utils/remote"
 import { DEFAULT_BRANCH } from "../constants/git"
-import { COLOR_ACCENT, COLOR_RED, COLOR_SECONDARY_LABEL } from "../constants/colors"
-
-/** 分段 Tab 索引：0=改动，1=Stash，2=文件，3=历史 */
-type Tab = 0 | 1 | 2 | 3
+import { COLOR_SECONDARY_LABEL } from "../constants/colors"
 
 const HISTORY_PAGE_SIZE = 50
 
@@ -104,15 +84,7 @@ type AlertState = {
   message: string
 } | null
 
-type PendingAction =
-  | { type: "restore"; filepath: string }
-  | { type: "revert"; entry: CommitEntry }
-  | { type: "softReset"; entry: CommitEntry }
-  | { type: "amend" }
-  | { type: "dropStash"; entry: StashEntry }
-  | { type: "deleteLocalBranch"; branch: string }
-  | { type: "deleteRemoteBranch"; branch: string }
-  | null
+type PendingAction = RepoPendingAction
 
 export function RepoDetailPage({
   bookmarkName,
@@ -121,7 +93,7 @@ export function RepoDetailPage({
   bookmarkName: string
   name: string
 }) {
-  const [tab, setTab] = useState<Tab>(0)
+  const [tab, setTab] = useState<RepoDetailTab>(0)
   const [changes, setChanges] = useState<FileChange[]>([])
   const [stashes, setStashes] = useState<StashEntry[]>([])
   const [log, setLog] = useState<CommitEntry[]>([])
@@ -139,8 +111,6 @@ export function RepoDetailPage({
   const [remoteOnlyBranches, setRemoteOnlyBranches] = useState<string[]>([])
   // 全部 origin 分支名：Picker 标签按「远端是否存在」显示 本地/远端
   const [remoteBranchNames, setRemoteBranchNames] = useState<string[]>([])
-  const [commitTitleText, setCommitTitleText] = useState("")
-  const [commitDescription, setCommitDescription] = useState("")
   const [loading, setLoading] = useState(true)
   // Stash / 文件 Tab 懒加载；历史仍首屏加载（空仓提示与合并按钮依赖 log）
   const [stashesLoaded, setStashesLoaded] = useState(false)
@@ -163,6 +133,12 @@ export function RepoDetailPage({
   const [alertState, setAlertState] = useState<AlertState>(null)
   const [pending, setPending] = useState<PendingAction>(null)
   const [amendMessage, setAmendMessage] = useState("")
+  // 普通提交与重编共用同一个半屏表单
+  const [commitSheetMode, setCommitSheetMode] = useState<
+    "commit" | "amend" | null
+  >(null)
+  // 打开重编表单时的初始草稿，由 sheet 内部 Observable 接管后续编辑
+  const [amendDraft, setAmendDraft] = useState({ title: "", description: "" })
   // 仓库级操作忙态（中央全屏遮罩）：撤销/回退/重编/分支操作/合并/推送/拉取等
   // onCancel 存在时遮罩带取消按钮；cancelling 后副标题冻结为「取消中…」
   const [opBusy, setOpBusy] = useState<{
@@ -276,7 +252,7 @@ export function RepoDetailPage({
   }
 
   async function handleTabChange(next: number) {
-    const target = next as Tab
+    const target = next as RepoDetailTab
     setTab(target)
     if (target === 1 && !stashesLoaded) {
       setLoading(true)
@@ -349,233 +325,7 @@ export function RepoDetailPage({
     setShowConflicts(true)
   }
 
-  async function handlePush() {
-    const token = new RemoteCancelToken()
-    const remoteOpts = {
-      cancelToken: token,
-      onProgress: async (info: RemoteProgressInfo) => {
-        await updateOpBusy("正在推送", info.label)
-      },
-    }
-    try {
-      await beginOpBusy("正在推送", undefined, makeSyncCancel(token))
-      const branch = branchInfo.current
-      if (!branch) throw new Error("当前没有可推送的分支")
 
-      // 已发布分支先拉最新；新分支远端尚不存在，必须直接 push 创建
-      if (hasRemote && (await hasRemoteBranch(bookmarkName, branch, "origin"))) {
-        try {
-          await updateOpBusy("正在推送", "先拉取最新…")
-          await pull(bookmarkName, "origin", branch, undefined, remoteOpts)
-          const now = Date.now()
-          updateBranchLastPulledAt(bookmarkName, branch, now)
-          setLastPulledAt(now)
-          await updateOpBusy("正在推送")
-        } catch (e: any) {
-          if (isRemoteOperationCancelled(e)) throw e
-          // pull 失败（冲突/网络）则不继续推送，避免盲目覆盖远端
-          const code = String((e as any)?.code || "")
-          const msg = String(e?.message || e)
-          if (code === "MergeConflictError" || msg.includes("合并冲突")) {
-            const conflictErr = new Error("先拉取最新出现合并冲突：" + msg)
-              ; (conflictErr as any).code = "MergeConflictError"
-            throw conflictErr
-          }
-          throw new Error("先拉取最新失败：" + msg)
-        }
-      }
-      await push(bookmarkName, "origin", branch, false, remoteOpts)
-      await notifySync("push", displayName, branch)
-      showAlert("推送成功", `已发布到 GitHub：origin/${branch}`)
-    } catch (e: any) {
-      if (isRemoteOperationCancelled(e)) {
-        showAlert("已取消", "推送已取消")
-      } else {
-        const code = String((e as any)?.code || "")
-        const msg = String(e?.message || e)
-        if (code === "MergeConflictError" || msg.includes("合并冲突")) {
-          openConflictsPage()
-          showAlert("合并冲突", msg)
-        } else {
-          showAlert("推送失败", msg)
-        }
-      }
-    } finally {
-      // push 成功或失败都可能已更新 remote-tracking ref，刷新日志、分支与远端
-      try {
-        await Promise.all([
-          loadLog(),
-          loadBranches(),
-          loadRemote(),
-          loadMergeState(),
-        ])
-      } catch (_e) {
-        /* 忽略刷新失败 */
-      }
-      setOpBusy(null)
-    }
-  }
-
-  async function handlePull() {
-    const token = new RemoteCancelToken()
-    try {
-      await beginOpBusy("正在拉取", undefined, makeSyncCancel(token))
-      // pull 内会 resolveAuthor；不传 ref 时 fetch 全部分支列表，合并仅当前 ← origin/同名
-      const result = await pull(bookmarkName, "origin", undefined, undefined, {
-        cancelToken: token,
-        onProgress: async (info: RemoteProgressInfo) => {
-          await updateOpBusy("正在拉取", info.label)
-        },
-      })
-      const now = Date.now()
-      updateBranchLastPulledAt(bookmarkName, result.branch, now)
-      setLastPulledAt(now)
-      await notifySync("pull", displayName, result.branch || branchInfo.current || "")
-      const alert = formatPullSuccessAlert(result)
-      showAlert(alert.title, alert.message)
-    } catch (e: any) {
-      if (isRemoteOperationCancelled(e)) {
-        showAlert("已取消", "拉取已取消")
-        return
-      }
-      const code = String((e as any)?.code || "")
-      const msg = String(e?.message || e)
-      // 合并冲突：刷新后进入冲突页
-      if (code === "MergeConflictError" || msg.includes("合并冲突")) {
-        try {
-          await loadAll()
-        } catch (_e) {
-          /* 忽略 */
-        }
-        openConflictsPage()
-        showAlert("合并冲突", msg)
-      } else {
-        showAlert("拉取失败", msg)
-      }
-    } finally {
-      // pull 失败前可能已更新 remote-tracking ref，无论如何都重读状态
-      try {
-        await loadAll()
-      } catch (_e) {
-        /* 忽略刷新失败 */
-      }
-      setOpBusy(null)
-    }
-  }
-
-  /** 将指定分支合并进当前分支；冲突复用 ConflictsPage */
-  async function handleMergeIntoCurrent(source: string) {
-    if (mutating || mergeInProgress) return
-    try {
-      await beginOpBusy("正在合并", `${source} → ${branchInfo.current || "当前分支"}`)
-      const result = await mergeBranchIntoCurrent(bookmarkName, source)
-      const alert = formatMergeSuccessAlert(result)
-      showAlert(alert.title, alert.message)
-    } catch (e: any) {
-      const code = String((e as any)?.code || "")
-      const msg = String(e?.message || e)
-      if (code === "MergeConflictError" || msg.includes("合并冲突")) {
-        try {
-          await loadAll()
-        } catch (_e) {
-          /* 忽略 */
-        }
-        openConflictsPage()
-        showAlert("合并冲突", msg)
-      } else {
-        showAlert("合并失败", msg)
-      }
-    } finally {
-      try {
-        await loadAll()
-      } catch (_e) {
-        /* 忽略刷新失败 */
-      }
-      setOpBusy(null)
-    }
-  }
-
-  async function handleMergePrompt() {
-    if (mutating || mergeInProgress) return
-    try {
-      const input = await Dialog.prompt({
-        title: "合并到当前",
-        message: `合并进「${branchInfo.current || "当前分支"}」`,
-        placeholder: "feature 或 origin/feature",
-        cancelLabel: "取消",
-        confirmLabel: "合并",
-      })
-      if (input == null) return
-      const source = input.trim()
-      if (!source) {
-        showAlert("gitgit", "请输入要合并的分支名")
-        return
-      }
-      await handleMergeIntoCurrent(source)
-    } catch (e: any) {
-      showAlert("合并失败", String(e?.message || e))
-    }
-  }
-
-  async function handleSwitchBranch(ref: string) {
-    if (mutating) return
-    try {
-      await beginOpBusy("正在切换分支", ref)
-      await checkoutBranch(bookmarkName, ref)
-      await loadAll()
-    } catch (e: any) {
-      showAlert("切换失败", String(e?.message || e))
-    } finally {
-      setOpBusy(null)
-    }
-  }
-
-  // 重命名当前分支（当前分支始终是本地分支）
-  async function handleRenameBranch() {
-    const from = branchInfo.current
-    if (!from) {
-      showAlert("gitgit", "当前没有可重命名的分支")
-      return
-    }
-    try {
-      const input = await Dialog.prompt({
-        title: "重命名分支",
-        message: `将「${from}」重命名为新名称`,
-        defaultValue: from,
-        cancelLabel: "取消",
-        confirmLabel: "重命名",
-      })
-      if (input == null) return
-      let to = ""
-      try {
-        to = validateBranchName(input)
-      } catch (e: any) {
-        showAlert("名称无效", String(e?.message || e))
-        return
-      }
-      if (to === from) return
-      await beginOpBusy("正在重命名分支", `${from} → ${to}`)
-      const res = await renameBranch(bookmarkName, from, to)
-      await loadAll()
-      if (!res.oldRemote) {
-        showAlert("已重命名", `${from} → ${to}`)
-      } else if (res.remoteError) {
-        showAlert(
-          "本地已重命名，远端同步失败",
-          `${from} → ${to}。${res.pushedNewBranch ? "新分支已推送，但删除远端旧分支失败" : "推送新分支失败"}：${res.remoteError}`
-        )
-      } else {
-        showAlert(
-          "已重命名并同步远端",
-          `${from} → ${to}。已推送新分支并删除远端旧分支「${from}」。`
-        )
-      }
-    } catch (e: any) {
-      showAlert("重命名失败", String(e?.message || e))
-    } finally {
-      setOpBusy(null)
-    }
-  }
 
   // 请求删除分支：本地分支与仅远端分支分别确认
   function requestDeleteBranch(branch: string) {
@@ -586,39 +336,6 @@ export function RepoDetailPage({
     }
   }
 
-  async function handleCreateBranch() {
-    try {
-      const branchName = await Dialog.prompt({
-        title: "新建分支",
-        message: "输入新分支名称，将创建并切换到该分支",
-        placeholder: "feature/xxx",
-        cancelLabel: "取消",
-        confirmLabel: "创建",
-      })
-      if (branchName == null) return
-      const name = branchName.trim()
-      if (!name) {
-        showAlert("gitgit", "分支名称不能为空")
-        return
-      }
-      const emptyBefore = !hasCommits
-      await beginOpBusy("正在新建分支", name)
-      await createBranch(bookmarkName, name)
-      await loadAll()
-      showAlert(
-        emptyBefore ? "已设置" : "已创建本地分支",
-        emptyBefore
-          ? `空仓库目标分支已设为 ${name}，首次提交后生效`
-          : hasRemote
-            ? `已创建并切换到 ${name}。点击「推送 Push」发布到 GitHub。`
-            : `已创建并切换到 ${name}`
-      )
-    } catch (e: any) {
-      showAlert("创建失败", String(e?.message || e))
-    } finally {
-      setOpBusy(null)
-    }
-  }
 
   async function handleStage(filepath: string) {
     if (stagingBusy || stashBusy) return
@@ -710,8 +427,12 @@ export function RepoDetailPage({
     setPending({ type: "restore", filepath })
   }
 
-  async function handleCommit() {
-    const title = commitTitleText.trim()
+  function handleOpenCommitForm() {
+    setCommitSheetMode("commit")
+  }
+
+  async function handleCommit(titleText: string, descriptionText: string) {
+    const title = titleText.trim()
     if (!title) {
       showAlert("gitgit", "请填写提交信息（标题）")
       return
@@ -720,13 +441,12 @@ export function RepoDetailPage({
       showAlert("没有暂存内容", "请先暂存要提交的文件。")
       return
     }
+    setCommitSheetMode(null)
     setCommitting(true)
     try {
       await beginOpBusy("正在提交")
-      const msg = buildCommitMessage(title, commitDescription)
+      const msg = buildCommitMessage(title, descriptionText)
       const oid = await commit(bookmarkName, msg)
-      setCommitTitleText("")
-      setCommitDescription("")
       // 先清空改动，避免 loadAll 完成前按钮仍显示「取消暂存」
       setChanges([])
       await loadAll()
@@ -760,26 +480,24 @@ export function RepoDetailPage({
     setPending({ type: "softReset", entry })
   }
 
-  async function handleAmendRequest(entry: CommitEntry) {
-    try {
-      const message = await Dialog.prompt({
-        title: "重编提交",
-        message: "输入新的提交信息，确认后将改写最近一次提交",
-        defaultValue: commitTitle(entry.message),
-        cancelLabel: "取消",
-        confirmLabel: "下一步",
-      })
-      if (message == null) return
-      const trimmedMessage = message.trim()
-      if (!trimmedMessage) {
-        showAlert("gitgit", "提交信息不能为空")
-        return
-      }
-      setAmendMessage(trimmedMessage)
-      setPending({ type: "amend" })
-    } catch (e: any) {
-      showAlert("重编失败", String(e?.message || e))
+  function handleAmendRequest(entry: CommitEntry) {
+    setAmendDraft({
+      title: commitTitle(entry.message),
+      description: commitBody(entry.message),
+    })
+    setCommitSheetMode("amend")
+  }
+
+  function handleAmendFormConfirm(titleText: string, descriptionText: string) {
+    const title = titleText.trim()
+    if (!title) {
+      showAlert("gitgit", "提交信息不能为空")
+      return
     }
+    setAmendMessage(buildCommitMessage(title, descriptionText))
+    setCommitSheetMode(null)
+    // 等 sheet 收起后再弹确认，避免模态叠加导致 alert 不显示
+    setTimeout(() => setPending({ type: "amend" }), 350)
   }
 
   // 设置操作忙态遮罩，并让出一帧以便遮罩先渲染；传 onCancel 则遮罩带取消按钮
@@ -966,6 +684,49 @@ export function RepoDetailPage({
 
   // 可合并源：排除当前分支及其 origin/同名（自合并）
   const currentBranch = branchInfo.current || ""
+  const {
+    handleMergeIntoCurrent,
+    handleSwitchBranch,
+    handleRenameBranch,
+    handleCreateBranch,
+  } = useRepoBranchActions({
+    bookmarkName,
+    currentBranch: branchInfo.current,
+    hasCommits,
+    hasRemote,
+    mutating,
+    mergeInProgress,
+    beginOpBusy,
+    endOpBusy: () => setOpBusy(null),
+    reloadRepo: loadAll,
+    showAlert,
+    openConflictsPage,
+  })
+  const { handlePush, handlePull } = useRepoSyncActions({
+    bookmarkName,
+    displayName,
+    currentBranch: branchInfo.current,
+    hasRemote,
+    beginOpBusy,
+    updateOpBusy,
+    endOpBusy: () => setOpBusy(null),
+    makeSyncCancel,
+    setPulledAt: (branch, timestamp) => {
+      updateBranchLastPulledAt(bookmarkName, branch, timestamp)
+      setLastPulledAt(timestamp)
+    },
+    refreshSyncState: async () => {
+      await Promise.all([
+        loadLog(),
+        loadBranches(),
+        loadRemote(),
+        loadMergeState(),
+      ])
+    },
+    reloadRepo: loadAll,
+    showAlert,
+    openConflictsPage,
+  })
   const mergeSources = branchInfo.branches.filter(
     (b) => b !== currentBranch && b !== `origin/${currentBranch}`
   )
@@ -986,50 +747,14 @@ export function RepoDetailPage({
     await loadAll()
   }
 
-  // 声明式弹窗：确认操作优先
-  let confirmTitle = ""
-  let confirmMessage = ""
-  let confirmButton = "确定"
-  if (pending?.type === "restore") {
-    confirmTitle = "丢弃改动？"
-    confirmMessage = `将「${pending.filepath}」恢复到 HEAD，不可撤销。`
-    confirmButton = "丢弃"
-  } else if (pending?.type === "revert") {
-    confirmTitle = "撤销该提交？"
-    confirmMessage = `将为 HEAD 创建反向提交，撤销「${commitTitle(pending.entry.message)}」。`
-    confirmButton = "撤销"
-  } else if (pending?.type === "softReset") {
-    confirmTitle = "回退未推送提交？"
-    confirmMessage =
-      "将 soft reset 到上一提交，提交记录移除，文件改动保留。仅限未推送的 HEAD。"
-    confirmButton = "回退"
-  } else if (pending?.type === "amend") {
-    confirmTitle = "重编提交？"
-    confirmMessage =
-      "将改写最近提交信息。只能用于尚未推送的 HEAD，已推送会被拒绝。"
-    confirmButton = "重编"
-  } else if (pending?.type === "dropStash") {
-    confirmTitle = "删除 Stash？"
-    confirmMessage = `将永久删除「${pending.entry.message}」。`
-    confirmButton = "删除"
-  } else if (pending?.type === "deleteLocalBranch") {
-    confirmTitle = `删除本地分支 ${pending.branch}？`
-    confirmMessage = "仅删除本地分支引用，不影响远端。未合并的提交可能丢失。"
-    confirmButton = "删除"
-  } else if (pending?.type === "deleteRemoteBranch") {
-    confirmTitle = `删除远端分支 origin/${pending.branch}？`
-    confirmMessage = "将从 origin 删除该远端分支，操作不可撤销，需已配置 Token。"
-    confirmButton = "删除"
-  }
+  const confirmAlert = pending ? getRepoPendingAlert(pending) : null
 
   const activeAlert =
-    pending != null
+    confirmAlert != null
       ? {
-        title: confirmTitle,
-        message: confirmMessage,
-        isConfirm: true as const,
-        confirmButton,
-      }
+          ...confirmAlert,
+          isConfirm: true as const,
+        }
       : alertState
         ? {
           title: alertState.title,
@@ -1092,51 +817,64 @@ export function RepoDetailPage({
             loadMergeState()
           }
         },
-        content: showUpload ? (
-          <UploadGitHubPage
+        content: (
+          <RepoDetailDestination
             bookmarkName={bookmarkName}
-            defaultName={displayName}
+            displayName={displayName}
+            showUpload={showUpload}
+            showRemotes={showRemotes}
+            showConflicts={showConflicts}
+            showCompare={showCompare}
+            selectedCommitOid={selectedCommitOid}
             onUploaded={(repo) => {
               setDisplayName(repo.name)
               setRepoSource(repo.source || "clone")
               setHasRemote(true)
               setShowUpload(false)
-              // 关闭子页后再由父页弹成功提示（子页正在退出，其 alert 不可见）
               loadAll().then(() => {
                 showAlert("上传成功", `已上传到 ${repo.name}`)
               })
             }}
-          />
-        ) : showRemotes ? (
-          <RemotesPage
-            bookmarkName={bookmarkName}
-            onChanged={() => {
+            onRemotesChanged={() => {
               loadRemote()
               loadBranches()
               loadUpstream()
               refreshMeta()
             }}
-          />
-        ) : showConflicts ? (
-          <ConflictsPage
-            bookmarkName={bookmarkName}
-            onChanged={() => {
+            onConflictsChanged={() => {
               loadMergeState()
               loadChanges()
               loadLog()
             }}
           />
-        ) : showCompare ? (
-          <ComparePage bookmarkName={bookmarkName} />
-        ) : selectedCommitOid ? (
-          // key 强制按提交重建，防止 navigationDestination 复用旧实例
-          <CommitDetailPage
-            key={selectedCommitOid}
-            bookmarkName={bookmarkName}
-            oid={selectedCommitOid}
+        ),
+      }}
+      sheet={{
+        isPresented: commitSheetMode != null,
+        onChanged: (presented: boolean) => {
+          if (!presented) setCommitSheetMode(null)
+        },
+        content: commitSheetMode === "amend" ? (
+          <CommitMessageSheet
+            key={`amend-${amendDraft.title}`}
+            navigationTitle="重编提交"
+            confirmTitle="提交"
+            footer="确认后将改写最近一次提交。只能用于尚未推送的 HEAD，已推送会被拒绝。"
+            initialTitle={amendDraft.title}
+            initialDescription={amendDraft.description}
+            onCancel={() => setCommitSheetMode(null)}
+            onConfirm={handleAmendFormConfirm}
           />
         ) : (
-          <Text>加载中…</Text>
+          <CommitMessageSheet
+            navigationTitle="提交改动"
+            confirmTitle="提交"
+            initialTitle={suggestCommitTitle(changes)}
+            initialDescription=""
+            busy={committing}
+            onCancel={() => setCommitSheetMode(null)}
+            onConfirm={handleCommit}
+          />
         ),
       }}
       alert={{
@@ -1167,368 +905,97 @@ export function RepoDetailPage({
         ),
       }}
     >
-      <Section
-        header={
-          <HStack alignment="center" spacing={8}>
-            <Text>分支</Text>
-            <Spacer />
-            {/* 分支操作从左到右：删除、合并、重命名、新建 */}
-            {deletableBranches.length > 0 ? (
-              <Menu
-                label={
-                  <HStack alignment="center" spacing={4}>
-                    <Image
-                      systemName="trash"
-                      font="caption"
-                      foregroundStyle={COLOR_RED}
-                    />
-                    <Text font="caption" foregroundStyle={COLOR_RED}>
-                      删除
-                    </Text>
-                  </HStack>
-                }
-              >
-                {deletableBranches.map((b) => (
-                  <Button
-                    key={b}
-                    title={
-                      remoteOnlyBranches.includes(b)
-                        ? `origin/${b}（远端）`
-                        : b
-                    }
-                    role="destructive"
-                    action={() => requestDeleteBranch(b)}
-                    disabled={mutating || mergeInProgress}
-                  />
-                ))}
-              </Menu>
-            ) : null}
-            {/* 合并在新建左侧；有候选分支用 Menu，否则点按输入 */}
-            {mergeSources.length > 0 ? (
-              <Menu
-                label={
-                  <HStack alignment="center" spacing={4}>
-                    <Image
-                      systemName="arrow.triangle.merge"
-                      font="caption"
-                      foregroundStyle={COLOR_ACCENT}
-                    />
-                    <Text font="caption" foregroundStyle={COLOR_ACCENT}>
-                      合并
-                    </Text>
-                  </HStack>
-                }
-              >
-                {mergeSources.map((b) => (
-                  <Button
-                    key={b}
-                    title={b}
-                    action={() => handleMergeIntoCurrent(b)}
-                    disabled={mutating || mergeInProgress || !hasCommits}
-                  />
-                ))}
-                <Button
-                  title="其它分支"
-                  action={handleMergePrompt}
-                  disabled={mutating || mergeInProgress || !hasCommits}
-                />
-              </Menu>
-            ) : (
-              <Button
-                action={handleMergePrompt}
-                disabled={mutating || mergeInProgress || !hasCommits}
-              >
-                <HStack alignment="center" spacing={4}>
-                  <Image
-                    systemName="arrow.triangle.merge"
-                    font="caption"
-                    foregroundStyle={COLOR_ACCENT}
-                  />
-                  <Text font="caption" foregroundStyle={COLOR_ACCENT}>
-                    合并
-                  </Text>
-                </HStack>
-              </Button>
-            )}
-            <Button
-              action={handleRenameBranch}
-              disabled={mutating || mergeInProgress || !hasCommits || !branchInfo.current}
-            >
-              <HStack alignment="center" spacing={4}>
-                <Image
-                  systemName="pencil"
-                  font="caption"
-                  foregroundStyle={COLOR_ACCENT}
-                />
-                <Text font="caption" foregroundStyle={COLOR_ACCENT}>
-                  重命名
-                </Text>
-              </HStack>
-            </Button>
-            <Button
-              action={handleCreateBranch}
-              disabled={mutating || mergeInProgress}
-            >
-              <HStack alignment="center" spacing={4}>
-                <Image
-                  systemName="plus.circle"
-                  font="caption"
-                  foregroundStyle={COLOR_ACCENT}
-                />
-                <Text font="caption" foregroundStyle={COLOR_ACCENT}>
-                  新建
-                </Text>
-              </HStack>
-            </Button>
-          </HStack>
-        }
-        footer={
-          <Text font="footnote" foregroundStyle={COLOR_SECONDARY_LABEL}>
-            {!hasCommits
-              ? `空仓库默认 ${branchInfo.current || DEFAULT_BRANCH}，首次提交后才会真正创建分支引用`
-              : hasRemote
-                ? "含本地与 origin 远端分支"
-                : "仅本地分支"}
-          </Text>
-        }
-      >
-        {branchInfo.branches.length > 0 ? (
-          <Picker
-            title="当前分支"
-            value={branchInfo.current ?? ""}
-            onChanged={(v: string) => handleSwitchBranch(v)}
-          >
-            {branchInfo.branches.map((b) => (
-              <Text key={b} tag={b}>
-                {remoteBranchNames.includes(b) ? `${b} · 远端` : `${b} · 本地`}
-              </Text>
-            ))}
-          </Picker>
-        ) : (
-          <Text foregroundStyle={COLOR_SECONDARY_LABEL}>
-            默认 {DEFAULT_BRANCH}（尚未初始化）
-          </Text>
-        )}
-      </Section>
+      <RepoBranchSection
+        branchInfo={branchInfo}
+        remoteOnlyBranches={remoteOnlyBranches}
+        remoteBranchNames={remoteBranchNames}
+        mergeSources={mergeSources}
+        deletableBranches={deletableBranches}
+        hasCommits={hasCommits}
+        hasRemote={hasRemote}
+        mergeInProgress={mergeInProgress}
+        mutating={mutating}
+        onDelete={requestDeleteBranch}
+        onMerge={handleMergeIntoCurrent}
+        onRename={handleRenameBranch}
+        onCreate={handleCreateBranch}
+        onSwitch={handleSwitchBranch}
+      />
 
       {mergeInProgress ? (
-        <Section
-          header={<Text>合并冲突</Text>}
-          footer={
-            <Text font="footnote" foregroundStyle={COLOR_SECONDARY_LABEL}>
-              {conflictCount > 0
-                ? `仍有 ${conflictCount} 个文件待解决`
-                : "冲突已解决，请完成合并提交或中止合并"}
-            </Text>
-          }
-        >
-          <Button
-            title={
-              conflictCount > 0
-                ? `处理冲突（${conflictCount}）`
-                : "完成或中止合并"
-            }
-            systemImage="exclamationmark.triangle"
-            action={openConflictsPage}
-            disabled={mutating}
-          />
-        </Section>
+        <MergeConflictSection
+          conflictCount={conflictCount}
+          mutating={mutating}
+          onOpen={openConflictsPage}
+        />
       ) : null}
 
-      {hasRemote ? (
-        <Section
-          header={
-            <HStack alignment="center" spacing={8}>
-              <Text>同步</Text>
-              <Spacer />
-              <Button
-                action={() => {
-                  setSelectedCommitOid(null)
-                  setShowUpload(false)
-                  setShowRemotes(false)
-                  setShowConflicts(false)
-                  setShowCompare(true)
-                }}
-                disabled={mutating}
-              >
-                <HStack alignment="center" spacing={4}>
-                  <Image
-                    systemName="arrow.left.arrow.right"
-                    font="caption"
-                    foregroundStyle={COLOR_ACCENT}
-                  />
-                  <Text font="caption" foregroundStyle={COLOR_ACCENT}>
-                    对比差异
-                  </Text>
-                </HStack>
-              </Button>
-              <Button
-                action={() => {
-                  setSelectedCommitOid(null)
-                  setShowUpload(false)
-                  setShowConflicts(false)
-                  setShowRemotes(true)
-                }}
-                disabled={mutating}
-              >
-                <HStack alignment="center" spacing={4}>
-                  <Image
-                    systemName="network"
-                    font="caption"
-                    foregroundStyle={COLOR_ACCENT}
-                  />
-                  <Text font="caption" foregroundStyle={COLOR_ACCENT}>
-                    远端管理
-                  </Text>
-                </HStack>
-              </Button>
-            </HStack>
-          }
-          footer={
-            <Text font="footnote" foregroundStyle={COLOR_SECONDARY_LABEL}>
-              {pullActionFooterHint(branchInfo.current, upstream)}
-              {"\n"}
-              最近拉取：{pulledLabel}
-            </Text>
-          }
-        >
-          <Button
-            action={handlePush}
-            disabled={mutating || mergeInProgress}
-          >
-            <HStack alignment="center" spacing={6}>
-              <Image systemName="arrow.up.circle" />
-              <Text>推送 Push</Text>
-            </HStack>
-          </Button>
-          <Button
-            action={handlePull}
-            disabled={mutating || mergeInProgress}
-          >
-            <HStack alignment="center" spacing={6}>
-              <Image systemName="arrow.down.circle" />
-              <Text>拉取 Pull</Text>
-            </HStack>
-          </Button>
-        </Section>
-      ) : canUpload ? (
-        <Section
-          header={<Text>上传</Text>}
-          footer={
-            <Text font="footnote" foregroundStyle={COLOR_SECONDARY_LABEL}>
-              本地仓库 · 默认分支 {branchInfo.current || DEFAULT_BRANCH}
-              · 需至少一次提交后再上传
-            </Text>
-          }
-        >
-          <Button
-            title="上传到 GitHub"
-            systemImage="arrow.up.circle"
-            action={() => {
-              setSelectedCommitOid(null)
-              setShowRemotes(false)
-              setShowUpload(true)
-            }}
-          />
-          <Button
-            title="远端管理"
-            systemImage="network"
-            action={() => {
-              setSelectedCommitOid(null)
-              setShowUpload(false)
-              setShowRemotes(true)
-            }}
-          />
-        </Section>
-      ) : (
-        <Section
-          header={<Text>远端</Text>}
-          footer={
-            <Text font="footnote" foregroundStyle={COLOR_SECONDARY_LABEL}>
-              可手动添加 origin，或克隆/上传后自动出现同步区
-            </Text>
-          }
-        >
-          <Button
-            title="远端管理"
-            systemImage="network"
-            action={() => {
-              setSelectedCommitOid(null)
-              setShowUpload(false)
-              setShowRemotes(true)
-            }}
-          />
-        </Section>
-      )}
+      <RepoRemoteSections
+        branchInfo={branchInfo}
+        upstream={upstream}
+        pulledLabel={pulledLabel}
+        hasRemote={hasRemote}
+        canUpload={canUpload}
+        mergeInProgress={mergeInProgress}
+        mutating={mutating}
+        onCompare={() => {
+          setSelectedCommitOid(null)
+          setShowUpload(false)
+          setShowRemotes(false)
+          setShowConflicts(false)
+          setShowCompare(true)
+        }}
+        onManageRemotes={() => {
+          setSelectedCommitOid(null)
+          setShowUpload(false)
+          setShowConflicts(false)
+          setShowRemotes(true)
+        }}
+        onUpload={() => {
+          setSelectedCommitOid(null)
+          setShowRemotes(false)
+          setShowUpload(true)
+        }}
+        onPush={handlePush}
+        onPull={handlePull}
+      />
 
-      <Section>
-        <Picker
-          title="视图"
-          value={tab}
-          onChanged={handleTabChange}
-          pickerStyle="segmented"
-        >
-          <Text tag={0}>改动</Text>
-          <Text tag={1}>Stash</Text>
-          <Text tag={2}>文件</Text>
-          <Text tag={3}>历史</Text>
-        </Picker>
-      </Section>
-
-      {tab === 0 ? (
-        <ChangesTab
-          bookmarkName={bookmarkName}
-          changes={changes}
-          loading={loading}
-          title={commitTitleText}
-          setTitle={setCommitTitleText}
-          description={commitDescription}
-          setDescription={setCommitDescription}
-          committing={committing}
-          stagingBusy={stagingBusy}
-          onCommit={handleCommit}
-          onStage={handleStage}
-          onStageAll={handleStageAll}
-          onUnstageAll={handleUnstageAll}
-          onRestore={handleRestore}
-        />
-      ) : tab === 1 ? (
-        <StashTab
-          bookmarkName={bookmarkName}
-          changes={changes}
-          stashes={stashes}
-          loading={loading}
-          committing={committing}
-          stagingBusy={stagingBusy}
-          stashBusy={stashBusy}
-          onCreateStash={handleCreateStash}
-          onApplyStash={handleApplyStash}
-          onDropStash={handleDropStash}
-        />
-      ) : tab === 2 ? (
-        <FilesTab files={trackedFiles} loading={loading} />
-      ) : (
-        <HistoryTab
-          log={log}
-          loading={loading}
-          onCopy={handleCopyCommit}
-          onSelect={(entry) => {
-            // 独占受控导航，避免与上传/远端/冲突子页状态叠加
-            setShowUpload(false)
-            setShowRemotes(false)
-            setShowConflicts(false)
-            setSelectedCommitOid(entry.oid)
-          }}
-          onRevert={handleRevertRequest}
-          onSoftReset={handleSoftResetRequest}
-          onAmend={handleAmendRequest}
-          onSearch={handleHistorySearch}
-          onLoadMore={handleHistoryLoadMore}
-          hasMore={historyHasMore}
-          searchBusy={historySearchBusy}
-          totalMatches={historyTotalMatches}
-        />
-      )}
+      <RepoDetailTabContent
+        tab={tab}
+        onTabChange={handleTabChange}
+        bookmarkName={bookmarkName}
+        changes={changes}
+        stashes={stashes}
+        log={log}
+        trackedFiles={trackedFiles}
+        loading={loading}
+        onOpenCommitForm={handleOpenCommitForm}
+        committing={committing}
+        stagingBusy={stagingBusy}
+        stashBusy={stashBusy}
+        onStage={handleStage}
+        onStageAll={handleStageAll}
+        onUnstageAll={handleUnstageAll}
+        onRestore={handleRestore}
+        onCreateStash={handleCreateStash}
+        onApplyStash={handleApplyStash}
+        onDropStash={handleDropStash}
+        onCopyCommit={handleCopyCommit}
+        onSelectCommit={(entry) => {
+          setShowUpload(false)
+          setShowRemotes(false)
+          setShowConflicts(false)
+          setSelectedCommitOid(entry.oid)
+        }}
+        onRevert={handleRevertRequest}
+        onSoftReset={handleSoftResetRequest}
+        onAmend={handleAmendRequest}
+        onSearch={handleHistorySearch}
+        onLoadMore={handleHistoryLoadMore}
+        historyHasMore={historyHasMore}
+        historySearchBusy={historySearchBusy}
+        historyTotalMatches={historyTotalMatches}
+      />
     </List>
   )
 }

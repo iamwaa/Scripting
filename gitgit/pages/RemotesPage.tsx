@@ -2,6 +2,7 @@
  * pages/RemotesPage.tsx - Remote / upstream 管理
  *
  * 查看、添加、修改 URL、删除 remote；为当前分支设置 upstream。
+ * 添加入口在右上角 toolbar，点击弹出半屏表单。
  * 写操作走 gitService 仓库级互斥与失败回滚。
  */
 
@@ -15,8 +16,9 @@ import {
   Picker,
   useState,
   useEffect,
+  useRef,
 } from "scripting"
-import { FormRow } from "../components/FormRow"
+import { AddRemoteSheet } from "../components/AddRemoteSheet"
 import type { RemoteInfo } from "../services/gitService"
 import {
   listRemotes,
@@ -26,10 +28,9 @@ import {
   getBranchUpstream,
   setBranchUpstream,
   getBranches,
+  getRemoteBranches,
+  fetchRemote,
 } from "../services/gitService"
-import {
-  type UpstreamConfig,
-} from "../utils/remote"
 import { COLOR_SECONDARY_LABEL } from "../constants/colors"
 
 type AlertState = { title: string; message: string } | null
@@ -44,21 +45,43 @@ export function RemotesPage({
 }) {
   const [remotes, setRemotes] = useState<RemoteInfo[]>([])
   const [currentBranch, setCurrentBranch] = useState<string | null>(null)
-  const [upstream, setUpstream] = useState<UpstreamConfig | null>(null)
   const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
-
-  const [newName, setNewName] = useState("")
-  const [newUrl, setNewUrl] = useState("")
-
   const [upstreamRemote, setUpstreamRemote] = useState("origin")
   const [upstreamMerge, setUpstreamMerge] = useState("")
+  const [remoteBranches, setRemoteBranches] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
+
+  // 添加远端半屏弹窗；草稿由弹窗自持，本页只管开关
+  const [showAddSheet, setShowAddSheet] = useState(false)
+
+  const [branchLoading, setBranchLoading] = useState(false)
+  const [branchLoadWarning, setBranchLoadWarning] = useState<string | null>(null)
+  const branchRequestRef = useRef(0)
 
   const [pendingDelete, setPendingDelete] = useState<RemoteInfo | null>(null)
   const [alertState, setAlertState] = useState<AlertState>(null)
 
   function showAlert(title: string, message: string) {
     setAlertState({ title, message })
+  }
+
+  async function refreshRemoteBranches(remote: string): Promise<void> {
+    const request = ++branchRequestRef.current
+    setBranchLoading(true)
+    setBranchLoadWarning(null)
+    try {
+      await fetchRemote(bookmarkName, remote, undefined, true)
+    } catch (e: any) {
+      if (request === branchRequestRef.current) {
+        setBranchLoadWarning(`自动获取失败，当前显示本地缓存：${String(e?.message || e)}`)
+      }
+    }
+    try {
+      const branches = await getRemoteBranches(bookmarkName, remote)
+      if (request === branchRequestRef.current) setRemoteBranches(branches)
+    } finally {
+      if (request === branchRequestRef.current) setBranchLoading(false)
+    }
   }
 
   async function loadAll() {
@@ -71,15 +94,23 @@ export function RemotesPage({
       ])
       setRemotes(remoteList)
       setCurrentBranch(branches.current)
-      setUpstream(up)
       // 默认 upstream 表单：优先 origin，否则第一个 remote
       const defaultRemote =
         remoteList.find((r) => r.remote === "origin")?.remote ||
         remoteList[0]?.remote ||
         "origin"
-      setUpstreamRemote(up?.remote || defaultRemote)
+      const selectedRemote = remoteList.some((remote) => remote.remote === up?.remote)
+        ? up!.remote
+        : defaultRemote
+      setUpstreamRemote(selectedRemote)
       const mergeShort = up?.merge?.replace(/^refs\/heads\//, "") || ""
       setUpstreamMerge(mergeShort || branches.current || "")
+      if (remoteList.length > 0) {
+        await refreshRemoteBranches(selectedRemote)
+      } else {
+        setRemoteBranches([])
+        setBranchLoadWarning(null)
+      }
     } catch (e: any) {
       showAlert("加载失败", String(e?.message || e))
     } finally {
@@ -91,6 +122,13 @@ export function RemotesPage({
     loadAll()
   }, [])
 
+  async function handleRemoteChanged(remote: string) {
+    if (busy || loading || branchLoading) return
+    setUpstreamRemote(remote)
+    setUpstreamMerge(currentBranch || "")
+    await refreshRemoteBranches(remote)
+  }
+
   function notifyParent() {
     try {
       onChanged?.()
@@ -99,13 +137,12 @@ export function RemotesPage({
     }
   }
 
-  async function handleAdd() {
+  async function handleAdd(name: string, url: string) {
     if (busy) return
     setBusy(true)
     try {
-      await addRemote(bookmarkName, newName, newUrl)
-      setNewName("")
-      setNewUrl("")
+      await addRemote(bookmarkName, name, url)
+      setShowAddSheet(false)
       await loadAll()
       notifyParent()
       showAlert("已添加", "远端已写入仓库配置")
@@ -187,6 +224,14 @@ export function RemotesPage({
     }
   }
 
+  // 文本输入已移除，把当前跟踪分支并入选项，避免 Picker 选中值不在列表中
+  const branchOptions = Array.from(
+    new Set([
+      ...remoteBranches,
+      ...(upstreamMerge.trim() ? [upstreamMerge.trim()] : []),
+    ])
+  ).sort((left, right) => left.localeCompare(right))
+
   const activeAlert = pendingDelete
     ? {
         title: `删除远端 ${pendingDelete.remote}？`,
@@ -209,8 +254,28 @@ export function RemotesPage({
       navigationTitle="远端管理"
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
-      onAppear={() => {
-        loadAll()
+      toolbar={{
+        topBarTrailing: (
+          <Button
+            title="添加远端"
+            systemImage="plus"
+            action={() => setShowAddSheet(true)}
+            disabled={busy || loading}
+          />
+        ),
+      }}
+      sheet={{
+        isPresented: showAddSheet,
+        onChanged: (presented: boolean) => {
+          if (!presented) setShowAddSheet(false)
+        },
+        content: (
+          <AddRemoteSheet
+            busy={busy}
+            onCancel={() => setShowAddSheet(false)}
+            onConfirm={handleAdd}
+          />
+        ),
       }}
       alert={{
         title: activeAlert?.title ?? "",
@@ -242,6 +307,11 @@ export function RemotesPage({
     >
       <Section
         header={<Text>已配置远端</Text>}
+        footer={
+          <Text font={13} foregroundStyle={COLOR_SECONDARY_LABEL}>
+            左滑行可修改或删除；右上角 + 添加新远端
+          </Text>
+        }
       >
         {loading ? (
           <Text foregroundStyle={COLOR_SECONDARY_LABEL}>加载中…</Text>
@@ -283,34 +353,6 @@ export function RemotesPage({
         )}
       </Section>
 
-      <Section
-        header={<Text>添加远端</Text>}
-        footer={
-          <Text font="footnote" foregroundStyle={COLOR_SECONDARY_LABEL}>
-            URL 支持 https 与 git@host:path
-          </Text>
-        }
-      >
-        <FormRow
-          label="名称"
-          value={newName}
-          onChanged={setNewName}
-          prompt="origin / upstream"
-        />
-        <FormRow
-          label="Git URL"
-          value={newUrl}
-          onChanged={setNewUrl}
-          prompt="https://github.com/user/repo.git"
-        />
-        <Button
-          title={busy ? "处理中…" : "添加远端"}
-          systemImage="plus.circle"
-          action={handleAdd}
-          disabled={busy || loading || !newName.trim() || !newUrl.trim()}
-        />
-      </Section>
-
       <Section header={<Text>当前分支 Upstream</Text>}>
         {remotes.length === 0 ? (
           <Text foregroundStyle={COLOR_SECONDARY_LABEL}>
@@ -321,7 +363,8 @@ export function RemotesPage({
             <Picker
               title="跟踪远端"
               value={upstreamRemote}
-              onChanged={setUpstreamRemote}
+              onChanged={handleRemoteChanged}
+              disabled={branchLoading}
             >
               {remotes.map((r) => (
                 <Text key={r.remote} tag={r.remote}>
@@ -329,17 +372,30 @@ export function RemotesPage({
                 </Text>
               ))}
             </Picker>
-            <FormRow
-              label="分支"
-              value={upstreamMerge}
-              onChanged={setUpstreamMerge}
-              prompt={currentBranch || "main"}
-            />
+            {branchOptions.length > 0 ? (
+              <Picker
+                title={branchLoading ? "正在获取分支" : "远端分支"}
+                value={upstreamMerge}
+                onChanged={setUpstreamMerge}
+                disabled={branchLoading}
+              >
+                {branchOptions.map((branch) => (
+                  <Text key={branch} tag={branch}>
+                    {branch}
+                  </Text>
+                ))}
+              </Picker>
+            ) : null}
+            {branchLoadWarning ? (
+              <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL}>
+                {branchLoadWarning}
+              </Text>
+            ) : null}
             <Button
               title={busy ? "处理中…" : "设置 Upstream"}
               systemImage="arrow.triangle.branch"
               action={handleSetUpstream}
-              disabled={busy || loading || !currentBranch}
+              disabled={busy || loading || branchLoading || !currentBranch}
             />
           </>
         )}

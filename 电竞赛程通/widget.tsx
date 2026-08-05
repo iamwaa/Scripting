@@ -119,8 +119,10 @@ function MatchVersusRow({ match, variant = "medium" }: { match: Match; variant?:
   const isMedium = variant === "medium"
   const isLarge = variant === "large"
   const logoSize = isSmall ? 40 : isLarge ? 34 : 48
-  const teamMinWidth = isSmall ? 42 : isLarge ? 50 : 64
-  const centerWidth = isSmall ? 60 : isLarge ? 96 : 112
+  const teamMinWidth = isSmall ? 42 : isLarge ? 50 : 58
+  // 中号/大号中间列宽度:赛事名保持在 VS 上方,给足宽度避免截断;
+  // 中号通过压缩队伍区与 HStack 间距腾出空间,大号行内宽度余量大
+  const centerWidth = isSmall ? 60 : isLarge ? 150 : 148
   const nameFont = isSmall ? "caption2" : isLarge ? "caption" : "callout"
   const leagueFont = isSmall ? "callout" : isLarge ? "callout" : "title3"
   const vsFont = isSmall ? "headline" : isLarge ? "callout" : "title2"
@@ -144,7 +146,7 @@ function MatchVersusRow({ match, variant = "medium" }: { match: Match; variant?:
       {isMedium ? (
         // 中号:赛事/VS/时间紧凑居中,不再随 HStack 高度撑开
         <VStack alignment="center" spacing={4} frame={{ width: centerWidth, alignment: "center" }}>
-          <Text font={centerTextFont} foregroundStyle="secondaryLabel" lineLimit={1} multilineTextAlignment="center">
+          <Text font={centerTextFont} foregroundStyle="secondaryLabel" lineLimit={1} multilineTextAlignment="center" minScaleFactor={0.7}>
             {eventTitle(match)}
           </Text>
           <Text font={vsFont} fontWeight="bold" foregroundStyle="secondaryLabel" lineLimit={1}>
@@ -152,7 +154,7 @@ function MatchVersusRow({ match, variant = "medium" }: { match: Match; variant?:
           </Text>
           <Text
             font={centerTextFont}
-            foregroundStyle={isRunning ? "red" : "secondaryLabel"}
+            foregroundStyle={isRunning ? "green" : "secondaryLabel"}
             fontWeight={isRunning ? "semibold" : undefined}
             lineLimit={1}
             multilineTextAlignment="center"
@@ -164,7 +166,7 @@ function MatchVersusRow({ match, variant = "medium" }: { match: Match; variant?:
         // 大号:中间赛事/时间紧凑靠近 VS,避免上下顶置底置拉得太散
         <VStack alignment="center" spacing={2} frame={{ width: centerWidth, maxHeight: "infinity", alignment: "center" }}>
           <Spacer minLength={0} />
-          <Text font={centerTextFont} foregroundStyle="secondaryLabel" lineLimit={1} multilineTextAlignment="center">
+          <Text font={centerTextFont} foregroundStyle="secondaryLabel" lineLimit={1} multilineTextAlignment="center" minScaleFactor={0.7}>
             {eventTitle(match)}
           </Text>
           <Text font={vsFont} fontWeight="bold" foregroundStyle="secondaryLabel" lineLimit={1}>
@@ -172,7 +174,7 @@ function MatchVersusRow({ match, variant = "medium" }: { match: Match; variant?:
           </Text>
           <Text
             font={centerTextFont}
-            foregroundStyle={isRunning ? "red" : "secondaryLabel"}
+            foregroundStyle={isRunning ? "green" : "secondaryLabel"}
             fontWeight={isRunning ? "semibold" : undefined}
             lineLimit={1}
             multilineTextAlignment="center"
@@ -193,8 +195,8 @@ function MatchVersusRow({ match, variant = "medium" }: { match: Match; variant?:
   )
 
   const rowBody = isMedium ? (
-    // 中号 HStack 自然高度,由紧凑 TeamBlock 决定,spacing 加大让左右球队外移
-    <HStack alignment="center" spacing={30} frame={{ maxWidth: "infinity", alignment: "center" }}>
+    // 中号 HStack 自然高度,由紧凑 TeamBlock 决定,spacing 收窄让中间列更宽
+    <HStack alignment="center" spacing={20} frame={{ maxWidth: "infinity", alignment: "center" }}>
       {teamsRow}
     </HStack>
   ) : (
@@ -219,8 +221,8 @@ function MatchVersusRow({ match, variant = "medium" }: { match: Match; variant?:
         >
           {leagueName(match)}
         </Text>
-        {/* 赛事名居中 */}
-        <Text font={centerTextFont} foregroundStyle="secondaryLabel" lineLimit={1} multilineTextAlignment="center" padding={{ top: 4 }}>
+        {/* 赛事名居中,超长时缩放而非截断 */}
+        <Text font={centerTextFont} foregroundStyle="secondaryLabel" lineLimit={1} multilineTextAlignment="center" minScaleFactor={0.7} padding={{ top: 4 }}>
           {eventTitle(match)}
         </Text>
         {/* 中部对阵区:用 Spacer 撑满剩余空间,左 logo/名 贴左 - VS 居中 - 右 logo/名 贴右 */}
@@ -252,7 +254,7 @@ function MatchVersusRow({ match, variant = "medium" }: { match: Match; variant?:
         {/* 底部:日期时间/进行中,居中 */}
         <Text
           font={centerTextFont}
-          foregroundStyle={isRunning ? "red" : "secondaryLabel"}
+          foregroundStyle={isRunning ? "green" : "secondaryLabel"}
           fontWeight={isRunning ? "semibold" : undefined}
           lineLimit={1}
           multilineTextAlignment="center"

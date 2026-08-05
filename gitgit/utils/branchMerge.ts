@@ -202,7 +202,7 @@ export function pullActionFooterHint(
       remote: "origin",
       upstream: upstream ?? null,
     })
-    return `拉取：${t.localBranch} ← ${t.track}`
+    return `远端拉取：${t.localBranch} ← ${t.track}`
   } catch (_e) {
     return "拉取：当前分支 ← Upstream / origin 同名"
   }

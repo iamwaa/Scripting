@@ -1,7 +1,6 @@
 declare const fetch: any
 
 import type { Account, SelfInfo, SiteStatus, CheckinStatus } from "../types"
-import { UA } from "../constants"
 import { isSub2ApiAccount, normalizeBaseUrl, quotaFromUsd, localMonthString, localDateString, now } from "../utils/format"
 import { translateErrorMessage, getErrorMessage } from "../utils/error"
 import { mergeCookies } from "../utils/cookie"
@@ -51,7 +50,6 @@ export async function checkSiteStatus(account: Account): Promise<SiteStatus> {
     const response = await fetch(baseUrl, {
       method: "GET",
       headers: {
-        "User-Agent": UA,
         "Accept": "text/html,application/xhtml+xml,application/json,text/plain,*/*",
       },
       allowInsecureRequest: baseUrl.startsWith("http://"),
@@ -97,7 +95,6 @@ export async function loginSub2ApiAccount(account: Account) {
   const response = await fetch(`${baseUrl}/api/v1/auth/login`, {
     method: "POST",
     headers: {
-      "User-Agent": UA,
       "Accept": "application/json, text/plain, */*",
       "Accept-Language": "zh",
       "Content-Type": "application/json",

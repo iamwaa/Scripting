@@ -2,6 +2,8 @@
  * utils/format.ts - 纯工具格式化函数（无副作用）
  */
 
+import type { FileChange } from "../types/git"
+
 /** oid 截短为前 7 位（类 GitHub 风格） */
 export function shortOid(oid: string): string {
   return oid ? oid.substring(0, 7) : ""
@@ -27,6 +29,14 @@ export function commitTitle(message: string): string {
   return message.split("\n")[0].trim()
 }
 
+/** 提取 commit message 首行之后的正文（补充说明） */
+export function commitBody(message: string): string {
+  const text = message || ""
+  const idx = text.indexOf("\n")
+  if (idx < 0) return ""
+  return text.slice(idx + 1).trim()
+}
+
 /** 截断过长路径，中间用 … 省略 */
 export function truncatePath(path: string, max = 40): string {
   if (path.length <= max) return path
@@ -39,6 +49,21 @@ export function repoNameFromUrl(url: string): string {
   const raw = cleaned.split("/").filter(Boolean).pop() || "repo"
   const name = raw.replace(/[^a-zA-Z0-9._-]/g, "_")
   return name || "repo"
+}
+
+/** 根据已暂存文件生成 GitHub 风格的提交标题 */
+export function suggestCommitTitle(changes: FileChange[]): string {
+  const staged = changes.filter((change) => change.staged)
+  if (staged.length === 0) return ""
+  if (staged.length > 1) return `更新 ${staged.length} 个文件`
+
+  const change = staged[0]
+  const action = change.status.includes("added")
+    ? "新增"
+    : change.status.includes("deleted")
+      ? "删除"
+      : "更新"
+  return `${action} ${change.filepath}`
 }
 
 /** 组装 GitHub 风格提交信息：标题 + 可选描述 */
