@@ -7,6 +7,13 @@
 
 import { getToken } from "../services/authStore"
 import type { GitHubUser, GitHubRepo } from "../types/git"
+import type {
+  CreateGitHubIssueInput,
+  GitHubComment,
+  GitHubIssueFilter,
+  GitHubIssueItem,
+  GitHubIssuePage,
+} from "../types/github"
 
 const API_BASE = "https://api.github.com"
 
@@ -37,6 +44,56 @@ function mapRepo(data: any): GitHubRepo {
           defaultBranch: parent.default_branch || "main",
         }
       : undefined,
+  }
+}
+
+function encodeRepo(fullName: string): string {
+  const normalized = String(fullName || "").trim()
+  if (!/^[^/\s]+\/[^/\s]+$/.test(normalized)) {
+    throw new Error("GitHub 仓库名称无效")
+  }
+  return normalized.split("/").map(encodeURIComponent).join("/")
+}
+
+function mapActor(data: any) {
+  return {
+    login: String(data?.login || "unknown"),
+    avatarUrl: String(data?.avatar_url || ""),
+  }
+}
+
+function mapIssue(data: any): GitHubIssueItem {
+  return {
+    number: Number(data.number),
+    title: String(data.title || ""),
+    body: String(data.body || ""),
+    state: data.state === "closed" ? "closed" : "open",
+    author: mapActor(data.user),
+    labels: Array.isArray(data.labels)
+      ? data.labels.map((label: any) => ({
+          name: String(label?.name || ""),
+          color: String(label?.color || ""),
+        })).filter((label: { name: string }) => label.name)
+      : [],
+    comments: Number(data.comments || 0),
+    createdAt: String(data.created_at || ""),
+    updatedAt: String(data.updated_at || ""),
+    closedAt: data.closed_at ? String(data.closed_at) : null,
+    htmlUrl: String(data.html_url || ""),
+    isPullRequest: !!data.pull_request || (!!data.head && !!data.base),
+    draft: !!data.draft,
+    merged: !!data.merged_at,
+  }
+}
+
+function mapComment(data: any): GitHubComment {
+  return {
+    id: Number(data.id),
+    body: String(data.body || ""),
+    author: mapActor(data.user),
+    createdAt: String(data.created_at || ""),
+    updatedAt: String(data.updated_at || ""),
+    htmlUrl: String(data.html_url || ""),
   }
 }
 
@@ -116,11 +173,7 @@ export async function listMyRepos(
 
 /** 获取仓库详情；fork 仓库包含 parent/source 信息 */
 export async function getRepo(fullName: string): Promise<GitHubRepo> {
-  const normalized = String(fullName || "").trim()
-  if (!/^[^/\s]+\/[^/\s]+$/.test(normalized)) {
-    throw new Error("GitHub 仓库名称无效")
-  }
-  return mapRepo(await ghFetch(`/repos/${normalized}`))
+  return mapRepo(await ghFetch(`/repos/${encodeRepo(fullName)}`))
 }
 
 /** 在 GitHub 上为当前用户创建仓库 */
@@ -148,4 +201,72 @@ export async function createRepo(input: CreateRepoInput): Promise<GitHubRepo> {
 export async function verifyToken(): Promise<string> {
   const user = await getCurrentUser()
   return user.login
+}
+
+export async function listIssuesOrPulls(
+  fullName: string,
+  kind: "issue" | "pr",
+  state: GitHubIssueFilter = "open",
+  page = 1,
+  perPage = 30
+): Promise<GitHubIssuePage> {
+  const safePage = Math.max(1, Math.floor(page))
+  const safePerPage = Math.min(100, Math.max(1, Math.floor(perPage)))
+  encodeRepo(fullName)
+  const qualifiers = [`repo:${fullName.trim()}`, `is:${kind}`]
+  if (state !== "all") qualifiers.push(`state:${state}`)
+  const query = encodeURIComponent(qualifiers.join(" "))
+  const data = await ghFetch(
+    `/search/issues?q=${query}&sort=updated&order=desc&per_page=${safePerPage}&page=${safePage}`
+  )
+  const items = Array.isArray(data.items) ? data.items.map(mapIssue) : []
+  const total = Number(data.total_count || 0)
+  return { items, hasMore: safePage * safePerPage < total }
+}
+
+export async function getIssueOrPull(
+  fullName: string,
+  number: number
+): Promise<GitHubIssueItem> {
+  const issue = await ghFetch(
+    `/repos/${encodeRepo(fullName)}/issues/${Math.floor(number)}`
+  )
+  if (!issue.pull_request) return mapIssue(issue)
+  return mapIssue(
+    await ghFetch(`/repos/${encodeRepo(fullName)}/pulls/${Math.floor(number)}`)
+  )
+}
+
+export async function listIssueComments(
+  fullName: string,
+  number: number
+): Promise<GitHubComment[]> {
+  const comments: GitHubComment[] = []
+  let page = 1
+  while (true) {
+    const data = await ghFetch(
+      `/repos/${encodeRepo(fullName)}/issues/${Math.floor(number)}/comments?per_page=100&page=${page}`
+    )
+    const batch = (data as any[]).map(mapComment)
+    comments.push(...batch)
+    if (batch.length < 100) return comments
+    page += 1
+  }
+}
+
+export async function createIssue(
+  fullName: string,
+  input: CreateGitHubIssueInput
+): Promise<GitHubIssueItem> {
+  const title = input.title.trim()
+  if (!title) throw new Error("Issue 标题不能为空")
+  return mapIssue(
+    await ghFetch(`/repos/${encodeRepo(fullName)}/issues`, {
+      method: "POST",
+      body: {
+        title,
+        body: (input.body || "").trim() || undefined,
+      },
+    })
+  )
 }

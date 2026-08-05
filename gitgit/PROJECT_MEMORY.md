@@ -103,9 +103,11 @@
     - 备份：`gitgit_修复半屏弹窗输入与远端添加入口_20260805_133119`。
   - **P2.35 自动填入提交标题**（2026-08-05）：普通提交弹窗打开时，根据已暂存改动自动生成可编辑标题；单文件分别为「新增/更新/删除 路径」，多文件为「更新 N 个文件」，未暂存文件不计入。重编提交继续使用原提交标题与描述，不套用自动标题。纯函数 `utils/format.ts::suggestCommitTitle`，测试在 `tests/reliability.test.ts::testSuggestedCommitTitle`。备份：`gitgit_自动填入提交标题_20260805_142204`。
   - **P2.36 小组件状态面板**（2026-08-05）：`widget.tsx` 按 `Widget.family` 适配 systemSmall/Medium/Large/ExtraLarge 与 accessoryInline/Circular/Rectangular；展示未提交、ahead、behind、分支和更新时间，按待处理程度排序。`Widget.parameter` 可填写仓库名（忽略大小写与首尾空格）筛选单仓库；30 分钟请求刷新时间线，快照超过 24 小时显示过期提示。小号使用标题/未提交主指标/改动仓库与同步摘要/更新时间四个独立区块，三个等权重 `Spacer` 平均分配剩余高度；上下边缘使用 `12pt` 固定布局带，不依赖会被弹性空间补偿的垂直 padding。中号展示优先级最高的两个仓库；中号和大号更新时间统一位于右上角，仓库行使用“1 改动 / 2 待推送 / 1 待拉取”文字状态，0 值隐藏。锁屏 accessory 三种尺寸与系统组件对齐：矩形（Rectangular）同中号——图标+标题头行加“改动 · 待推送 · 待拉取”文字；圆形（Circular）用 `AccessoryWidgetBackground` 背景盘+未提交主指标；单行（Inline）为“<名> · N 改动 · N 待推送 · N 待拉取”（系统按宽度自动截断），不再使用 ↑↓ 符号或“N 个仓库”。纯逻辑位于 `utils/widget.ts`，测试为 `tests/widget.test.ts`。Widget 不直接扫描仓库或执行 Git 操作；`getRepoListStatus()` 每次实时查询成功后写快照并 `Widget.reloadAll()`，仓库列表刷新与详情页 `loadAll()` 都会触发，因此外部文件改动需打开/刷新主应用后同步到 Widget。验证：全项目 TypeScript 诊断、widget 测试、status-perf helpers 通过，主屏小/中/大及三种 accessory 预览成功。备份：`gitgit_完善小组件功能_20260805_160726`、`gitgit_修复小组件布局与数据更新_20260805_164723`、`gitgit_缩小小号边距并统一状态文案_20260805_170109`、`gitgit_同步锁屏小组件样式_20260805_171330`。
-   - 第四阶段及以后：交互式 Widget、富通知、Issues/PR、多仓库批量同步等。
+  - **P2.37 Stash 标题与保存入口**（2026-08-05）：`StashTab` Section header 改为“Stash（数量）”（与改动/文件 Tab 标题风格一致），保存按钮从 Section 内首行列移到标题右侧（`HStack` + `Spacer` + 紧凑按钮，`archivebox` 图标 + caption 文字，样式同改动 Tab「全部暂存」；无改动时禁用但仍显示，禁用灰色/可用强调色）。备份：`gitgit_stash页标题数量与保存按钮移页眉_20260805_175654`。
+  - **P2.38 GitHub Issues / Pull Requests**（2026-08-05）：仓库详情右上角 toolbar 在 `origin` 可解析为 `github.com/<owner>/<repo>` 时显示 `bubble.left.and.bubble.right` 协作入口，与刷新按钮并列；`utils/github.ts::githubRepoFromRemoteUrl` 支持 HTTPS、SSH URL 与 scp-like 地址，非 GitHub remote 不展示。`pages/GitHubWorkPage.tsx` 提供 Issue/PR 类型与开放/关闭/全部筛选、分页、请求竞态保护和创建 Issue；`GitHubItemDetailPage.tsx` 展示正文、状态、标签与完整评论分页，并可在内置 Safari 打开 GitHub。REST 类型位于 `types/github.ts`；列表必须使用 Search API 按 `is:issue` / `is:pr` 服务端分页，不能直接分页 `/issues` 后在客户端过滤（该端点混入 PR，会产生空页与错误计数）；PR 详情额外读取 `/pulls/{number}` 以获得 draft/merged 状态。首版写操作仅创建 Issue，PR 为只读浏览。测试：`tests/github.test.ts`。备份：`gitgit_新增Issues与PullRequests_20260805_195238`、`gitgit_移动Issues入口到右上角_20260805_222004`。
+   - 第四阶段及以后：交互式 Widget、富通知、多仓库批量同步等。
 - 待做（旧 P3 标签，已并入第四阶段及以后）：
-  - 交互式 widget、富通知 UI（notification.tsx）、远端 Issues/PR 浏览
+  - 交互式 widget、富通知 UI（notification.tsx）
 - Scripting UI API 要点（避免再踩坑）：
   - `Color`/`Font` 是字符串联合类型，不是对象。用 `foregroundStyle="label"`、`font="body"`。
   - `Font` 枚举只有 caption，无 caption1。

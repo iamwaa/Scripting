@@ -5,6 +5,7 @@ import { CommitDetailPage } from "../pages/CommitDetailPage"
 import { ComparePage } from "../pages/ComparePage"
 import { RemotesPage } from "../pages/RemotesPage"
 import { ConflictsPage } from "../pages/ConflictsPage"
+import { GitHubWorkPage } from "../pages/GitHubWorkPage"
 
 export function RepoDetailDestination({
   bookmarkName,
@@ -13,6 +14,7 @@ export function RepoDetailDestination({
   showRemotes,
   showConflicts,
   showCompare,
+  githubFullName,
   selectedCommitOid,
   onUploaded,
   onRemotesChanged,
@@ -24,6 +26,7 @@ export function RepoDetailDestination({
   showRemotes: boolean
   showConflicts: boolean
   showCompare: boolean
+  githubFullName: string | null
   selectedCommitOid: string | null
   onUploaded: (repo: RepoMeta) => void
   onRemotesChanged: () => void
@@ -55,6 +58,7 @@ export function RepoDetailDestination({
     )
   }
   if (showCompare) return <ComparePage bookmarkName={bookmarkName} />
+  if (githubFullName) return <GitHubWorkPage fullName={githubFullName} />
   if (selectedCommitOid) {
     return (
       <CommitDetailPage

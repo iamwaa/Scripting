@@ -153,10 +153,10 @@ export function ChangesTab({
 
       {/* 无可提交内容时隐藏，避免空操作占位 */}
       {hasStaged ? (
-        <Section header={<Text>提交</Text>}>
+        <Section>
           <Button
-            title={committing ? "提交中…" : "填写提交信息"}
-            systemImage="square.and.pencil"
+            title={committing ? "提交中…" : "提交改动"}
+            systemImage="checkmark.circle"
             action={onOpenCommitForm}
             disabled={committing || worktreeBusy}
           />

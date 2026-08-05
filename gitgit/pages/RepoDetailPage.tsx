@@ -8,6 +8,10 @@ import {
   List,
   Text,
   Button,
+  HStack,
+  Toolbar,
+  ToolbarItem,
+  ToolbarSpacer,
   useState,
 } from "scripting"
 import { BusyOverlay } from "../components/BusyOverlay"
@@ -77,8 +81,16 @@ import { getRepoPendingAlert, type RepoPendingAction } from "../utils/repoDetail
 import type { UpstreamConfig } from "../utils/remote"
 import { DEFAULT_BRANCH } from "../constants/git"
 import { COLOR_SECONDARY_LABEL } from "../constants/colors"
+import { githubRepoFromRemoteUrl } from "../utils/github"
 
 const HISTORY_PAGE_SIZE = 50
+const supportsToolbarSpacer = (() => {
+  const major = Number.parseInt(
+    String(Device.systemVersion).split(".")[0] ?? "0",
+    10
+  )
+  return Number.isFinite(major) && major >= 26
+})()
 
 type AlertState = {
   title: string
@@ -128,6 +140,8 @@ export function RepoDetailPage({
   const [showRemotes, setShowRemotes] = useState(false)
   const [showConflicts, setShowConflicts] = useState(false)
   const [showCompare, setShowCompare] = useState(false)
+  const [githubFullName, setGithubFullName] = useState<string | null>(null)
+  const [showGitHubWork, setShowGitHubWork] = useState(false)
   const [mergeInProgress, setMergeInProgress] = useState(false)
   const [conflictCount, setConflictCount] = useState(0)
   const [selectedCommitOid, setSelectedCommitOid] = useState<string | null>(null)
@@ -291,8 +305,11 @@ export function RepoDetailPage({
     try {
       const remotes = await listRemotes(bookmarkName)
       setHasRemote(remotes.length > 0)
+      const origin = remotes.find((remote) => remote.remote === "origin")
+      setGithubFullName(githubRepoFromRemoteUrl(origin?.url))
     } catch (_e) {
       setHasRemote(false)
+      setGithubFullName(null)
     }
   }
 
@@ -324,7 +341,17 @@ export function RepoDetailPage({
     setSelectedCommitOid(null)
     setShowUpload(false)
     setShowRemotes(false)
+    setShowGitHubWork(false)
     setShowConflicts(true)
+  }
+
+  function openGitHubWorkPage() {
+    setSelectedCommitOid(null)
+    setShowUpload(false)
+    setShowRemotes(false)
+    setShowConflicts(false)
+    setShowCompare(false)
+    setShowGitHubWork(true)
   }
 
 
@@ -791,22 +818,59 @@ export function RepoDetailPage({
       onAppear={() => {
         loadAll()
       }}
-      toolbar={{
-        topBarTrailing: (
-          <Button
-            title="刷新"
-            systemImage="arrow.clockwise"
-            action={handleRefresh}
-            disabled={loading}
-          />
-        ),
-      }}
+      toolbar={
+        supportsToolbarSpacer ? (
+          <Toolbar>
+            {githubFullName ? (
+              <ToolbarItem placement="topBarTrailing">
+                <Button
+                  title="Issues / Pull Requests"
+                  systemImage="bubble.left.and.bubble.right"
+                  action={openGitHubWorkPage}
+                  disabled={mutating}
+                />
+              </ToolbarItem>
+            ) : null}
+            {githubFullName ? (
+              <ToolbarSpacer sizing="fixed" placement="topBarTrailing" />
+            ) : null}
+            <ToolbarItem placement="topBarTrailing">
+              <Button
+                title="刷新"
+                systemImage="arrow.clockwise"
+                action={handleRefresh}
+                disabled={loading}
+              />
+            </ToolbarItem>
+          </Toolbar>
+        ) : {
+          topBarTrailing: (
+            <HStack spacing={10}>
+              {githubFullName ? (
+                <Button
+                  title="Issues / Pull Requests"
+                  systemImage="bubble.left.and.bubble.right"
+                  action={openGitHubWorkPage}
+                  disabled={mutating}
+                />
+              ) : null}
+              <Button
+                title="刷新"
+                systemImage="arrow.clockwise"
+                action={handleRefresh}
+                disabled={loading}
+              />
+            </HStack>
+          ),
+        }
+      }
       navigationDestination={{
         isPresented:
           showUpload ||
           showRemotes ||
           showConflicts ||
           showCompare ||
+          showGitHubWork ||
           selectedCommitOid != null,
         onChanged: (presented: boolean) => {
           if (!presented) {
@@ -814,6 +878,7 @@ export function RepoDetailPage({
             setShowRemotes(false)
             setShowConflicts(false)
             setShowCompare(false)
+            setShowGitHubWork(false)
             setSelectedCommitOid(null)
             // 从冲突页返回时刷新合并状态
             loadMergeState()
@@ -827,6 +892,7 @@ export function RepoDetailPage({
             showRemotes={showRemotes}
             showConflicts={showConflicts}
             showCompare={showCompare}
+            githubFullName={showGitHubWork ? githubFullName : null}
             selectedCommitOid={selectedCommitOid}
             onUploaded={(repo) => {
               setDisplayName(repo.name)
@@ -945,17 +1011,20 @@ export function RepoDetailPage({
           setShowUpload(false)
           setShowRemotes(false)
           setShowConflicts(false)
+          setShowGitHubWork(false)
           setShowCompare(true)
         }}
         onManageRemotes={() => {
           setSelectedCommitOid(null)
           setShowUpload(false)
           setShowConflicts(false)
+          setShowGitHubWork(false)
           setShowRemotes(true)
         }}
         onUpload={() => {
           setSelectedCommitOid(null)
           setShowRemotes(false)
+          setShowGitHubWork(false)
           setShowUpload(true)
         }}
         onPush={handlePush}
