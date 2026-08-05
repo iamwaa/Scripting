@@ -31,6 +31,7 @@ import {
   isInitialized,
   initRepo,
   getChanges,
+  getRepoListStatus,
   addFiles,
   stageAll,
   unstageAll,
@@ -182,6 +183,7 @@ export function RepoDetailPage({
       // 若当前已在懒加载 Tab，补数据
       if (tab === 1) await loadStashes()
       if (tab === 2) await loadTrackedFiles()
+      await getRepoListStatus(bookmarkName)
     } catch (e: any) {
       showAlert("加载失败", String(e?.message || e))
     } finally {

@@ -30,7 +30,7 @@ export function FormSheet({
         navigationBarTitleDisplayMode="inline"
         presentationDetents={["medium", "large"]}
         presentationDragIndicator="visible"
-        presentationBackground="thinMaterial"
+        presentationBackground="systemGroupedBackground"
         scrollContentBackground="hidden"
         scrollDismissesKeyboard="interactively"
         toolbar={{

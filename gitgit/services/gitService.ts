@@ -120,11 +120,13 @@ async function runRepoMutation<T>(
   }
 }
 
-async function refreshRepoSnapshot(bookmarkName: string): Promise<void> {
+async function persistRepoSnapshot(
+  bookmarkName: string,
+  status: RepoListStatus
+): Promise<void> {
   const repo = findRepo(bookmarkName)
   if (!repo) return
   try {
-    const status = await getRepoListStatus(bookmarkName)
     await writeSnapshot(bookmarkName, {
       name: repo.name,
       branch: status.branch,
@@ -134,6 +136,14 @@ async function refreshRepoSnapshot(bookmarkName: string): Promise<void> {
       updatedAt: Date.now(),
     })
     Widget.reloadAll()
+  } catch (e) {
+    console.warn("⚠️ 仓库快照写入失败: " + e)
+  }
+}
+
+async function refreshRepoSnapshot(bookmarkName: string): Promise<void> {
+  try {
+    await getRepoListStatus(bookmarkName)
   } catch (e) {
     console.warn("⚠️ 仓库快照刷新失败: " + e)
   }
@@ -167,7 +177,12 @@ async function refreshRepoSnapshot(bookmarkName: string): Promise<void> {
 export async function getRepoListStatus(
   bookmarkName: string
 ): Promise<RepoListStatus> {
-  return getRepoListStatusInternal(bookmarkName, getMergeConflictState)
+  const status = await getRepoListStatusInternal(
+    bookmarkName,
+    getMergeConflictState
+  )
+  await persistRepoSnapshot(bookmarkName, status)
+  return status
 }
 
 
