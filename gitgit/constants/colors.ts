@@ -9,6 +9,7 @@
 export const COLOR_LABEL = "label"
 export const COLOR_SECONDARY_LABEL = "secondaryLabel"
 export const COLOR_TERTIARY_LABEL = "tertiaryLabel"
+export const COLOR_GRAY = "systemGray" // 头像占位/回退
 
 // 背景语义色
 export const COLOR_BG = "systemBackground"

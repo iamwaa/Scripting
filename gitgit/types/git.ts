@@ -241,6 +241,12 @@ export interface GitHubUser {
   followers: number
 }
 
+/** Token 验证成功后缓存的 GitHub 用户（设置页展示用，非敏感） */
+export interface VerifiedGithubUser {
+  login: string
+  avatarUrl: string
+}
+
 /** GitHub fork 的直接上游仓库 */
 export interface GitHubRepoParent {
   fullName: string

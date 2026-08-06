@@ -18,6 +18,7 @@ import type {
 } from "../types/github"
 import { createIssue, listIssuesOrPulls } from "../api/githubApi"
 import { CreateIssueSheet } from "../components/CreateIssueSheet"
+import { AvatarView } from "../components/AvatarView"
 import { GitHubItemDetailPage } from "./GitHubItemDetailPage"
 import { relativeTime } from "../utils/format"
 import {
@@ -69,9 +70,13 @@ function GitHubItemRow({
           frame={{ maxWidth: "infinity", alignment: "leading" }}
         >
           <Text font={15} foregroundStyle={COLOR_LABEL} lineLimit={2}>{item.title}</Text>
-          <HStack spacing={6}>
+          <HStack alignment="center" spacing={6}>
             <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL} lineLimit={1}>
-              #{item.number} · {item.author.login} · {relativeTime(item.updatedAt)}
+              #{item.number} ·
+            </Text>
+            <AvatarView url={item.author.avatarUrl} size={16} />
+            <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL} lineLimit={1}>
+              {item.author.login} · {relativeTime(item.updatedAt)}
             </Text>
             {item.comments > 0 ? (
               <HStack spacing={2}>

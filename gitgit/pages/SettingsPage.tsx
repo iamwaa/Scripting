@@ -22,6 +22,7 @@ import {
   useRef,
 } from "scripting"
 import { FormRow } from "../components/FormRow"
+import { AvatarView } from "../components/AvatarView"
 import {
   getIdentity,
   setIdentity,
@@ -35,8 +36,9 @@ import {
   readNotifyEnabled,
   writeNotifyEnabled,
 } from "../services/storage"
-import { verifyToken } from "../api/githubApi"
+import { verifyToken, getCurrentUser } from "../api/githubApi"
 import type { GitIdentity } from "../services/authStore"
+import type { VerifiedGithubUser } from "../types/git"
 import {
   COLOR_SECONDARY_LABEL,
   COLOR_GREEN,
@@ -52,7 +54,7 @@ export function SettingsPage() {
   const [email, setEmail] = useState("")
   const [token, setTokenState] = useState("")
   const [tokenConfigured, setTokenConfigured] = useState(false)
-  const [githubUser, setGithubUser] = useState<string | null>(null)
+  const [githubUser, setGithubUser] = useState<VerifiedGithubUser | null>(null)
   const [verifying, setVerifying] = useState(false)
   const [savingIdentity, setSavingIdentity] = useState(false)
   const [showClearAlert, setShowClearAlert] = useState(false)
@@ -79,8 +81,23 @@ export function SettingsPage() {
     }
     const configured = hasToken()
     setTokenConfigured(configured)
-    // 恢复上次验证成功的用户名；token 不存在时验证状态已随清除作废
-    setGithubUser(configured ? getVerifiedUser() : null)
+    // 恢复上次验证成功的用户；token 不存在时验证状态已随清除作废
+    const verified = configured ? getVerifiedUser() : null
+    setGithubUser(verified)
+    // 旧缓存只有用户名没有头像：后台拉取补齐并回写缓存，失败静默（验证按钮在用户已认证时隐藏，不补齐老用户永远看不到头像）
+    if (verified && !verified.avatarUrl) {
+      getCurrentUser()
+        .then((user) => {
+          const next = { login: user.login, avatarUrl: user.avatarUrl || "" }
+          setGithubUser(next)
+          try {
+            saveVerifiedUser(next)
+          } catch {
+            // 忽略持久化失败
+          }
+        })
+        .catch(() => {})
+    }
   }
 
   function handleNotifyChanged(value: boolean) {
@@ -140,15 +157,16 @@ export function SettingsPage() {
     setTokenState("")
     setVerifying(true)
     try {
-      const login = await verifyToken()
-      setGithubUser(login)
+      const user = await verifyToken()
+      const verified = { login: user.login, avatarUrl: user.avatarUrl || "" }
+      setGithubUser(verified)
       // 持久化失败仅影响下次进入页面的验证状态显示，不吞掉本次验证成功
       try {
-        saveVerifiedUser(login)
+        saveVerifiedUser(verified)
       } catch {
         // 忽略持久化失败
       }
-      showAlert("验证成功", `已认证为 @${login}`)
+      showAlert("验证成功", `已认证为 @${user.login}`)
     } catch (e: any) {
       setGithubUser(null)
       showAlert(
@@ -178,15 +196,16 @@ export function SettingsPage() {
   async function handleReverify() {
     setVerifying(true)
     try {
-      const login = await verifyToken()
-      setGithubUser(login)
+      const user = await verifyToken()
+      const verified = { login: user.login, avatarUrl: user.avatarUrl || "" }
+      setGithubUser(verified)
       // 持久化失败仅影响下次进入页面的验证状态显示，不吞掉本次验证成功
       try {
-        saveVerifiedUser(login)
+        saveVerifiedUser(verified)
       } catch {
         // 忽略持久化失败
       }
-      showAlert("验证成功", `已认证为 @${login}`)
+      showAlert("验证成功", `已认证为 @${user.login}`)
     } catch (e: any) {
       showAlert("验证失败", String(e?.message || e))
     } finally {
@@ -288,15 +307,19 @@ export function SettingsPage() {
         }
       >
         <HStack alignment="center" spacing={6}>
-          <Image
-            systemName={tokenConfigured ? "checkmark.shield.fill" : "key.fill"}
-            foregroundStyle={
-              tokenConfigured ? COLOR_GREEN : COLOR_SECONDARY_LABEL
-            }
-          />
+          {githubUser ? (
+            <AvatarView url={githubUser.avatarUrl} size={20} />
+          ) : (
+            <Image
+              systemName={tokenConfigured ? "checkmark.shield.fill" : "key.fill"}
+              foregroundStyle={
+                tokenConfigured ? COLOR_GREEN : COLOR_SECONDARY_LABEL
+              }
+            />
+          )}
           <Text font="subheadline" foregroundStyle={COLOR_SECONDARY_LABEL}>
             {githubUser
-              ? `已认证 @${githubUser}`
+              ? `已认证 @${githubUser.login}`
               : tokenConfigured
                 ? "Token 已配置（未验证）"
                 : "未配置 Token"}

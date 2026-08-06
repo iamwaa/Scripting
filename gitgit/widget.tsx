@@ -70,7 +70,11 @@ function Metric({
   icon: string
   value: number
   label: string
-  color: typeof COLOR_ORANGE | typeof COLOR_GREEN | typeof COLOR_RED
+  color:
+    | typeof COLOR_ORANGE
+    | typeof COLOR_GREEN
+    | typeof COLOR_RED
+    | typeof COLOR_LABEL
 }) {
   return (
     <VStack alignment="leading" spacing={2} frame={{ minWidth: 54 }}>
@@ -127,19 +131,19 @@ function SmallPrimaryMetric({ summary }: { summary: WidgetSummary }) {
   return (
     <HStack alignment="firstTextBaseline" spacing={5}>
       <Image
-        systemName="pencil.and.list.clipboard"
+        systemName="folder.fill"
         font={12}
-        foregroundStyle={summary.uncommitted > 0 ? COLOR_ORANGE : COLOR_GREEN}
+        foregroundStyle={COLOR_LABEL}
       />
       <Text
         font={24}
         fontWeight="semibold"
-        foregroundStyle={summary.uncommitted > 0 ? COLOR_ORANGE : COLOR_GREEN}
+        foregroundStyle={COLOR_LABEL}
       >
-        {String(summary.uncommitted)}
+        {String(summary.dirtyRepoCount)}
       </Text>
       <Text font={11} foregroundStyle={COLOR_SECONDARY_LABEL}>
-        未提交
+        改动仓库
       </Text>
     </HStack>
   )
@@ -149,10 +153,17 @@ function SmallStatusSummary({ summary }: { summary: WidgetSummary }) {
   return (
     <HStack alignment="center" spacing={0} frame={{ maxWidth: Infinity }}>
       <VStack alignment="center" spacing={1}>
-        <Text font={13} fontWeight="medium" foregroundStyle={COLOR_LABEL}>
-          {String(summary.dirtyRepoCount)}
-        </Text>
-        <Text font={9} foregroundStyle={COLOR_SECONDARY_LABEL}>改动仓库</Text>
+        <HStack alignment="firstTextBaseline" spacing={2}>
+          <Image
+            systemName="pencil.and.list.clipboard"
+            font={10}
+            foregroundStyle={COLOR_ORANGE}
+          />
+          <Text font={13} fontWeight="medium" foregroundStyle={COLOR_ORANGE}>
+            {String(summary.uncommitted)}
+          </Text>
+        </HStack>
+        <Text font={9} foregroundStyle={COLOR_SECONDARY_LABEL}>未提交</Text>
       </VStack>
       <Spacer />
       <VStack alignment="center" spacing={1}>
@@ -257,12 +268,18 @@ function SystemWidget({ summary }: { summary: WidgetSummary }) {
             </>
           ) : (
             <>
-              <HStack alignment="center" spacing={24}>
+              <HStack alignment="center" spacing={16}>
+                <Metric
+                  icon="folder.fill"
+                  value={summary.dirtyRepoCount}
+                  label="改动仓库"
+                  color={COLOR_LABEL}
+                />
                 <Metric
                   icon="pencil.and.list.clipboard"
                   value={summary.uncommitted}
                   label="未提交改动"
-                  color={summary.uncommitted > 0 ? COLOR_ORANGE : COLOR_GREEN}
+                  color={COLOR_ORANGE}
                 />
                 <Metric icon="arrow.up" value={summary.ahead} label="待推送" color={COLOR_GREEN} />
                 <Metric icon="arrow.down" value={summary.behind} label="待拉取" color={COLOR_RED} />

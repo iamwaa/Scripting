@@ -5,7 +5,7 @@
  *  1. GitHub PAT 的 Keychain 存取（敏感凭据仍走系统 Keychain）
  *  2. Git 提交身份（user.name / user.email）的持久化（Storage private 域，旧实现为 JSON 文件）
  *  3. 构造 isomorphic-git 认证对象（{ username, password }）
- *  4. Token 验证状态（GitHub 用户名）持久化到 Storage private 域，token 变更/清除时作废
+ *  4. Token 验证状态（GitHub 用户）持久化到 Storage private 域，token 变更/清除时作废
  */
 
 import {
@@ -20,7 +20,7 @@ import {
   readGithubUser,
   writeGithubUser,
 } from "./storage"
-import type { GitIdentity } from "../types/git"
+import type { GitIdentity, VerifiedGithubUser } from "../types/git"
 
 // 重新导出类型，保持调用处 `import type { GitIdentity } from authStore` 可用
 export type { GitIdentity }
@@ -66,14 +66,14 @@ export function clearToken(): void {
   writeGithubUser(null)
 }
 
-/** 读取 Token 上次验证成功的 GitHub 用户名（未验证/已作废返回 null） */
-export function getVerifiedUser(): string | null {
+/** 读取 Token 上次验证成功的 GitHub 用户（未验证/已作废返回 null） */
+export function getVerifiedUser(): VerifiedGithubUser | null {
   return readGithubUser()
 }
 
-/** 保存 Token 验证成功的 GitHub 用户名，供设置页重进时恢复验证状态 */
-export function saveVerifiedUser(login: string): void {
-  writeGithubUser(login)
+/** 保存 Token 验证成功的 GitHub 用户，供设置页重进时恢复验证状态 */
+export function saveVerifiedUser(user: VerifiedGithubUser): void {
+  writeGithubUser(user)
 }
 
 /**

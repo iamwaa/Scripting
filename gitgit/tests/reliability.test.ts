@@ -8,7 +8,13 @@ import {
 import { compareCommitTrees } from "../services/gitService"
 import { normalizeRemoteBranches } from "../services/git/branchQueryService"
 import { lineDiff } from "../services/diffService"
-import { readRepos, writeRepos } from "../services/storage"
+import {
+  readGithubUser,
+  readRepos,
+  STORAGE_KEYS,
+  writeGithubUser,
+  writeRepos,
+} from "../services/storage"
 import { buildFileTree } from "../utils/fileTree"
 import {
   buildCommitMessage,
@@ -161,6 +167,35 @@ function testBranchLastPulledAt(): void {
       branchLastPulledAtPatch(repo, "main", Number.NaN) === null,
     "无效分支或时间不得写入映射"
   )
+}
+
+function testGithubUserCache(): void {
+  const key = STORAGE_KEYS.githubUser
+  const previous = Storage.get<unknown>(key)
+  try {
+    writeGithubUser({ login: "octocat", avatarUrl: "https://example.com/a.png" })
+    const saved = readGithubUser()
+    assert(
+      saved?.login === "octocat" &&
+        saved.avatarUrl === "https://example.com/a.png",
+      "应能读写带头像的已验证用户"
+    )
+
+    // 旧版缓存是纯字符串登录名，升级后必须可读
+    Storage.set(key, "legacycat")
+    const legacy = readGithubUser()
+    assert(
+      legacy?.login === "legacycat" && legacy.avatarUrl === "",
+      "旧版纯用户名缓存应读取为无头像用户"
+    )
+
+    writeGithubUser(null)
+    assert(readGithubUser() === null, "清除后不应再有已验证用户")
+  } finally {
+    // 还原测试前的缓存，避免污染真实设置
+    Storage.remove(key)
+    if (previous != null) Storage.set(key, previous as any)
+  }
 }
 
 function testHistoryPagination(): void {
@@ -2005,6 +2040,7 @@ function testSuggestedCommitTitle(): void {
 
 async function main(): Promise<void> {
   testBranchLastPulledAt()
+  testGithubUserCache()
   testHistoryPagination()
   await testFsErrorPropagation()
   await testGitInternalPathMapping()

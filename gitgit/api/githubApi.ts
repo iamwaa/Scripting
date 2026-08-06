@@ -197,10 +197,9 @@ export async function createRepo(input: CreateRepoInput): Promise<GitHubRepo> {
   return mapRepo(data)
 }
 
-/** 验证 token 是否有效（返回用户名，无效则抛错） */
-export async function verifyToken(): Promise<string> {
-  const user = await getCurrentUser()
-  return user.login
+/** 验证 token 是否有效（返回当前用户，无效则抛错） */
+export async function verifyToken(): Promise<GitHubUser> {
+  return await getCurrentUser()
 }
 
 export async function listIssuesOrPulls(

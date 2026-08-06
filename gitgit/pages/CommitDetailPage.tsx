@@ -2,6 +2,7 @@ import {
   List,
   Section,
   Text,
+  HStack,
   useEffect,
   useState,
 } from "scripting"
@@ -9,6 +10,8 @@ import type { CommitDetail } from "../types/git"
 import { buildFileTree } from "../utils/fileTree"
 import { getCommitDetail } from "../services/gitService"
 import { CommitFileTreeNode } from "../components/CommitFileTree"
+import { AvatarView } from "../components/AvatarView"
+import { avatarUrlForGitAuthor } from "../utils/github"
 import { shortOid, commitTitle, commitBody } from "../utils/format"
 import {
   COLOR_LABEL,
@@ -82,10 +85,19 @@ export function CommitDetailPage({
             <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
               完整 ID：{detail.oid}
             </Text>
-            <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
-              作者：{detail.author.name || "unknown"}{" "}
-              {detail.author.email ? `<${detail.author.email}>` : ""}
-            </Text>
+            <HStack alignment="center" spacing={4}>
+              <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
+                作者：
+              </Text>
+              <AvatarView
+                url={avatarUrlForGitAuthor(detail.author.email)}
+                size={14}
+              />
+              <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
+                {detail.author.name || "unknown"}{" "}
+                {detail.author.email ? `<${detail.author.email}>` : ""}
+              </Text>
+            </HStack>
             <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
               时间：{new Date(detail.date).toLocaleString()}
             </Text>

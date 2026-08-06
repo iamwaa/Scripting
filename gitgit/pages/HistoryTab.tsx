@@ -16,6 +16,8 @@ import {
 } from "scripting"
 import type { CommitEntry } from "../types/git"
 import { HistorySearchBar } from "../components/HistorySearchBar"
+import { AvatarView } from "../components/AvatarView"
+import { avatarUrlForGitAuthor } from "../utils/github"
 import {
   shortOid,
   relativeTime,
@@ -140,9 +142,15 @@ function HistoryRow({
                 {body}
               </Text>
             ) : null}
-            <Text font="caption2" foregroundStyle={COLOR_SECONDARY_LABEL}>
-              {entry.author.name || "unknown"} · {relativeTime(entry.date)}
-            </Text>
+            <HStack alignment="center" spacing={4}>
+              <AvatarView
+                url={avatarUrlForGitAuthor(entry.author.email)}
+                size={14}
+              />
+              <Text font="caption2" foregroundStyle={COLOR_SECONDARY_LABEL}>
+                {entry.author.name || "unknown"} · {relativeTime(entry.date)}
+              </Text>
+            </HStack>
           </VStack>
         </Button>
       </VStack>

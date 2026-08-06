@@ -13,6 +13,9 @@ import {
 import type { GitHubComment, GitHubIssueItem } from "../types/github"
 import { getIssueOrPull, listIssueComments } from "../api/githubApi"
 import { relativeTime } from "../utils/format"
+import { GitHubMarkdown } from "../components/GitHubMarkdown"
+import { ImageViewer } from "../components/ImageViewer"
+import { AvatarView } from "../components/AvatarView"
 import {
   COLOR_ACCENT,
   COLOR_GREEN,
@@ -31,6 +34,7 @@ export function GitHubItemDetailPage({
   const [item, setItem] = useState<GitHubIssueItem | null>(null)
   const [comments, setComments] = useState<GitHubComment[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
 
   async function load() {
     setError(null)
@@ -66,9 +70,24 @@ export function GitHubItemDetailPage({
 
   return (
     <List
-      navigationTitle={item ? `#${item.number} ${kind}` : kind}
+      navigationTitle={item ? `#${item.number} ${kind}` : "加载中…"}
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
+      fullScreenCover={{
+        isPresented: previewUrl != null,
+        onChanged: (isPresented) => {
+          if (!isPresented) {
+            setPreviewUrl(null)
+          }
+        },
+        content: previewUrl ? (
+          <ImageViewer
+            key={previewUrl}
+            url={previewUrl}
+            onClose={() => setPreviewUrl(null)}
+          />
+        ) : <></>,
+      }}
       toolbar={{
         topBarTrailing: item ? (
           <Button
@@ -89,13 +108,14 @@ export function GitHubItemDetailPage({
         <>
           <Section header={<Text>{kind}</Text>}>
             <Text font={17} foregroundStyle={COLOR_LABEL}>{item.title}</Text>
-            <HStack spacing={8}>
+            <HStack alignment="center" spacing={8}>
               <Image
                 systemName={item.state === "open" ? "circle.circle" : "checkmark.circle.fill"}
                 font={14}
                 foregroundStyle={statusColor}
               />
               <Text font={13} foregroundStyle={statusColor}>{status}</Text>
+              <AvatarView url={item.author.avatarUrl} size={16} />
               <Text font={13} foregroundStyle={COLOR_SECONDARY_LABEL}>
                 {item.author.login} · {relativeTime(item.createdAt)}
               </Text>
@@ -107,23 +127,38 @@ export function GitHubItemDetailPage({
             ) : null}
           </Section>
           <Section header={<Text>描述</Text>}>
-            <Text foregroundStyle={item.body ? COLOR_LABEL : COLOR_SECONDARY_LABEL}>
-              {item.body || "未填写描述"}
-            </Text>
+            {item.body ? (
+              <GitHubMarkdown
+                content={item.body}
+                fullName={fullName}
+                onImageTap={setPreviewUrl}
+              />
+            ) : (
+              <Text foregroundStyle={COLOR_SECONDARY_LABEL}>未填写描述</Text>
+            )}
           </Section>
           <Section header={<Text>评论（{comments.length}）</Text>}>
             {comments.length === 0 ? (
               <Text foregroundStyle={COLOR_SECONDARY_LABEL}>还没有评论</Text>
             ) : comments.map((comment) => (
               <VStack key={comment.id} alignment="leading" spacing={6}>
-                <HStack>
+                <HStack alignment="center" spacing={6}>
+                  <AvatarView url={comment.author.avatarUrl} size={18} />
                   <Text font={13} foregroundStyle={COLOR_ACCENT}>{comment.author.login}</Text>
                   <Spacer />
                   <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL}>
                     {relativeTime(comment.createdAt)}
                   </Text>
                 </HStack>
-                <Text foregroundStyle={COLOR_LABEL}>{comment.body || "(空评论)"}</Text>
+                {comment.body ? (
+                  <GitHubMarkdown
+                    content={comment.body}
+                    fullName={fullName}
+                    onImageTap={setPreviewUrl}
+                  />
+                ) : (
+                  <Text foregroundStyle={COLOR_SECONDARY_LABEL}>(空评论)</Text>
+                )}
               </VStack>
             ))}
           </Section>

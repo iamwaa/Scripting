@@ -14,7 +14,12 @@
  *      这里只负责应用层的「设置数据」与「路径书签等元数据」。
  */
 
-import type { RepoMeta, RepoSnapshot, GitIdentity } from "../types/git"
+import type {
+  RepoMeta,
+  RepoSnapshot,
+  GitIdentity,
+  VerifiedGithubUser,
+} from "../types/git"
 
 /** 统一键名前缀，避免污染 shared 域命名空间 */
 const PREFIX = "gitgit."
@@ -29,7 +34,7 @@ export const STORAGE_KEYS = {
   identity: PREFIX + "identity",
   /** 操作完成本地通知开关（默认 true） */
   notifyEnabled: PREFIX + "notifyEnabled",
-  /** Token 验证成功的 GitHub 用户名（非敏感缓存；token 变更时作废） */
+  /** Token 验证成功的 GitHub 用户（非敏感缓存；token 变更时作废） */
   githubUser: PREFIX + "githubUser",
 } as const
 
@@ -79,18 +84,31 @@ export function writeIdentity(identity: GitIdentity): void {
 
 // === GitHub 已验证用户 ===
 
-/** 读取 Token 上次验证成功的 GitHub 用户名（未验证过返回 null） */
-export function readGithubUser(): string | null {
-  return Storage.get<string>(STORAGE_KEYS.githubUser)
+/** 读取 Token 上次验证成功的 GitHub 用户（未验证过返回 null）；兼容旧版纯用户名缓存 */
+export function readGithubUser(): VerifiedGithubUser | null {
+  const raw = Storage.get<unknown>(STORAGE_KEYS.githubUser)
+  // 旧缓存是纯字符串登录名，不含头像
+  if (typeof raw === "string") {
+    return raw ? { login: raw, avatarUrl: "" } : null
+  }
+  if (raw && typeof raw === "object") {
+    const login = String((raw as VerifiedGithubUser).login || "")
+    if (!login) return null
+    return {
+      login,
+      avatarUrl: String((raw as VerifiedGithubUser).avatarUrl || ""),
+    }
+  }
+  return null
 }
 
-/** 保存已验证的 GitHub 用户名；传 null 清除（token 变更/清除时调用） */
-export function writeGithubUser(login: string | null): void {
-  if (login == null) {
+/** 保存已验证的 GitHub 用户；传 null 清除（token 变更/清除时调用） */
+export function writeGithubUser(user: VerifiedGithubUser | null): void {
+  if (user == null) {
     Storage.remove(STORAGE_KEYS.githubUser)
     return
   }
-  if (!Storage.set(STORAGE_KEYS.githubUser, login)) {
+  if (!Storage.set(STORAGE_KEYS.githubUser, user)) {
     throw new Error("GitHub 用户保存失败")
   }
 }
