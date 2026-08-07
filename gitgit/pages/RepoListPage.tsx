@@ -2,6 +2,7 @@
  * pages/RepoListPage.tsx - 仓库列表页
  *
  * 展示仓库来源（本地/克隆）与改动/待推送/合并冲突摘要。
+ * 列表固定按仓库名 A→Z 展示。
  * 状态优先显示上次快照，再由实时查询逐行覆盖；未有快照的行显示加载图标。
  * 移除仓库时会清理 gitdir 缓存与访问书签（见 repoStore.removeRepo）。
  */
@@ -49,6 +50,7 @@ import {
 } from "../constants/colors"
 import { formatRepoListMergeSummary } from "../utils/mergeConflict"
 import { yieldForUi } from "../utils/remoteProgress"
+import { sortReposByName } from "../utils/repoSort"
 
 export function RepoListPage() {
   // 关闭 present 的根界面（设置已独立为 Tab）
@@ -95,7 +97,8 @@ export function RepoListPage() {
 
   async function refreshStatuses(list: RepoMeta[]) {
     // 尚无状态的行由 RepoRow 显示加载图标；串行逐个刷新，避免大仓库并行打爆 FS
-    for (const repo of list) {
+    // 按展示顺序刷新，让顶部可见行先拿到状态
+    for (const repo of sortReposByName(list)) {
       const status = await getRepoListStatus(repo.bookmarkName)
       setStatusMap((current) => ({
         ...current,
@@ -168,6 +171,8 @@ export function RepoListPage() {
         : null
 
   const showRemovingOverlay = removingName != null
+  // 仅影响展示顺序，持久化的仓库数组仍保持添加顺序
+  const sortedRepos = sortReposByName(repos)
 
   return (
     <List
@@ -256,7 +261,7 @@ export function RepoListPage() {
         </Section>
       ) : (
         <Section>
-          {repos.map((repo) => (
+          {sortedRepos.map((repo) => (
             <HStack
               key={repo.bookmarkName}
               alignment="center"

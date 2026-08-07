@@ -60,6 +60,8 @@ import {
   revertCommit,
   softResetHead,
   amendHeadCommit,
+  resetToCommitAndForcePush,
+  isRemoteOperationCancelled,
   RemoteCancelToken,
 } from "../services/gitService"
 import { useRepoBranchActions } from "../hooks/useRepoBranchActions"
@@ -143,6 +145,7 @@ export function RepoDetailPage({
   const [showRemotes, setShowRemotes] = useState(false)
   const [showConflicts, setShowConflicts] = useState(false)
   const [showCompare, setShowCompare] = useState(false)
+  const [showRollback, setShowRollback] = useState(false)
   const [githubFullName, setGithubFullName] = useState<string | null>(null)
   const [showGitHubWork, setShowGitHubWork] = useState(false)
   const [mergeInProgress, setMergeInProgress] = useState(false)
@@ -505,6 +508,17 @@ export function RepoDetailPage({
     }
   }
 
+  function handleRollbackSelect(entry: CommitEntry) {
+    const branch = branchInfo.current
+    if (!branch) {
+      showAlert("回滚失败", "当前没有命名分支，无法回滚")
+      return
+    }
+    // 关闭选择页，再弹确认
+    setShowRollback(false)
+    setTimeout(() => setPending({ type: "rollback", entry, branch }), 350)
+  }
+
   function handleRevertRequest(entry: CommitEntry) {
     setPending({ type: "revert", entry })
   }
@@ -666,7 +680,45 @@ export function RepoDetailPage({
         await submitAmend()
         return
       }
+      if (action.type === "rollback") {
+        const token = new RemoteCancelToken()
+        await beginOpBusy(
+          "正在回滚",
+          "准备重置到目标提交…",
+          makeSyncCancel(token)
+        )
+        const result = await resetToCommitAndForcePush(
+          bookmarkName,
+          action.entry.oid,
+          {
+            cancelToken: token,
+            onProgress: async (info) => {
+              await updateOpBusy("正在回滚", info.label)
+            },
+          }
+        )
+        await updateOpBusy("正在回滚", "刷新仓库状态…")
+        await loadAll()
+        showAlert(
+          "已回滚",
+          `${result.branch} 已重置到 ${shortOid(action.entry.oid)} 并强制推送到 origin/${result.branch}`
+        )
+        return
+      }
     } catch (e: any) {
+      if (action.type === "rollback" && isRemoteOperationCancelled(e)) {
+        try {
+          await loadAll()
+        } catch (_refreshError) {
+          /* 忽略刷新失败 */
+        }
+        // 本地已重置但强推被取消：必须明确告知远端仍是旧历史
+        showAlert(
+          "回滚未完成",
+          "强制推送已取消。本地分支可能已重置到目标提交，远端仍是原历史，可重新执行回滚。"
+        )
+        return
+      }
       const title =
         action.type === "restore"
           ? "撤销失败"
@@ -680,20 +732,25 @@ export function RepoDetailPage({
                   ? "删除分支失败"
                   : action.type === "deleteRemoteBranch"
                     ? "删除远端分支失败"
-                    : "回退失败"
+                    : action.type === "rollback"
+                      ? "回滚失败"
+                      : "回退失败"
       // revert/reset 失败前可能已改工作区或 HEAD，刷新以避免页面状态与实际不一致
       try {
         if (
           action.type === "revert" ||
           action.type === "softReset" ||
-          action.type === "amend"
+          action.type === "amend" ||
+          action.type === "rollback"
         ) {
           await updateOpBusy(
             action.type === "revert"
               ? "正在撤销"
               : action.type === "softReset"
                 ? "正在回退"
-                : "正在重编",
+                : action.type === "rollback"
+                  ? "正在回滚"
+                  : "正在重编",
             "刷新仓库状态…"
           )
         }
@@ -878,6 +935,7 @@ export function RepoDetailPage({
           showRemotes ||
           showConflicts ||
           showCompare ||
+          showRollback ||
           showGitHubWork ||
           selectedCommitOid != null,
         onChanged: (presented: boolean) => {
@@ -886,6 +944,7 @@ export function RepoDetailPage({
             setShowRemotes(false)
             setShowConflicts(false)
             setShowCompare(false)
+            setShowRollback(false)
             setShowGitHubWork(false)
             setSelectedCommitOid(null)
             // 从冲突页返回时刷新合并状态
@@ -900,8 +959,11 @@ export function RepoDetailPage({
             showRemotes={showRemotes}
             showConflicts={showConflicts}
             showCompare={showCompare}
+            showRollback={showRollback}
+            currentBranch={branchInfo.current}
             githubFullName={showGitHubWork ? githubFullName : null}
             selectedCommitOid={selectedCommitOid}
+            onRollbackSelect={handleRollbackSelect}
             onUploaded={(repo) => {
               setDisplayName(repo.name)
               setRepoSource(repo.source || "clone")
@@ -1021,13 +1083,24 @@ export function RepoDetailPage({
         canUpload={canUpload}
         mergeInProgress={mergeInProgress}
         mutating={mutating}
+        hasCommits={hasCommits}
         onCompare={() => {
           setSelectedCommitOid(null)
           setShowUpload(false)
           setShowRemotes(false)
           setShowConflicts(false)
           setShowGitHubWork(false)
+          setShowRollback(false)
           setShowCompare(true)
+        }}
+        onRollback={() => {
+          setSelectedCommitOid(null)
+          setShowUpload(false)
+          setShowRemotes(false)
+          setShowConflicts(false)
+          setShowGitHubWork(false)
+          setShowCompare(false)
+          setShowRollback(true)
         }}
         onManageRemotes={() => {
           setSelectedCommitOid(null)

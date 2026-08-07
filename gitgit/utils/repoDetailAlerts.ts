@@ -9,6 +9,7 @@ export type RepoPendingAction =
   | { type: "dropStash"; entry: StashEntry }
   | { type: "deleteLocalBranch"; branch: string }
   | { type: "deleteRemoteBranch"; branch: string }
+  | { type: "rollback"; entry: CommitEntry; branch: string }
   | null
 
 export function getRepoPendingAlert(pending: Exclude<RepoPendingAction, null>): {
@@ -58,6 +59,12 @@ export function getRepoPendingAlert(pending: Exclude<RepoPendingAction, null>): 
         title: `删除远端分支 origin/${pending.branch}？`,
         message: "将从 origin 删除该远端分支，操作不可撤销，需已配置 Token。",
         confirmButton: "删除",
+      }
+    case "rollback":
+      return {
+        title: `回滚并强制推送到 ${commitTitle(pending.entry.message)}？`,
+        message: `${pending.branch} 将被重置到该提交，并强制覆盖 origin/${pending.branch}。该提交之后的所有提交将从远端历史中移除，操作不可撤销。`,
+        confirmButton: "回滚并强推",
       }
   }
 }

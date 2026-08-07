@@ -1,5 +1,9 @@
 import { Button, HStack, Image, Section, Spacer, Text } from "scripting"
-import { COLOR_ACCENT, COLOR_SECONDARY_LABEL } from "../constants/colors"
+import {
+  COLOR_ACCENT,
+  COLOR_ORANGE,
+  COLOR_SECONDARY_LABEL,
+} from "../constants/colors"
 import { DEFAULT_BRANCH } from "../constants/git"
 import type { BranchInfo } from "../types/git"
 import type { UpstreamConfig } from "../utils/remote"
@@ -13,7 +17,9 @@ export function RepoRemoteSections({
   canUpload,
   mergeInProgress,
   mutating,
+  hasCommits,
   onCompare,
+  onRollback,
   onManageRemotes,
   onUpload,
   onPush,
@@ -26,7 +32,9 @@ export function RepoRemoteSections({
   canUpload: boolean
   mergeInProgress: boolean
   mutating: boolean
+  hasCommits: boolean
   onCompare: () => void
+  onRollback: () => void
   onManageRemotes: () => void
   onUpload: () => void
   onPush: () => void
@@ -39,6 +47,19 @@ export function RepoRemoteSections({
           <HStack alignment="center" spacing={8}>
             <Text>同步</Text>
             <Spacer />
+            <Button
+              action={onRollback}
+              disabled={mutating || mergeInProgress || !hasCommits}
+            >
+              <HStack alignment="center" spacing={4}>
+                <Image
+                  systemName="arrow.uturn.backward"
+                  font="caption"
+                  foregroundStyle={COLOR_ORANGE}
+                />
+                <Text font="caption" foregroundStyle={COLOR_ORANGE}>回滚</Text>
+              </HStack>
+            </Button>
             <Button action={onCompare} disabled={mutating}>
               <HStack alignment="center" spacing={4}>
                 <Image

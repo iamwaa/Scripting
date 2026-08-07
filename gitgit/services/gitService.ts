@@ -36,6 +36,7 @@ import { getRepoListStatusInternal } from "./git/repoStatusService"
 import {
   amendHeadCommitInternal,
   revertCommitInternal,
+  resetToCommitInternal,
   softResetHeadInternal,
 } from "./git/historyMutationService"
 import {
@@ -503,6 +504,20 @@ export async function revertCommit(
 ): Promise<string> {
   return runRepoMutation(bookmarkName, () =>
     revertCommitInternal(bookmarkName, oid, author)
+  )
+}
+
+export async function resetToCommitAndForcePush(
+  bookmarkName: string,
+  oid: string,
+  options?: RemoteOpOptions
+): Promise<{ branch: string }> {
+  return runWithBackgroundKeepAlive(() =>
+    runRepoMutation(bookmarkName, async () => {
+      const branch = await resetToCommitInternal(bookmarkName, oid)
+      await pushInternal(bookmarkName, "origin", branch, true, options)
+      return { branch }
+    })
   )
 }
 

@@ -5,6 +5,7 @@ import {
   getCtx,
   writeSymbolicHead,
 } from "./runtime"
+import { isStatusMatrixClean } from "../../utils/stash"
 
 async function resolveHeadOid(
   git: any,
@@ -138,6 +139,38 @@ export async function revertCommitInternal(
     message: `Revert "${title}"\n\nThis reverts commit ${oid}.`,
     author: resolvedAuthor,
   })
+}
+
+export async function resetToCommitInternal(
+  bookmarkName: string,
+  oid: string
+): Promise<string> {
+  const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
+  await git.readCommit({ fs, dir, gitdir, oid })
+  const branch = await git.currentBranch({ fs, dir, gitdir, fullname: false })
+  if (!branch) throw new Error("当前不在命名分支上，无法回滚")
+
+  const matrix = await git.statusMatrix({ fs, dir, gitdir })
+  if (!isStatusMatrixClean(matrix)) {
+    throw new Error("工作区有未提交改动，回滚前请先提交或保存到 Stash，以免丢失改动。")
+  }
+
+  await checkoutWithEmptyDirCleanup(git, fs, {
+    dir,
+    gitdir,
+    ref: oid,
+    force: true,
+  })
+  await git.writeRef({
+    fs,
+    dir,
+    gitdir,
+    ref: "refs/heads/" + branch,
+    value: oid,
+    force: true,
+  })
+  await writeSymbolicHead(fs, branch)
+  return branch
 }
 
 export async function softResetHeadInternal(
