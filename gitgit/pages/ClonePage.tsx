@@ -289,6 +289,7 @@ export function ClonePage({ onCloned }: { onCloned: (repo: RepoMeta) => void }) 
         />
         <Button
           title="克隆"
+          systemImage="square.and.arrow.down"
           action={() => handleClone()}
           disabled={cloning || !parentPath || !url.trim()}
         />

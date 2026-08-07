@@ -2,7 +2,7 @@
  * pages/RepoListPage.tsx - 仓库列表页
  *
  * 展示仓库来源（本地/克隆）与改动/待推送/合并冲突摘要。
- * 状态全部实时加载：未加载完的行在右侧显示加载图标，完成后显示实际摘要。
+ * 状态优先显示上次快照，再由实时查询逐行覆盖；未有快照的行显示加载图标。
  * 移除仓库时会清理 gitdir 缓存与访问书签（见 repoStore.removeRepo）。
  */
 
@@ -23,11 +23,16 @@ import {
   ProgressView,
   useState,
 } from "scripting"
-import type { RepoMeta, RepoListStatus } from "../types/git"
+import type {
+  RepoListStatus,
+  RepoMeta,
+  RepoSnapshot,
+} from "../types/git"
 import {
   listRepos,
   addRepoByPicker,
   removeRepo,
+  readSnapshots,
   sourceLabel,
 } from "../services/repoStore"
 import { getRepoListStatus, initRepo } from "../services/gitService"
@@ -55,14 +60,22 @@ export function RepoListPage() {
     title: string
     message: string
   } | null>(null)
-  // bookmarkName → 列表状态；全部来自 getRepoListStatus 实时刷新，未加载的行显示加载图标
+  // bookmarkName → 列表状态；快照只补首屏占位，实时查询逐行覆盖
   const [statusMap, setStatusMap] = useState<Record<string, RepoListStatus>>({})
+  const [snapshotMap, setSnapshotMap] = useState<Record<string, RepoSnapshot>>({})
   // 移除仓库忙态：删 gitdir 缓存对大仓库可能耗时，用全屏遮罩
   const [removingName, setRemovingName] = useState<string | null>(null)
 
   async function refreshAll() {
     const latest = listRepos()
     setRepos(latest)
+    setSnapshotMap({})
+    try {
+      const snapshots = await readSnapshots()
+      setSnapshotMap(snapshots)
+    } catch (_e) {
+      // 快照只用于首屏占位，读取失败仍继续实时刷新
+    }
     await refreshStatuses(latest)
   }
 
@@ -270,6 +283,7 @@ export function RepoListPage() {
                 <RepoRow
                   repo={repo}
                   status={statusMap[repo.bookmarkName]}
+                  snapshot={snapshotMap[repo.bookmarkName]}
                 />
               </NavigationLink>
             </HStack>
@@ -284,14 +298,17 @@ export function RepoListPage() {
 function RepoRow({
   repo,
   status,
+  snapshot,
 }: {
   repo: RepoMeta
   status?: RepoListStatus
+  snapshot?: RepoSnapshot
 }) {
   const source = sourceLabel(repo)
   const isClone = source === "克隆"
-  const uncommitted = status?.uncommitted ?? 0
-  const ahead = status?.ahead ?? 0
+  const uncommitted = status?.uncommitted ?? snapshot?.uncommitted ?? 0
+  const ahead = status?.ahead ?? snapshot?.ahead ?? 0
+  const branch = status?.branch ?? snapshot?.branch
 
   // 状态就绪后才得出摘要；未就绪时行尾显示加载图标
   let trailing: { text: string; color: string } | null = null
@@ -336,13 +353,25 @@ function RepoRow({
         </Text>
         <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
           {source}
-          {status?.branch ? ` · ${status.branch}` : ""}
+          {branch ? ` · ${branch}` : ""}
         </Text>
       </VStack>
       <Spacer />
       {/* 放在 NavigationLink 自带 > 的左侧，整行垂直居中 */}
       {status == null ? (
-        <ProgressView />
+        <HStack spacing={8}>
+          {snapshot && (uncommitted > 0 || ahead > 0) ? (
+            <Text font={12} foregroundStyle={COLOR_ORANGE}>
+              {[
+                uncommitted > 0 ? `${uncommitted} 改动` : "",
+                ahead > 0 ? `${ahead}推送` : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Text>
+          ) : null}
+          <ProgressView />
+        </HStack>
       ) : trailing ? (
         <Text font="caption" foregroundStyle={trailing.color as any}>
           {trailing.text}

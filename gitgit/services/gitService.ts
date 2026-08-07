@@ -29,6 +29,7 @@ import {
   getChanges,
   getLog,
   getLogPage,
+  hasHeadCommit,
   getTrackedFiles,
 } from "./git/statusQueryService"
 import { getRepoListStatusInternal } from "./git/repoStatusService"
@@ -56,6 +57,7 @@ import {
 } from "./git/branchService"
 import {
   abortMergeInternal,
+  autoMarkResolvedConflictsInternal,
   completeMergeInternal,
   getMergeConflictState,
   listConflictFiles,
@@ -90,7 +92,10 @@ import {
   acquireRepoMutationLock,
   releaseRepoMutationLock,
 } from "../utils/gitSync"
-import type { ConflictResolution } from "../utils/mergeConflict"
+import type {
+  AutoMarkConflictsResult,
+  ConflictResolution,
+} from "../utils/mergeConflict"
 import type {
   MergeIntoCurrentResult,
   PullResult,
@@ -106,7 +111,8 @@ const repoMutationLocks = new Set<string>()
 
 async function runRepoMutation<T>(
   bookmarkName: string,
-  operation: () => Promise<T>
+  operation: () => Promise<T>,
+  refreshSnapshot = true
 ): Promise<T> {
   const lockKey = resolveGitdir(bookmarkName)
   if (!acquireRepoMutationLock(repoMutationLocks, lockKey)) {
@@ -116,7 +122,7 @@ async function runRepoMutation<T>(
     return await operation()
   } finally {
     releaseRepoMutationLock(repoMutationLocks, lockKey)
-    await refreshRepoSnapshot(bookmarkName)
+    if (refreshSnapshot) await refreshRepoSnapshot(bookmarkName)
   }
 }
 
@@ -175,11 +181,13 @@ async function refreshRepoSnapshot(bookmarkName: string): Promise<void> {
  */
 
 export async function getRepoListStatus(
-  bookmarkName: string
+  bookmarkName: string,
+  knownUncommitted?: number
 ): Promise<RepoListStatus> {
   const status = await getRepoListStatusInternal(
     bookmarkName,
-    getMergeConflictState
+    getMergeConflictState,
+    knownUncommitted
   )
   await persistRepoSnapshot(bookmarkName, status)
   return status
@@ -192,7 +200,7 @@ export async function getRepoListStatus(
  */
 
 export async function initRepo(bookmarkName: string): Promise<void> {
-  return runRepoMutation(bookmarkName, () => initRepoInternal(bookmarkName))
+  return runRepoMutation(bookmarkName, () => initRepoInternal(bookmarkName), false)
 }
 
 export async function addFiles(
@@ -423,14 +431,28 @@ export async function resolveConflictFile(
   )
 }
 
+/**
+ * 扫描工作区冲突文件并批量标记已解决：
+ * 无残留冲突标记（或文件已删除）的自动标记，其余保留并回报。
+ */
+export async function autoMarkResolvedConflicts(
+  bookmarkName: string
+): Promise<AutoMarkConflictsResult> {
+  return runRepoMutation(bookmarkName, () =>
+    autoMarkResolvedConflictsInternal(bookmarkName)
+  )
+}
+
 /** 冲突全部解决后创建合并提交 */
 export async function completeMerge(
   bookmarkName: string,
   message?: string,
   author?: { name: string; email: string }
 ): Promise<string> {
-  return runRepoMutation(bookmarkName, () =>
-    completeMergeInternal(bookmarkName, message, author)
+  return runRepoMutation(
+    bookmarkName,
+    () => completeMergeInternal(bookmarkName, message, author),
+    false
   )
 }
 
@@ -523,6 +545,7 @@ export {
   getChanges,
   getLog,
   getLogPage,
+  hasHeadCommit,
   getTrackedFiles,
   listRemotes,
   hasRemoteBranch,

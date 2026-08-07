@@ -78,8 +78,11 @@ import {
 } from "../utils/branch"
 import {
   buildConflictFilesFromErrorData,
+  buildConflictReport,
   buildMergeState,
   conflictKindLabel,
+  containsConflictMarkers,
+  formatAutoMarkSummary,
   defaultMergeCommitMessage,
   getMergeConflictErrorData,
   formatRepoListMergeSummary,
@@ -1368,6 +1371,118 @@ function testMergeConflictHelpers(): void {
     formatRepoListMergeSummary({ conflictCount: 0, mergeInProgress: false }) ===
       null,
     "无合并状态时列表摘要应回落到普通改动文案"
+  )
+
+  // 面向 Agent 的冲突清单：包含仓库、目录、合并双方与逐文件类型
+  const report = buildConflictReport({
+    repoName: "demo",
+    workdir: "/tmp/demo",
+    oursLabel: state.oursLabel,
+    theirsLabel: state.theirsLabel,
+    oursOid: state.oursOid,
+    theirsOid: state.theirsOid,
+    conflicts: state.conflicts,
+  })
+  assert(report.includes("- 仓库：demo"), "清单应包含仓库名")
+  assert(report.includes("- 目录：/tmp/demo"), "清单应包含工作目录")
+  assert(
+    report.includes("- 合并：origin/main (bbbbbbb) → main (aaaaaaa)"),
+    "清单应包含合并双方标签与短 OID"
+  )
+  assert(report.includes("- 待解决：3 个文件"), "清单应包含冲突数量")
+  assert(
+    report.includes("1. `a.txt` — 双方修改") &&
+      report.includes("2. `b.txt` — 我方删除 · 对方修改") &&
+      report.includes("3. `c.txt` — 对方删除 · 我方修改"),
+    "清单应逐行列出冲突文件与类型标签"
+  )
+  assert(
+    report.includes("## 执行约束") &&
+      report.includes("**严禁**执行 `git add`") &&
+      report.includes("「完成合并提交」"),
+    "清单应包含面向 Agent 的执行约束"
+  )
+  assert(
+    report.includes("## 执行约束") &&
+      report.includes("**严禁**执行 `git add`") &&
+      report.includes("「完成合并提交」"),
+    "清单应包含面向 Agent 的执行约束"
+  )
+  const reportNoDir = buildConflictReport({
+    repoName: "",
+    workdir: null,
+    oursLabel: "main",
+    theirsLabel: "origin/main",
+    conflicts: [],
+  })
+  assert(
+    reportNoDir.includes("- 仓库：未命名仓库") &&
+      reportNoDir.includes("- 目录：（无法解析工作目录）") &&
+      reportNoDir.includes("- 待解决：0 个文件"),
+    "缺仓库名/目录时清单应使用占位文案"
+  )
+
+  // 冲突标记检测：严格行首 7 字符格式
+  assert(
+    containsConflictMarkers("const a = 1\n<<<<<<< HEAD\nconst b = 2"),
+    "应识别 <<<<<<< 后跟空格"
+  )
+  assert(
+    containsConflictMarkers(">>>>>>> origin/main\n") &&
+      containsConflictMarkers("<<<<<<<"),
+    "应识别 >>>>>>> 与行尾的 <<<<<<<"
+  )
+  assert(
+    containsConflictMarkers("前半\n=======\n后半") &&
+      containsConflictMarkers("=======\r\n后半"),
+    "应识别独占一行的 7 个等号（含 CRLF）"
+  )
+  assert(
+    !containsConflictMarkers("标题\n=====\n") &&
+      !containsConflictMarkers("标题\n==========\n") &&
+      !containsConflictMarkers("标题\n========\n"),
+    "Markdown setext 下划线（非恰好 7 个等号）不应误报"
+  )
+  assert(
+    !containsConflictMarkers(" <<<<<<< HEAD") &&
+      !containsConflictMarkers("<<<<<<<< HEAD") &&
+      !containsConflictMarkers("普通文本\n没有标记"),
+    "前导空格、8 个尖括号、无标记文本不应误报"
+  )
+
+  // 自动标记摘要文案
+  const allMarked = formatAutoMarkSummary({
+    marked: ["a.txt", "b.txt"],
+    markerFiles: [],
+    failedFiles: [],
+  })
+  assert(
+    allMarked.title === "检测完成" &&
+      allMarked.message.includes("已自动标记 2 个文件") &&
+      allMarked.message.includes("无残留冲突"),
+    "全部标记时应提示无残留冲突"
+  )
+  const partial = formatAutoMarkSummary({
+    marked: ["a.txt"],
+    markerFiles: ["b.txt"],
+    failedFiles: ["c.bin"],
+  })
+  assert(
+    partial.title === "部分文件未解决" &&
+      partial.message.includes("已标记 1 个文件") &&
+      partial.message.includes("b.txt（仍含冲突标记）") &&
+      partial.message.includes("c.bin（读取或标记失败）"),
+    "部分标记时应列明未解决文件与原因"
+  )
+  const noneMarked = formatAutoMarkSummary({
+    marked: [],
+    markerFiles: ["b.txt"],
+    failedFiles: [],
+  })
+  assert(
+    noneMarked.title === "未能自动标记" &&
+      !noneMarked.message.includes("已标记"),
+    "未标记任何文件时不应出现已标记文案"
   )
 
   const parents = mergeCommitParents("a".repeat(40), "b".repeat(40))

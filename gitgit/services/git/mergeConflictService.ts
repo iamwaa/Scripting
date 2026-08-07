@@ -2,6 +2,7 @@ import { resolveAuthor } from "../authStore"
 import type { ConflictFile, MergeConflictState } from "../../types/git"
 import {
   buildMergeState,
+  containsConflictMarkers,
   defaultMergeCommitMessage,
   mergeCommitParents,
   normalizeConflictPath,
@@ -9,8 +10,11 @@ import {
   removeResolvedConflict,
   resolutionActionForConflict,
   serializeMergeState,
+  type AutoMarkConflictsResult,
   type ConflictResolution,
+  type MergeState,
 } from "../../utils/mergeConflict"
+import { compareCommitTrees, readTreeFiles } from "./commitService"
 import {
   ensureGitConfigAuthor,
   forceCheckoutRef,
@@ -267,6 +271,121 @@ export async function resolveConflictFileInternal(
   )
 }
 
+/**
+ * 扫描工作区冲突文件并批量标记已解决（Agent/外部编辑后的收口操作）：
+ * - 文件已删除 → git.remove（删除即最终内容）
+ * - 文件存在且无残留冲突标记 → git.add
+ * - 仍含冲突标记或读取/标记失败 → 保留在冲突列表并回报
+ */
+export async function autoMarkResolvedConflictsInternal(
+  bookmarkName: string
+): Promise<AutoMarkConflictsResult> {
+  const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
+  const state = await readMergeStateFile(gitdir)
+  if (!state) throw new Error("当前没有进行中的合并冲突")
+
+  const marked: string[] = []
+  const markerFiles: string[] = []
+  const failedFiles: string[] = []
+  for (const item of state.conflicts) {
+    const path = item.filepath
+    try {
+      if (await fs.exists(path)) {
+        const text = await fs.readFile(path, "utf8")
+        if (typeof text === "string" && containsConflictMarkers(text)) {
+          markerFiles.push(path)
+          continue
+        }
+        await git.add({ fs, dir, gitdir, filepath: path })
+      } else {
+        await git.remove({ fs, dir, gitdir, filepath: path })
+      }
+      marked.push(path)
+    } catch (_e) {
+      failedFiles.push(path)
+    }
+  }
+
+  // 已标记文件从合并状态中移除；全部解决时保留 ours/theirs 待完成提交
+  if (marked.length > 0) {
+    let next: MergeState | null = { version: 1, ...state }
+    for (const path of marked) {
+      if (!next) break
+      next = removeResolvedConflict(next, path)
+    }
+    await writeMergeStateFile(
+      gitdir,
+      next
+        ? {
+            oursOid: next.oursOid,
+            theirsOid: next.theirsOid,
+            oursLabel: next.oursLabel,
+            theirsLabel: next.theirsLabel,
+            message: next.message,
+            conflicts: next.conflicts,
+            startedAt: next.startedAt,
+          }
+        : { ...state, conflicts: [] }
+    )
+  }
+
+  return { marked, markerFiles, failedFiles }
+}
+
+export async function stageMergeResultPaths(
+  git: any,
+  fs: any,
+  dir: string,
+  gitdir: string,
+  oursOid: string,
+  theirsOid: string
+): Promise<string[]> {
+  const bases = (await git.findMergeBase({
+    fs,
+    dir,
+    gitdir,
+    oids: [oursOid, theirsOid],
+  })) as string[]
+  const baseOid = bases?.[0]
+  if (!baseOid) throw new Error("无法确定合并共同祖先，不能安全提交合并结果")
+  const [baseCommit, oursCommit, theirsCommit] = await Promise.all([
+    git.readCommit({ fs, dir, gitdir, oid: baseOid }),
+    git.readCommit({ fs, dir, gitdir, oid: oursOid }),
+    git.readCommit({ fs, dir, gitdir, oid: theirsOid }),
+  ])
+  const [baseFiles, oursFiles, theirsFiles] = await Promise.all([
+    readTreeFiles(git, fs, dir, gitdir, baseCommit.commit.tree),
+    readTreeFiles(git, fs, dir, gitdir, oursCommit.commit.tree),
+    readTreeFiles(git, fs, dir, gitdir, theirsCommit.commit.tree),
+  ])
+  const staged: string[] = []
+  for (const change of compareCommitTrees(baseFiles, theirsFiles)) {
+    const filepath = change.filepath
+    // 我方也改动过（含删除）的路径是冲突路径，解决结果已在 index，不再覆盖
+    if ((oursFiles.get(filepath) ?? null) !== (baseFiles.get(filepath) ?? null)) {
+      continue
+    }
+    if (change.status === "deleted") {
+      await git.remove({ fs, dir, gitdir, filepath }).catch(() => undefined)
+      if (await fs.exists(filepath)) {
+        // isomorphic-git 自动合并不删除工作区文件，仅当内容仍是 base 版本时补齐删除；
+        // 用户在解决期间重建/修改过则按其版本保留
+        const content = await fs.readFile(filepath)
+        const hashed = await git.hashBlob({ object: content })
+        if (hashed?.oid === baseFiles.get(filepath)) {
+          await fs.unlink(filepath)
+        } else {
+          await git.add({ fs, dir, gitdir, filepath })
+        }
+      }
+    } else {
+      await git.add({ fs, dir, gitdir, filepath })
+    }
+    staged.push(filepath)
+  }
+  return staged
+}
+
 export async function completeMergeInternal(
   bookmarkName: string,
   message?: string,
@@ -277,6 +396,18 @@ export async function completeMergeInternal(
   if (!state) throw new Error("当前没有进行中的合并")
   if (state.conflicts.length > 0) {
     throw new Error(`仍有 ${state.conflicts.length} 个未解决冲突，请全部解决后再完成合并`)
+  }
+  await stageMergeResultPaths(
+    git,
+    fs,
+    dir,
+    gitdir,
+    state.oursOid,
+    state.theirsOid
+  )
+  const unmerged = await listUnmergedPathsFromIndex(git, fs, dir, gitdir)
+  if (unmerged.length > 0) {
+    throw new Error(`仍有 ${unmerged.length} 个未解决冲突，请全部解决后再完成合并`)
   }
   const resolvedAuthor = await resolveAuthor(author)
   await ensureGitConfigAuthor(git, fs, dir, gitdir, resolvedAuthor)

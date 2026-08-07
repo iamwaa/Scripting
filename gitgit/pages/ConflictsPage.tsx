@@ -11,7 +11,9 @@ import {
   Text,
   HStack,
   VStack,
+  Spacer,
   Button,
+  Image,
   useState,
   useEffect,
 } from "scripting"
@@ -19,11 +21,21 @@ import type { ConflictFile, MergeConflictState } from "../types/git"
 import {
   getMergeConflictState,
   resolveConflictFile,
+  autoMarkResolvedConflicts,
   completeMerge,
   abortMerge,
 } from "../services/gitService"
-import { conflictKindLabel } from "../utils/mergeConflict"
-import { COLOR_SECONDARY_LABEL, COLOR_ORANGE } from "../constants/colors"
+import { findRepo, resolveWorkdir } from "../services/repoStore"
+import {
+  conflictKindLabel,
+  buildConflictReport,
+  formatAutoMarkSummary,
+} from "../utils/mergeConflict"
+import {
+  COLOR_SECONDARY_LABEL,
+  COLOR_ORANGE,
+  COLOR_ACCENT,
+} from "../constants/colors"
 
 type AlertState = { title: string; message: string } | null
 
@@ -32,7 +44,7 @@ export function ConflictsPage({
   onChanged,
 }: {
   bookmarkName: string
-  onChanged?: () => void
+  onChanged?: (reason?: "updated" | "completed") => void
 }) {
   const [state, setState] = useState<MergeConflictState | null>(null)
   const [loading, setLoading] = useState(true)
@@ -60,9 +72,9 @@ export function ConflictsPage({
     loadState()
   }, [])
 
-  function notifyParent() {
+  function notifyParent(reason: "updated" | "completed" = "updated") {
     try {
-      onChanged?.()
+      onChanged?.(reason)
     } catch (_e) {
       /* 忽略 */
     }
@@ -92,16 +104,63 @@ export function ConflictsPage({
     }
   }
 
+  // 检测工作区冲突文件：无残留冲突标记（或已删除）的批量标记为已解决
+  async function handleAutoMark() {
+    if (!state || busy || conflicts.length === 0) return
+    setBusy(true)
+    try {
+      const result = await autoMarkResolvedConflicts(bookmarkName)
+      await loadState()
+      notifyParent()
+      const summary = formatAutoMarkSummary(result)
+      showAlert(summary.title, summary.message)
+    } catch (e: any) {
+      showAlert("检测失败", String(e?.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handleComplete() {
     if (busy) return
     setBusy(true)
     try {
       const oid = await completeMerge(bookmarkName)
       await loadState()
-      notifyParent()
+      notifyParent("completed")
       showAlert("合并完成", `已创建合并提交 ${String(oid).slice(0, 7)}`)
     } catch (e: any) {
       showAlert("完成合并失败", String(e?.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // 复制面向 Agent 的冲突清单（仓库/目录/合并双方/冲突文件），便于外部处理冲突
+  async function handleCopyReport() {
+    if (!state || busy) return
+    setBusy(true)
+    try {
+      let workdir: string | null = null
+      try {
+        workdir = resolveWorkdir(bookmarkName)
+      } catch (_e) {
+        // 书签失效等情况不阻断复制，清单中标注无法解析
+        workdir = null
+      }
+      const report = buildConflictReport({
+        repoName: findRepo(bookmarkName)?.name || bookmarkName,
+        workdir,
+        oursLabel: state.oursLabel,
+        theirsLabel: state.theirsLabel,
+        oursOid: state.oursOid,
+        theirsOid: state.theirsOid,
+        conflicts,
+      })
+      await Pasteboard.setString(report)
+      showAlert("已复制", "冲突清单已复制到剪贴板")
+    } catch (e: any) {
+      showAlert("复制失败", String(e?.message || e))
     } finally {
       setBusy(false)
     }
@@ -206,10 +265,20 @@ export function ConflictsPage({
           header={<Text>操作</Text>}
           footer={
             <Text font="footnote" foregroundStyle={COLOR_SECONDARY_LABEL}>
-              完成合并会创建双亲合并提交；中止则放弃本次合并。
+              {conflicts.length > 0
+                ? "检测冲突状态：扫描工作区冲突文件，无残留冲突标记的自动标记为已解决（含已删除文件）。完成合并会创建双亲合并提交；中止则放弃本次合并。"
+                : "完成合并会创建双亲合并提交；中止则放弃本次合并。"}
             </Text>
           }
         >
+          {conflicts.length > 0 ? (
+            <Button
+              title={busy ? "处理中…" : "检测冲突状态"}
+              systemImage="doc.text.magnifyingglass"
+              action={handleAutoMark}
+              disabled={busy}
+            />
+          ) : null}
           <Button
             title={busy ? "处理中…" : "完成合并提交"}
             systemImage="checkmark.circle"
@@ -228,7 +297,35 @@ export function ConflictsPage({
 
       {state && conflicts.length > 0 ? (
         <Section
-          header={<Text>冲突文件</Text>}
+          header={
+            <HStack alignment="center">
+              <Text>冲突文件</Text>
+              <Spacer />
+              <Button
+                action={handleCopyReport}
+                disabled={busy}
+                tint={busy ? COLOR_SECONDARY_LABEL : COLOR_ACCENT}
+              >
+                <HStack alignment="center" spacing={4}>
+                  <Image
+                    systemName="doc.on.doc"
+                    font="caption"
+                    foregroundStyle={
+                      busy ? COLOR_SECONDARY_LABEL : COLOR_ACCENT
+                    }
+                  />
+                  <Text
+                    font="caption"
+                    foregroundStyle={
+                      busy ? COLOR_SECONDARY_LABEL : COLOR_ACCENT
+                    }
+                  >
+                    复制清单
+                  </Text>
+                </HStack>
+              </Button>
+            </HStack>
+          }
           footer={
             <Text font="footnote" foregroundStyle={COLOR_SECONDARY_LABEL}>
               左滑：保留我方 / 保留对方 / 标记已解决（工作区已是最终内容时）。

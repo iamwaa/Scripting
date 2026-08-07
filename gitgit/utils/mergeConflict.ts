@@ -100,6 +100,117 @@ export function conflictKindLabel(kind: ConflictKind): string {
 }
 
 /**
+ * 生成面向 Agent 的合并冲突清单文本（Markdown）。
+ * 复制到剪贴板后粘贴给 Agent，包含定位仓库与逐文件处理所需的信息。
+ */
+export function buildConflictReport(input: {
+  repoName: string
+  workdir?: string | null
+  oursLabel: string
+  theirsLabel: string
+  oursOid?: string
+  theirsOid?: string
+  conflicts: readonly ConflictFile[]
+}): string {
+  const conflicts = Array.isArray(input.conflicts) ? input.conflicts : []
+  const short = (oid?: string) => {
+    const v = String(oid || "").trim()
+    return v ? v.slice(0, 7) : ""
+  }
+  const oursOid = short(input.oursOid)
+  const theirsOid = short(input.theirsOid)
+  const oursLabel = String(input.oursLabel || "ours").trim() || "ours"
+  const theirsLabel = String(input.theirsLabel || "theirs").trim() || "theirs"
+  const ours = oursOid ? `${oursLabel} (${oursOid})` : oursLabel
+  const theirs = theirsOid ? `${theirsLabel} (${theirsOid})` : theirsLabel
+
+  const lines: string[] = [
+    "# 合并冲突清单",
+    "",
+    `- 仓库：${String(input.repoName || "").trim() || "未命名仓库"}`,
+    `- 目录：${String(input.workdir || "").trim() || "（无法解析工作目录）"}`,
+    `- 合并：${theirs} → ${ours}`,
+    `- 待解决：${conflicts.length} 个文件`,
+    "",
+    "## 冲突文件",
+    "",
+  ]
+  conflicts.forEach((file, index) => {
+    lines.push(
+      `${index + 1}. \`${file.filepath}\` — ${conflictKindLabel(file.kind)}`
+    )
+  })
+  lines.push(
+    "",
+    "## 执行约束",
+    "",
+    "- 文本冲突文件：删除 `<<<<<<<` / `=======` / `>>>>>>>` 冲突标记，合并代码并保持代码语法正确。",
+    "- 删除类冲突（我方删除 · 对方修改 / 对方删除 · 我方修改）：按改动意图决定保留或删除该文件。",
+    "- Git 命令限制：**严禁**执行 `git add`、`git commit`、`git rebase` 或 `git merge --continue`（该目录无 .git，Git 状态由 gitgit 管理）；仅对文件进行编辑/删除操作。",
+    "- 解决完成后，提醒用户在 gitgit 界面点击「标记已解决」及「完成合并提交」。"
+  )
+  return lines.join("\n")
+}
+
+// 标准 Git 冲突标记（7 字符）的行首匹配：
+// <<<<<<< / >>>>>>> 后跟空格或行尾；======= 恰好 7 个且独占一行（兼容 CRLF），
+// 排除 Markdown setext 下划线（更短/更长串）与嵌套冲突的 8+ 字符标记
+const CONFLICT_MARKER_RES = [
+  /^<{7}(?=[ \t]|$)/m,
+  /^>{7}(?=[ \t]|$)/m,
+  /^={7}\r?$/m,
+]
+
+/** 文本内容是否仍含 Git 冲突标记 */
+export function containsConflictMarkers(text: string): boolean {
+  if (!text) return false
+  return CONFLICT_MARKER_RES.some((re) => re.test(text))
+}
+
+/** 冲突自动标记结果（扫描工作区后批量标记） */
+export interface AutoMarkConflictsResult {
+  /** 已自动标记为已解决的文件 */
+  marked: string[]
+  /** 仍含冲突标记、未自动标记的文件 */
+  markerFiles: string[]
+  /** 读取或标记失败、未处理的文件 */
+  failedFiles: string[]
+}
+
+const AUTO_MARK_LIST_LIMIT = 10
+
+/** 自动标记结果的弹窗摘要文案 */
+export function formatAutoMarkSummary(result: AutoMarkConflictsResult): {
+  title: string
+  message: string
+} {
+  const markedCount = result.marked.length
+  const pending = [
+    ...result.markerFiles.map((path) => `${path}（仍含冲突标记）`),
+    ...result.failedFiles.map((path) => `${path}（读取或标记失败）`),
+  ]
+  if (pending.length === 0) {
+    return {
+      title: "检测完成",
+      message: `已自动标记 ${markedCount} 个文件为已解决，无残留冲突，可点击「完成合并提交」。`,
+    }
+  }
+  const lines: string[] = []
+  if (markedCount > 0) lines.push(`已标记 ${markedCount} 个文件。`)
+  lines.push(`以下 ${pending.length} 个文件仍需处理：`)
+  const shown = pending.slice(0, AUTO_MARK_LIST_LIMIT)
+  for (const item of shown) lines.push(`· ${item}`)
+  if (pending.length > shown.length) {
+    lines.push(`… 等 ${pending.length} 个文件`)
+  }
+  lines.push("请处理后再次点击「检测冲突状态」，或左滑手动标记。")
+  return {
+    title: markedCount > 0 ? "部分文件未解决" : "未能自动标记",
+    message: lines.join("\n"),
+  }
+}
+
+/**
  * 判断异常是否为 isomorphic-git MergeConflictError。
  * 兼容 code/name 与 data.filepaths 形态。
  */

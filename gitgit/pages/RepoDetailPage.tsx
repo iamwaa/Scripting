@@ -12,6 +12,7 @@ import {
   Toolbar,
   ToolbarItem,
   ToolbarSpacer,
+  useRef,
   useState,
 } from "scripting"
 import { BusyOverlay } from "../components/BusyOverlay"
@@ -45,6 +46,7 @@ import {
   dropStash,
   commit,
   getLogPage,
+  hasHeadCommit,
   getTrackedFiles,
   getManagedBranches,
   deleteBranch,
@@ -107,6 +109,7 @@ export function RepoDetailPage({
   name: string
 }) {
   const [tab, setTab] = useState<RepoDetailTab>(0)
+  const skipNextAppearLoadRef = useRef(false)
   const [changes, setChanges] = useState<FileChange[]>([])
   const [stashes, setStashes] = useState<StashEntry[]>([])
   const [log, setLog] = useState<CommitEntry[]>([])
@@ -186,7 +189,7 @@ export function RepoDetailPage({
         await initRepo(bookmarkName)
       }
       // 首屏：改动 + 历史 + 分支/远端/合并；Stash/文件按 Tab 懒加载
-      await Promise.all([
+      const [currentChanges] = await Promise.all([
         loadChanges(),
         loadLog(),
         loadBranches(),
@@ -197,7 +200,7 @@ export function RepoDetailPage({
       // 若当前已在懒加载 Tab，补数据
       if (tab === 1) await loadStashes()
       if (tab === 2) await loadTrackedFiles()
-      await getRepoListStatus(bookmarkName)
+      await getRepoListStatus(bookmarkName, currentChanges.length)
     } catch (e: any) {
       showAlert("加载失败", String(e?.message || e))
     } finally {
@@ -205,9 +208,10 @@ export function RepoDetailPage({
     }
   }
 
-  async function loadChanges() {
+  async function loadChanges(): Promise<FileChange[]> {
     const c = await getChanges(bookmarkName)
     setChanges(c)
+    return c
   }
 
   async function loadStashes() {
@@ -234,7 +238,7 @@ export function RepoDetailPage({
     setHistoryTotalMatches(page.totalMatches)
     setHistoryQuery(normalizedQuery)
     if (reset && normalizedQuery.trim().length === 0) {
-      setHasCommits(page.entries.length > 0)
+      setHasCommits(await hasHeadCommit(bookmarkName))
     }
   }
 
@@ -816,6 +820,10 @@ export function RepoDetailPage({
           : undefined
       }
       onAppear={() => {
+        if (skipNextAppearLoadRef.current) {
+          skipNextAppearLoadRef.current = false
+          return
+        }
         loadAll()
       }}
       toolbar={
@@ -909,7 +917,14 @@ export function RepoDetailPage({
               loadUpstream()
               refreshMeta()
             }}
-            onConflictsChanged={() => {
+            onConflictsChanged={(reason) => {
+               if (reason === "completed") {
+                 skipNextAppearLoadRef.current = true
+                 loadChanges()
+                 loadMergeState()
+                 loadLog()
+                 return
+               }
               loadMergeState()
               loadChanges()
               loadLog()

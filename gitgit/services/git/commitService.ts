@@ -1,7 +1,7 @@
 import type { CommitDetail, CommitFileChange } from "../../types/git"
 import { getCtx } from "./runtime"
 
-async function readTreeFiles(
+export async function readTreeFiles(
   git: any,
   fs: any,
   dir: string,

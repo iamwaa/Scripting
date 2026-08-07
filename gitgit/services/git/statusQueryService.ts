@@ -1,6 +1,5 @@
 import type {
   CommitEntry,
-  CommitSyncStatus,
   FileChange,
   FileChangeStatus,
 } from "../../types/git"
@@ -37,23 +36,15 @@ export function matrixToStatus(head: number, work: number, stage: number): FileC
   }
 }
 
-async function collectReachableCommits(
-  git: any,
-  fs: any,
-  dir: string,
-  gitdir: string,
-  startOid: string
-): Promise<Set<string>> {
-  const visited = new Set<string>()
-  const pending = [startOid]
-  while (pending.length > 0) {
-    const oid = pending.pop()!
-    if (visited.has(oid)) continue
-    visited.add(oid)
-    const result = await git.readCommit({ fs, dir, gitdir, oid })
-    for (const parent of result.commit.parent || []) pending.push(parent)
+export async function hasHeadCommit(bookmarkName: string): Promise<boolean> {
+  const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
+  if (!(await FileManager.exists(gitdir + "/HEAD"))) return false
+  try {
+    await git.resolveRef({ fs, dir, gitdir, ref: "HEAD" })
+    return true
+  } catch (_e) {
+    return false
   }
-  return visited
 }
 
 export async function getChanges(bookmarkName: string): Promise<FileChange[]> {
@@ -103,79 +94,42 @@ export async function getLog(
       headOid = null
     }
 
-    let remoteOid: string | null = null
-    let current: string | null = null
+    const remoteOids = new Set<string>()
     try {
-      current = await git.currentBranch({ fs, dir, gitdir, fullname: false })
-    } catch (_e) {
-      current = null
-    }
-    if (current) {
-      try {
-        remoteOid = await git.resolveRef({
+      const current = await git.currentBranch({
+        fs,
+        dir,
+        gitdir,
+        fullname: false,
+      })
+      if (current) {
+        const remoteLog = await git.log({
           fs,
           dir,
           gitdir,
           ref: "refs/remotes/origin/" + current,
+          depth,
         })
-      } catch (_e) {
-        remoteOid = null
+        for (const entry of remoteLog as any[]) remoteOids.add(entry.oid)
       }
+    } catch (_e) {
+      // 没有远端跟踪分支时保留本地标签。
     }
 
-    const unpushed = new Set<string>()
-    if (remoteOid && headOid && remoteOid !== headOid) {
-      try {
-        const bases = (await git.findMergeBase({
-          fs,
-          dir,
-          gitdir,
-          oids: [headOid, remoteOid],
-        })) as string[]
-        const base = bases?.[0] || null
-        if (base) {
-          const pending: string[] = [headOid]
-          const seen = new Set<string>()
-          while (pending.length > 0) {
-            const oid = pending.pop()!
-            if (oid === base || seen.has(oid)) continue
-            seen.add(oid)
-            unpushed.add(oid)
-            const commitResult: { commit: { parent?: string[] } } =
-              await git.readCommit({ fs, dir, gitdir, oid })
-            for (const parent of commitResult.commit.parent || []) {
-              if (parent !== base && !seen.has(parent)) pending.push(parent)
-            }
-          }
-        } else {
-          const [localReachable, remoteReachable] = await Promise.all([
-            collectReachableCommits(git, fs, dir, gitdir, headOid),
-            collectReachableCommits(git, fs, dir, gitdir, remoteOid),
-          ])
-          for (const oid of localReachable) {
-            if (!remoteReachable.has(oid)) unpushed.add(oid)
-          }
-        }
-      } catch (_e) {
-        // 同步标记失败不影响历史展示
-      }
-    }
-
-    return log.map((entry: any) => {
-      let syncStatus: CommitSyncStatus = "local"
-      if (remoteOid) syncStatus = unpushed.has(entry.oid) ? "unpushed" : "remote"
-      return {
-        oid: entry.oid,
-        message: entry.commit.message.trim(),
-        author: {
-          name: entry.commit.author?.name || "",
-          email: entry.commit.author?.email || "",
-        },
-        date: new Date(entry.commit.author.timestamp * 1000).toISOString(),
-        syncStatus,
-        isHead: headOid != null && entry.oid === headOid,
-      }
-    })
+    return log.map((entry: any) => ({
+      oid: entry.oid,
+      message: entry.commit.message.trim(),
+      author: {
+        name: entry.commit.author?.name || "",
+        email: entry.commit.author?.email || "",
+      },
+      date: new Date(entry.commit.author.timestamp * 1000).toISOString(),
+      // 只比较当前页深度的远端跟踪历史，避免遍历完整提交图阻塞首屏。
+      syncStatus: remoteOids.size > 0
+        ? (remoteOids.has(entry.oid) ? "remote" : "unpushed")
+        : "local",
+      isHead: headOid != null && entry.oid === headOid,
+    }))
   } catch (_e) {
     return []
   }

@@ -123,7 +123,8 @@ export async function getSyncTopology(
 
 export async function getRepoListStatusInternal(
   bookmarkName: string,
-  readMergeState: (bookmarkName: string) => Promise<MergeConflictState | null>
+  readMergeState: (bookmarkName: string) => Promise<MergeConflictState | null>,
+  knownUncommitted?: number
 ): Promise<RepoListStatus> {
   try {
     const dir = resolveWorkdir(bookmarkName)
@@ -158,19 +159,24 @@ export async function getRepoListStatusInternal(
 
     const ctx = await getCtx(bookmarkName)
     const { git, fs, dir: workDir, gitdir: contextGitdir } = ctx
-    let uncommitted = 0
-    try {
-      const matrix = (await git.statusMatrix({
-        fs,
-        dir: workDir,
-        gitdir: contextGitdir,
-      })) as [string, number, number, number][]
-      for (const [, head, work, stage] of matrix) {
-        if (head === 1 && work === 1 && stage === 1) continue
-        if (matrixToStatus(head, work, stage) !== "unmodified") uncommitted++
+    let uncommitted = Math.max(
+      0,
+      Math.floor(knownUncommitted ?? 0) || 0
+    )
+    if (knownUncommitted == null) {
+      try {
+        const matrix = (await git.statusMatrix({
+          fs,
+          dir: workDir,
+          gitdir: contextGitdir,
+        })) as [string, number, number, number][]
+        for (const [, head, work, stage] of matrix) {
+          if (head === 1 && work === 1 && stage === 1) continue
+          if (matrixToStatus(head, work, stage) !== "unmodified") uncommitted++
+        }
+      } catch (_e) {
+        uncommitted = 0
       }
-    } catch (_e) {
-      uncommitted = 0
     }
 
     let current: string | null = null

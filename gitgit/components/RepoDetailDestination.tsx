@@ -30,7 +30,7 @@ export function RepoDetailDestination({
   selectedCommitOid: string | null
   onUploaded: (repo: RepoMeta) => void
   onRemotesChanged: () => void
-  onConflictsChanged: () => void
+  onConflictsChanged: (reason?: "updated" | "completed") => void
 }) {
   if (showUpload) {
     return (

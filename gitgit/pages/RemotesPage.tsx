@@ -374,7 +374,7 @@ export function RemotesPage({
             </Picker>
             {branchOptions.length > 0 ? (
               <Picker
-                title={branchLoading ? "正在获取分支" : "远端分支"}
+                title={branchLoading ? "正在获取分支…" : "远端分支"}
                 value={upstreamMerge}
                 onChanged={setUpstreamMerge}
                 disabled={branchLoading}
