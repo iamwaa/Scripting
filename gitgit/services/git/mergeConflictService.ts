@@ -140,6 +140,22 @@ export async function listConflictFiles(
   return state?.conflicts || []
 }
 
+async function readBlobOidAtCommit(
+  git: any,
+  fs: any,
+  dir: string,
+  gitdir: string,
+  oid: string,
+  filepath: string
+): Promise<string | null> {
+  try {
+    const result = await git.readBlob({ fs, dir, gitdir, oid, filepath })
+    return String(result?.oid || "") || null
+  } catch (_e) {
+    return null
+  }
+}
+
 async function readBlobTextAtCommit(
   git: any,
   fs: any,
@@ -286,15 +302,35 @@ export async function autoMarkResolvedConflictsInternal(
 
   const marked: string[] = []
   const markerFiles: string[] = []
+  const unchangedDeleteFiles: string[] = []
   const failedFiles: string[] = []
   for (const item of state.conflicts) {
     const path = item.filepath
     try {
       if (await fs.exists(path)) {
-        const text = await fs.readFile(path, "utf8")
-        if (typeof text === "string" && containsConflictMarkers(text)) {
+        const content = await fs.readFile(path)
+        const text =
+          typeof content === "string"
+            ? content
+            : new TextDecoder("utf-8", { fatal: false }).decode(content)
+        if (containsConflictMarkers(text)) {
           markerFiles.push(path)
           continue
+        }
+        if (item.kind !== "bothModified") {
+          const preservedOid = await readBlobOidAtCommit(
+            git,
+            fs,
+            dir,
+            gitdir,
+            item.kind === "deleteByUs" ? state.theirsOid : state.oursOid,
+            path
+          )
+          const currentOid = String((await git.hashBlob({ object: content }))?.oid || "")
+          if (preservedOid && currentOid === preservedOid) {
+            unchangedDeleteFiles.push(path)
+            continue
+          }
         }
         await git.add({ fs, dir, gitdir, filepath: path })
       } else {
@@ -329,7 +365,7 @@ export async function autoMarkResolvedConflictsInternal(
     )
   }
 
-  return { marked, markerFiles, failedFiles }
+  return { marked, markerFiles, unchangedDeleteFiles, failedFiles }
 }
 
 export async function stageMergeResultPaths(

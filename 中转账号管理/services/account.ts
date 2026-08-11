@@ -112,16 +112,9 @@ export function upsertAccount(draft: AccountDraft) {
   if (draft.platform) account.platform = draft.platform
   if (draft.lastSelf) account.lastSelf = draft.lastSelf
 
-  // 处理访问令牌和用户 ID
+  // 处理访问令牌（用户 ID 于保存后由 /api/user/self 自动解析回填到 lastSelf.id）
   if (draft.accessToken.trim()) {
     account.authSource = draft.authSource ?? "accessToken"
-    // 如果提供了 accessTokenUserId，将其作为 lastSelf.id
-    if (draft.accessTokenUserId.trim()) {
-      const userId = Number(draft.accessTokenUserId)
-      if (Number.isFinite(userId) && userId > 0) {
-        account.lastSelf = { ...(account.lastSelf ?? {}), id: userId }
-      }
-    }
   }
 
   setSecret(passwordKey, draft.password)

@@ -4,6 +4,7 @@ export interface HistoryPage {
   entries: CommitEntry[]
   hasMore: boolean
   totalMatches: number | null
+  limited?: boolean
 }
 
 export function normalizeHistoryQuery(query: string): string {

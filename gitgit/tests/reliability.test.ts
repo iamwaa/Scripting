@@ -1454,6 +1454,7 @@ function testMergeConflictHelpers(): void {
   const allMarked = formatAutoMarkSummary({
     marked: ["a.txt", "b.txt"],
     markerFiles: [],
+    unchangedDeleteFiles: [],
     failedFiles: [],
   })
   assert(
@@ -1465,18 +1466,21 @@ function testMergeConflictHelpers(): void {
   const partial = formatAutoMarkSummary({
     marked: ["a.txt"],
     markerFiles: ["b.txt"],
+    unchangedDeleteFiles: ["delete.txt"],
     failedFiles: ["c.bin"],
   })
   assert(
     partial.title === "部分文件未解决" &&
       partial.message.includes("已标记 1 个文件") &&
       partial.message.includes("b.txt（仍含冲突标记）") &&
+      partial.message.includes("delete.txt（删除冲突尚未决定保留或删除）") &&
       partial.message.includes("c.bin（读取或标记失败）"),
     "部分标记时应列明未解决文件与原因"
   )
   const noneMarked = formatAutoMarkSummary({
     marked: [],
     markerFiles: ["b.txt"],
+    unchangedDeleteFiles: [],
     failedFiles: [],
   })
   assert(

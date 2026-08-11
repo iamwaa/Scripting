@@ -11,7 +11,8 @@ import { buildFileTree } from "../utils/fileTree"
 import { getCommitDetail } from "../services/gitService"
 import { CommitFileTreeNode } from "../components/CommitFileTree"
 import { AvatarView } from "../components/AvatarView"
-import { avatarUrlForGitAuthor } from "../utils/github"
+import { resolvedGitAuthorAvatarUrl } from "../utils/github"
+import { getCommitAvatarUrls } from "../api/githubApi"
 import { shortOid, commitTitle, commitBody } from "../utils/format"
 import {
   COLOR_LABEL,
@@ -22,31 +23,48 @@ export function CommitDetailPage({
   bookmarkName,
   oid,
   title = "提交详情",
+  githubFullName = null,
 }: {
   bookmarkName: string
   oid: string
   /** 导航栏标题，Stash 详情可传「Stash 详情」 */
   title?: string
+  githubFullName?: string | null
 }) {
   const [detail, setDetail] = useState<CommitDetail | null>(null)
+  const [githubAvatarUrl, setGithubAvatarUrl] = useState("")
   const [error, setError] = useState<string | null>(null)
 
   // 必须随 oid 变化重新拉取；导航 content 复用时 [] 会一直显示首次打开的提交
   useEffect(() => {
-    let cancelled = false
+    const token = { cancelled: false }
     setDetail(null)
     setError(null)
-    getCommitDetail(bookmarkName, oid)
+    getCommitDetail(bookmarkName, oid, token)
       .then((next) => {
-        if (!cancelled) setDetail(next)
+        if (!token.cancelled) setDetail(next)
       })
       .catch((e: any) => {
-        if (!cancelled) setError(String(e?.message || e))
+        if (!token.cancelled) setError(String(e?.message || e))
       })
+    return () => {
+      token.cancelled = true
+    }
+  }, [bookmarkName, oid])
+
+  useEffect(() => {
+    setGithubAvatarUrl("")
+    if (!githubFullName) return
+    let cancelled = false
+    getCommitAvatarUrls(githubFullName, [oid])
+      .then((avatars) => {
+        if (!cancelled) setGithubAvatarUrl(avatars[oid.toLowerCase()] || "")
+      })
+      .catch(() => {})
     return () => {
       cancelled = true
     }
-  }, [bookmarkName, oid])
+  }, [githubFullName, oid])
 
   const changeTree = detail
     ? buildFileTree(detail.files.map((file) => file.filepath))
@@ -90,7 +108,10 @@ export function CommitDetailPage({
                 作者：
               </Text>
               <AvatarView
-                url={avatarUrlForGitAuthor(detail.author.email)}
+                url={resolvedGitAuthorAvatarUrl(
+                  detail.author.email,
+                  githubAvatarUrl
+                )}
                 size={14}
               />
               <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>

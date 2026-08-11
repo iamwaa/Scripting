@@ -85,7 +85,6 @@ export type AccountDraft = {
   password: string
   cookie: string
   accessToken: string
-  accessTokenUserId: string
   checkinTime: string
   lastSelf?: SelfInfo
   authSource?: Account["authSource"]

@@ -13,11 +13,15 @@ import {
   Image,
   VStack,
   Spacer,
+  useEffect,
+  useState,
 } from "scripting"
 import type { CommitEntry } from "../types/git"
+import type { GitHubCommitAvatarMap } from "../types/github"
+import { getCommitAvatarUrls } from "../api/githubApi"
 import { HistorySearchBar } from "../components/HistorySearchBar"
 import { AvatarView } from "../components/AvatarView"
-import { avatarUrlForGitAuthor } from "../utils/github"
+import { resolvedGitAuthorAvatarUrl } from "../utils/github"
 import {
   shortOid,
   relativeTime,
@@ -35,6 +39,7 @@ import {
 /** 单行独立组件：props 固定本行数据，降低 List 复用时闭包串行风险 */
 function HistoryRow({
   entry,
+  githubAvatarUrl,
   onCopy,
   onSelectOid,
   onRevert,
@@ -42,6 +47,7 @@ function HistoryRow({
   onAmend,
 }: {
   entry: CommitEntry
+  githubAvatarUrl?: string
   onCopy: (entry: CommitEntry) => void
   /** 只回传 oid，避免 action 闭包持有错误 entry 引用 */
   onSelectOid: (oid: string) => void
@@ -144,7 +150,10 @@ function HistoryRow({
             ) : null}
             <HStack alignment="center" spacing={4}>
               <AvatarView
-                url={avatarUrlForGitAuthor(entry.author.email)}
+                url={resolvedGitAuthorAvatarUrl(
+                  entry.author.email,
+                  githubAvatarUrl
+                )}
                 size={14}
               />
               <Text font="caption2" foregroundStyle={COLOR_SECONDARY_LABEL}>
@@ -176,6 +185,8 @@ export function HistoryTab({
   hasMore,
   searchBusy,
   totalMatches,
+  limited,
+  githubFullName,
 }: {
   log: CommitEntry[]
   loading: boolean
@@ -189,7 +200,31 @@ export function HistoryTab({
   hasMore: boolean
   searchBusy: boolean
   totalMatches: number | null
+  limited: boolean
+  githubFullName?: string | null
 }) {
+  const [githubAvatars, setGithubAvatars] = useState<GitHubCommitAvatarMap>({})
+
+  useEffect(() => {
+    if (!githubFullName || log.length === 0) {
+      setGithubAvatars({})
+      return
+    }
+    let cancelled = false
+    getCommitAvatarUrls(githubFullName, log.map((entry) => entry.oid))
+      .then((avatars) => {
+        if (!cancelled) setGithubAvatars(avatars)
+      })
+      .catch(() => {
+        if (!cancelled) setGithubAvatars({})
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    githubFullName,
+    log.map((entry) => `${entry.oid}:${entry.syncStatus || ""}`).join(","),
+  ])
   function handleSelectOid(oid: string) {
     const entry = log.find((item) => item.oid === oid)
     // 详情页只依赖 oid；找不到条目时仍用 oid 打开，避免点击无响应
@@ -217,6 +252,11 @@ export function HistoryTab({
               找到 {totalMatches} 条匹配记录
             </Text>
           ) : null}
+          {limited ? (
+            <Text font={13} foregroundStyle={COLOR_SECONDARY_LABEL}>
+              仅扫描最近 5,000 条提交
+            </Text>
+          ) : null}
           {hasMore ? (
             <HStack frame={{ maxWidth: "infinity" }}>
               <Spacer />
@@ -241,13 +281,20 @@ export function HistoryTab({
         <Text foregroundStyle={COLOR_SECONDARY_LABEL}>加载中…</Text>
       ) : log.length === 0 ? (
         <Text foregroundStyle={COLOR_SECONDARY_LABEL}>
-          {totalMatches === 0 ? "没有匹配的提交" : "还没有提交记录"}
+          {limited && totalMatches == null
+            ? "最近 5,000 条中没有匹配记录"
+            : hasMore && totalMatches == null
+              ? "当前批次没有匹配记录，可继续加载"
+              : totalMatches === 0
+                ? "没有匹配的提交"
+                : "还没有提交记录"}
         </Text>
       ) : (
         log.map((entry) => (
           <HistoryRow
             key={entry.oid}
             entry={entry}
+            githubAvatarUrl={githubAvatars[entry.oid.toLowerCase()]}
             onCopy={onCopy}
             onSelectOid={handleSelectOid}
             onRevert={onRevert}

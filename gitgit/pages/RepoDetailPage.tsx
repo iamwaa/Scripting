@@ -120,6 +120,9 @@ export function RepoDetailPage({
   const [historyHasMore, setHistoryHasMore] = useState(false)
   const [historyTotalMatches, setHistoryTotalMatches] = useState<number | null>(null)
   const [historySearchBusy, setHistorySearchBusy] = useState(false)
+  const [historyLoaded, setHistoryLoaded] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyLimited, setHistoryLimited] = useState(false)
   const [trackedFiles, setTrackedFiles] = useState<string[]>([])
   const [branchInfo, setBranchInfo] = useState<BranchInfo>({
     branches: [],
@@ -130,7 +133,7 @@ export function RepoDetailPage({
   // 全部 origin 分支名：Picker 标签按「远端是否存在」显示 本地/远端
   const [remoteBranchNames, setRemoteBranchNames] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
-  // Stash / 文件 Tab 懒加载；历史仍首屏加载（空仓提示与合并按钮依赖 log）
+  // Stash、文件与历史 Tab 首次进入时再加载。
   const [stashesLoaded, setStashesLoaded] = useState(false)
   const [filesLoaded, setFilesLoaded] = useState(false)
   const [committing, setCommitting] = useState(false)
@@ -187,22 +190,26 @@ export function RepoDetailPage({
     // 全量刷新时重置懒加载标记
     setStashesLoaded(false)
     setFilesLoaded(false)
+    setHistoryLoaded(false)
+    setHistoryLimited(false)
     try {
       if (!(await isInitialized(bookmarkName))) {
         await initRepo(bookmarkName)
       }
-      // 首屏：改动 + 历史 + 分支/远端/合并；Stash/文件按 Tab 懒加载
-      const [currentChanges] = await Promise.all([
+      // 首屏只解析 HEAD，不读取提交列表；Stash、文件、历史按 Tab 懒加载。
+      const [currentChanges, headExists] = await Promise.all([
         loadChanges(),
-        loadLog(),
+        hasHeadCommit(bookmarkName),
         loadBranches(),
         loadRemote(),
         loadUpstream(),
         loadMergeState(),
       ])
-      // 若当前已在懒加载 Tab，补数据
+      setHasCommits(headExists)
+      // 若当前已在懒加载 Tab，补数据。
       if (tab === 1) await loadStashes()
       if (tab === 2) await loadTrackedFiles()
+      if (tab === 3) await loadLog()
       await getRepoListStatus(bookmarkName, currentChanges.length)
     } catch (e: any) {
       showAlert("加载失败", String(e?.message || e))
@@ -215,6 +222,12 @@ export function RepoDetailPage({
     const c = await getChanges(bookmarkName)
     setChanges(c)
     return c
+  }
+
+  async function refreshChangesAndSnapshot(): Promise<FileChange[]> {
+    const currentChanges = await loadChanges()
+    await getRepoListStatus(bookmarkName, currentChanges.length)
+    return currentChanges
   }
 
   async function loadStashes() {
@@ -239,10 +252,16 @@ export function RepoDetailPage({
     })
     setHistoryHasMore(page.hasMore)
     setHistoryTotalMatches(page.totalMatches)
+    setHistoryLimited(!!page.limited)
+    setHistoryLoaded(true)
     setHistoryQuery(normalizedQuery)
     if (reset && normalizedQuery.trim().length === 0) {
       setHasCommits(await hasHeadCommit(bookmarkName))
     }
+  }
+
+  async function refreshHistoryIfLoaded() {
+    if (historyLoaded || tab === 3) await loadLog()
   }
 
   async function handleHistorySearch(query: string) {
@@ -296,6 +315,17 @@ export function RepoDetailPage({
         showAlert("加载失败", String(e?.message || e))
       } finally {
         setLoading(false)
+      }
+      return
+    }
+    if (target === 3 && !historyLoaded && !historyLoading) {
+      setHistoryLoading(true)
+      try {
+        await loadLog()
+      } catch (e: any) {
+        showAlert("加载历史失败", String(e?.message || e))
+      } finally {
+        setHistoryLoading(false)
       }
     }
   }
@@ -353,6 +383,7 @@ export function RepoDetailPage({
   }
 
   function openGitHubWorkPage() {
+    skipNextAppearLoadRef.current = true
     setSelectedCommitOid(null)
     setShowUpload(false)
     setShowRemotes(false)
@@ -378,7 +409,7 @@ export function RepoDetailPage({
     setStagingBusy(true)
     try {
       await addFiles(bookmarkName, filepath)
-      await loadChanges()
+      await refreshChangesAndSnapshot()
     } catch (e: any) {
       showAlert("暂存失败", String(e?.message || e))
     } finally {
@@ -391,7 +422,7 @@ export function RepoDetailPage({
     setStagingBusy(true)
     try {
       await stageAll(bookmarkName)
-      await loadChanges()
+      await refreshChangesAndSnapshot()
     } catch (e: any) {
       showAlert("全部暂存失败", String(e?.message || e))
     } finally {
@@ -404,7 +435,7 @@ export function RepoDetailPage({
     setStagingBusy(true)
     try {
       await unstageAll(bookmarkName)
-      await loadChanges()
+      await refreshChangesAndSnapshot()
     } catch (e: any) {
       showAlert("全部取消暂存失败", String(e?.message || e))
     } finally {
@@ -807,7 +838,7 @@ export function RepoDetailPage({
     },
     refreshSyncState: async () => {
       await Promise.all([
-        loadLog(),
+        refreshHistoryIfLoaded(),
         loadBranches(),
         loadRemote(),
         loadMergeState(),
@@ -962,6 +993,7 @@ export function RepoDetailPage({
             showRollback={showRollback}
             currentBranch={branchInfo.current}
             githubFullName={showGitHubWork ? githubFullName : null}
+            commitGithubFullName={githubFullName}
             selectedCommitOid={selectedCommitOid}
             onRollbackSelect={handleRollbackSelect}
             onUploaded={(repo) => {
@@ -984,12 +1016,12 @@ export function RepoDetailPage({
                  skipNextAppearLoadRef.current = true
                  loadChanges()
                  loadMergeState()
-                 loadLog()
+                 refreshHistoryIfLoaded()
                  return
                }
               loadMergeState()
               loadChanges()
-              loadLog()
+              refreshHistoryIfLoaded()
             }}
           />
         ),
@@ -1085,6 +1117,7 @@ export function RepoDetailPage({
         mutating={mutating}
         hasCommits={hasCommits}
         onCompare={() => {
+          skipNextAppearLoadRef.current = true
           setSelectedCommitOid(null)
           setShowUpload(false)
           setShowRemotes(false)
@@ -1141,6 +1174,7 @@ export function RepoDetailPage({
         onDropStash={handleDropStash}
         onCopyCommit={handleCopyCommit}
         onSelectCommit={(entry) => {
+          skipNextAppearLoadRef.current = true
           setShowUpload(false)
           setShowRemotes(false)
           setShowConflicts(false)
@@ -1154,6 +1188,9 @@ export function RepoDetailPage({
         historyHasMore={historyHasMore}
         historySearchBusy={historySearchBusy}
         historyTotalMatches={historyTotalMatches}
+        historyLoading={historyLoading}
+        historyLimited={historyLimited}
+        githubFullName={githubFullName}
       />
     </List>
   )

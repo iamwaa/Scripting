@@ -51,6 +51,7 @@ function main(): void {
   assert(searched.entries[0]?.oid === "ccc333", "搜索结果顺序")
   assert(searched.totalMatches === 1, "搜索匹配总数")
   assert(!searched.hasMore, "搜索末页 hasMore")
+  assert(!searched.limited, "纯分页工具默认不标记受限")
 
   const empty = paginateHistory(entries, 0, 50, "not-found")
   assert(empty.entries.length === 0, "搜索空结果")

@@ -173,6 +173,8 @@ export interface AutoMarkConflictsResult {
   marked: string[]
   /** 仍含冲突标记、未自动标记的文件 */
   markerFiles: string[]
+  /** 删除类冲突仍是合并产生的原始保留版本 */
+  unchangedDeleteFiles: string[]
   /** 读取或标记失败、未处理的文件 */
   failedFiles: string[]
 }
@@ -187,6 +189,9 @@ export function formatAutoMarkSummary(result: AutoMarkConflictsResult): {
   const markedCount = result.marked.length
   const pending = [
     ...result.markerFiles.map((path) => `${path}（仍含冲突标记）`),
+    ...result.unchangedDeleteFiles.map(
+      (path) => `${path}（删除冲突尚未决定保留或删除）`
+    ),
     ...result.failedFiles.map((path) => `${path}（读取或标记失败）`),
   ]
   if (pending.length === 0) {

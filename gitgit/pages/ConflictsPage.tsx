@@ -35,6 +35,7 @@ import {
   COLOR_SECONDARY_LABEL,
   COLOR_ORANGE,
   COLOR_ACCENT,
+  COLOR_GREEN,
 } from "../constants/colors"
 
 type AlertState = { title: string; message: string } | null
@@ -246,17 +247,41 @@ export function ConflictsPage({
         }
       >
         {loading ? (
-          <Text foregroundStyle={COLOR_SECONDARY_LABEL}>加载中…</Text>
+          <HStack alignment="center" spacing={8}>
+            <Image
+              systemName="arrow.triangle.2.circlepath"
+              foregroundStyle={COLOR_SECONDARY_LABEL}
+            />
+            <Text foregroundStyle={COLOR_SECONDARY_LABEL}>加载中…</Text>
+          </HStack>
         ) : !state ? (
-          <Text foregroundStyle={COLOR_SECONDARY_LABEL}>
-            无冲突。可返回后继续 Pull / Push。
-          </Text>
+          <HStack alignment="center" spacing={8}>
+            <Image
+              systemName="checkmark.circle.fill"
+              foregroundStyle={COLOR_GREEN}
+            />
+            <Text foregroundStyle={COLOR_SECONDARY_LABEL}>
+              无冲突。可返回后继续 Pull / Push。
+            </Text>
+          </HStack>
         ) : conflicts.length > 0 ? (
-          <Text foregroundStyle={COLOR_ORANGE as any}>
-            仍有 {conflicts.length} 个文件待解决
-          </Text>
+          <HStack alignment="center" spacing={8}>
+            <Image
+              systemName="exclamationmark.triangle.fill"
+              foregroundStyle={COLOR_ORANGE as any}
+            />
+            <Text foregroundStyle={COLOR_ORANGE as any}>
+              仍有 {conflicts.length} 个文件待解决
+            </Text>
+          </HStack>
         ) : (
-          <Text>冲突已全部解决，可完成合并提交</Text>
+          <HStack alignment="center" spacing={8}>
+            <Image
+              systemName="checkmark.circle.fill"
+              foregroundStyle={COLOR_GREEN}
+            />
+            <Text>冲突已全部解决，可完成合并提交</Text>
+          </HStack>
         )}
       </Section>
 

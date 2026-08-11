@@ -7,10 +7,12 @@
 import { Script } from "scripting"
 import { createFS, loadGitEngine } from "../services/gitCore"
 import {
+  autoMarkResolvedConflictsInternal,
   completeMergeInternal,
   readMergeStateFile,
   writeMergeStateFile,
 } from "../services/git/mergeConflictService"
+import { buildConflictFilesFromErrorData } from "../utils/mergeConflict"
 import { readRepos, writeRepos } from "../services/storage"
 
 const AUTHOR = { name: "gitgit", email: "gitgit@local" }
@@ -58,6 +60,8 @@ async function main(): Promise<void> {
       ["deleted2.txt", "delete me too\n"],
       ["unrelated.txt", "base unrelated\n"],
       ["local-only.txt", "base local\n"],
+      ["theirs-deletes.txt", "base theirs deletes\n"],
+      ["ours-deletes.txt", "base ours deletes\n"],
     ]) {
       await fs.writeFile(path, content)
     }
@@ -71,11 +75,14 @@ async function main(): Promise<void> {
     await fs.writeFile("added.txt", "theirs added\n")
     await fs.unlink("deleted.txt")
     await fs.unlink("deleted2.txt")
-    for (const path of ["conflict.txt", "auto.txt", "added.txt"]) {
+    await fs.unlink("theirs-deletes.txt")
+    await fs.writeFile("ours-deletes.txt", "theirs modified\n")
+    for (const path of ["conflict.txt", "auto.txt", "added.txt", "ours-deletes.txt"]) {
       await git.add({ fs, dir: workdir, gitdir, filepath: path })
     }
     await git.remove({ fs, dir: workdir, gitdir, filepath: "deleted.txt" })
     await git.remove({ fs, dir: workdir, gitdir, filepath: "deleted2.txt" })
+    await git.remove({ fs, dir: workdir, gitdir, filepath: "theirs-deletes.txt" })
     const theirsOid = await git.commit({
       fs, dir: workdir, gitdir, message: "theirs", author: AUTHOR,
     })
@@ -84,9 +91,12 @@ async function main(): Promise<void> {
     await git.checkout({ fs, dir: workdir, gitdir, ref: "main", force: true })
     await fs.writeFile("conflict.txt", "ours\n")
     await fs.writeFile("local-only.txt", "ours local\n")
-    for (const path of ["conflict.txt", "local-only.txt"]) {
+    await fs.writeFile("theirs-deletes.txt", "ours modified\n")
+    await fs.unlink("ours-deletes.txt")
+    for (const path of ["conflict.txt", "local-only.txt", "theirs-deletes.txt"]) {
       await git.add({ fs, dir: workdir, gitdir, filepath: path })
     }
+    await git.remove({ fs, dir: workdir, gitdir, filepath: "ours-deletes.txt" })
     const oursOid = await git.commit({
       fs, dir: workdir, gitdir, message: "ours", author: AUTHOR,
     })
@@ -115,6 +125,11 @@ async function main(): Promise<void> {
       await fs.exists("deleted.txt"),
       "记录引擎行为：自动合并的删除不会落到工作区，需完成合并时补齐"
     )
+    assert(
+      String(await fs.readFile("theirs-deletes.txt", "utf8")) === "ours modified\n" &&
+        String(await fs.readFile("ours-deletes.txt", "utf8")) === "theirs modified\n",
+      "删除修改冲突初始应保留修改方内容"
+    )
 
     // 注册临时仓库并写入「已全部解决」的合并状态
     writeRepos([
@@ -128,19 +143,54 @@ async function main(): Promise<void> {
         createdAt: ts,
       },
     ])
+    const conflicts = buildConflictFilesFromErrorData(mergeErr.data).filter(
+      (item) =>
+        item.filepath === "conflict.txt" ||
+        item.filepath === "theirs-deletes.txt" ||
+        item.filepath === "ours-deletes.txt"
+    )
     await writeMergeStateFile(gitdir, {
       oursOid,
       theirsOid,
       oursLabel: "main",
       theirsLabel: "theirs",
       message: "merge theirs",
-      conflicts: [],
+      conflicts,
       startedAt: ts,
     })
 
-    // 用户解决冲突文件；同时制造合并期间的其他工作区编辑
+    const initialDetection = await autoMarkResolvedConflictsInternal(bookmarkName)
+    assert(initialDetection.marked.length === 0, "未经处理的冲突不得自动标记")
+    assert(
+      initialDetection.markerFiles.includes("conflict.txt"),
+      "文本冲突标记应继续保留"
+    )
+    assert(
+      initialDetection.unchangedDeleteFiles.includes("theirs-deletes.txt") &&
+        initialDetection.unchangedDeleteFiles.includes("ours-deletes.txt"),
+      "原样保留的删除修改冲突不得从清单消失"
+    )
+    assert(
+      (await readMergeStateFile(gitdir))?.conflicts.length === 3,
+      "首次检测后所有未处理冲突都应保留"
+    )
+
+    // 用户解决文本冲突，并分别选择编辑保留、删除文件
     await fs.writeFile("conflict.txt", "resolved\n")
-    await git.add({ fs, dir: workdir, gitdir, filepath: "conflict.txt" })
+    await fs.writeFile("theirs-deletes.txt", "resolved keep\n")
+    await fs.unlink("ours-deletes.txt")
+    const resolvedDetection = await autoMarkResolvedConflictsInternal(bookmarkName)
+    assert(
+      resolvedDetection.marked.length === 3 &&
+        resolvedDetection.unchangedDeleteFiles.length === 0,
+      "实际处理后的三类冲突都应自动标记"
+    )
+    assert(
+      (await readMergeStateFile(gitdir))?.conflicts.length === 0,
+      "全部处理后应进入待完成合并状态"
+    )
+
+    // 同时制造合并期间的其他工作区编辑
     await fs.writeFile("unrelated.txt", "later unrelated\n")
     await fs.writeFile("local-only.txt", "later local edit\n")
     // 用户在解决期间重建了对方删除的文件：应按用户版本保留
@@ -174,6 +224,15 @@ async function main(): Promise<void> {
       (await readBlobText(git, fs, workdir, gitdir, mergeOid, "deleted2.txt")) ===
         "recreated\n",
       "用户重建的被删文件应按用户版本进入合并提交"
+    )
+    assert(
+      (await readBlobText(git, fs, workdir, gitdir, mergeOid, "theirs-deletes.txt")) ===
+        "resolved keep\n",
+      "编辑后的对方删除冲突应按用户版本保留"
+    )
+    assert(
+      (await readBlobText(git, fs, workdir, gitdir, mergeOid, "ours-deletes.txt")) == null,
+      "用户删除的我方删除冲突应保持删除"
     )
     assert(
       (await readBlobText(git, fs, workdir, gitdir, mergeOid, "unrelated.txt")) ===

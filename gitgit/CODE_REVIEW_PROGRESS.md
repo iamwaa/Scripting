@@ -1,8 +1,8 @@
 # gitgit 代码审查、修复与优化进度
 
-> 记录时间：2026-08-06（进度同步至 P2.38；Widget 标为已完成）  
+> 记录时间：2026-08-07（进度同步至 P2.46）  
 > 项目：`scripts/gitgit`  
-> 当前阶段：第三阶段主线与 M7-1、结构债拆分已完成；Widget 状态面板（P2.36）已完成；下一步可选 Tag 管理或仓库健康检查
+> 当前阶段：第三阶段主线与 M7-1、结构债拆分已完成；Widget 状态面板（P2.36）、Issues/PR（P2.38）、回滚强推（P2.44）与列表排序（P2.45）已完成；下一步可选 Tag 管理或仓库健康检查
 
 ## 一、项目概况
 
@@ -55,7 +55,7 @@
 10. 通知内容缺少统一的 URL、Token 和认证信息脱敏策略。
 11. 已建立并扩展自动化测试入口；历史拓扑、上传失败恢复、并发写操作、分支、Stash、历史搜索、分支对比和状态性能辅助逻辑均已有覆盖。
 
-以上高风险数据安全问题和中低风险可靠性问题均已在第一、第二阶段及后续 P2.19–P2.36 修复或纳入明确约束；仍保留的可选测试债为 iCloud 协调失败与 index 一致性故障注入。
+以上高风险数据安全问题和中低风险可靠性问题均已在第一、第二阶段及后续 P2.19–P2.46 修复或纳入明确约束；仍保留的可选测试债为 iCloud 协调失败与 index 一致性故障注入。
 
 ## 三、第一阶段：数据安全修复（已完成）
 
@@ -347,9 +347,9 @@
 | 全量代码审查 | 已完成 |
 | 第一阶段数据安全修复 | 已完成 |
 | 第二阶段可靠性与失败恢复 | 已完成 |
-| TypeScript 诊断 | 2026-08-05 全项目通过，0 个错误 |
+| TypeScript 诊断 | 2026-08-07 全项目通过，0 个错误 |
 | 项目入口运行验证 | 2026-08-05 `scripting-ts project "gitgit"` 运行成功 |
-| 自动化测试 | `reliability`、`history`、`compare`、`inlineDiff`、`status-perf-helpers` 全部通过 |
+| 自动化测试 | `reliability`、`history`、`compare`、`inlineDiff`、`status-perf-helpers`、`widget`、`github`、`mergeCompletion`、`repoSort` |
 | Clone 失败恢复 | 已完成 |
 | GitHub 上传失败恢复 | 已完成 |
 | Diff 与历史拓扑优化 | 已完成 |
@@ -362,7 +362,7 @@
 | M7-1 分支管理 | 已完成 |
 | 结构债拆分 | 已完成：Git facade + 14 个职责模块；详情页组件/hooks 拆分 |
 | 第三阶段主线 | M1–M7-1 与结构拆分完成；下一步可选 Tag 管理或仓库健康检查 |
-| 近期新增功能 | 分支/远端差异对比、远端分支自动获取、统一表单 Sheet、自动提交标题、小组件状态面板（P2.36）、Issues/PR（P2.38）已完成 |
+| 近期新增功能 | 分支/远端差异对比、远端分支自动获取、统一表单 Sheet、自动提交标题、小组件状态面板（P2.36）、Issues/PR（P2.38）、头像显示（P2.39）、冲突清单与批量标记（P2.40–P2.41）、合并提交完整性（P2.43）、回滚并强推（P2.44）、仓库列表排序（P2.45）均已完成 |
 | Widget | 已完成（P2.36 状态面板；不另做交互式写操作） |
 | 后阶段功能 | 富通知、多仓库批量同步、更完整 GitHub 仓库管理面等不纳入第三阶段 |
 
@@ -399,7 +399,7 @@
 - `backup/gitgit/gitgit_展开历史行修复空白内容_20260718_222339`
 - `backup/gitgit/gitgit_复制按钮移到提交编号右侧_20260718_232218`
 
-## 十、P2.19–P2.36 后续修复与增强（已完成）
+## 十、P2.19–P2.46 后续修复与增强（已完成）
 
 ### 10.1 Git 正确性与可靠性
 
@@ -422,10 +422,38 @@
 - [x] **P2.34 半屏表单统一**：新增 `FormSheet`、`AddRemoteSheet`，表单草稿改由 Sheet 内 Observable 持有；支持双 detent、材质背景与交互式收键盘。
 - [x] **P2.35 自动提交标题**：普通提交按已暂存改动生成可编辑标题，单文件区分新增/更新/删除，多文件显示数量；重编提交继续沿用原标题与描述。
 - [x] **P2.36 小组件与锁屏组件状态面板**：适配主屏小/中/大/超大与三种 accessory 尺寸，展示未提交、待推送、待拉取、分支和更新时间；支持按仓库名参数筛选。小号四区块用三个等权重 `Spacer` 平分剩余高度，上下使用 `12pt` 固定边缘带；中号展示优先级最高的两个仓库；中/大号更新时间位于右上角，仓库行状态统一为“1 改动 / 2 待推送 / 1 待拉取”文字。锁屏 accessory 与系统组件同步：矩形同中号头行+文字状态，圆形用 `AccessoryWidgetBackground`+主指标，单行为统一文案。`getRepoListStatus()` 实时查询成功后写快照并 `Widget.reloadAll()`，列表与详情刷新均可同步外部文件改动。
+- [x] **P2.37 Stash 页眉整理**：Section header 改为“Stash（数量）”，保存按钮从首行移到标题右侧（紧凑按钮，无改动时禁用但仍显示）。
 
-### 10.4 最新验证（2026-08-05）
+### 10.4 GitHub 协作、头像与合并正确性（P2.38–P2.43）
 
-- 全项目 TypeScript 诊断：0 个错误。
+- [x] **P2.38 GitHub Issues / Pull Requests**：`origin` 可解析为 GitHub 仓库时详情页显示协作入口；Issue/PR 列表支持类型与状态筛选、分页、创建 Issue；详情页渲染正文、标签与评论，Markdown 图片单独抽出限宽渲染，图片放大器用 WebView 实现。
+- [x] **P2.39 用户头像**：新增 `AvatarView`；设置页、Issue/PR 列表与详情、提交历史均显示头像；已验证用户缓存扩展为 `{login, avatarUrl}`，本地 Git 身份经 noreply / Gravatar 推导头像。
+- [x] **P2.40–P2.41 冲突处理闭环**：冲突页可复制面向 Agent 的 Markdown 冲突清单（含执行约束），并可一键检测冲突状态批量标记已解决（严格行首标记正则，已删/无标记/含标记分三类处理）。
+- [x] **P2.42 完成合并后避免重复全树扇描**：`runRepoMutation` 增 `refreshSnapshot` 参数，`completeMerge` 不刷快照；冲突页完成后只后台刷新必要数据并跳过返回详情页的全量 `loadAll`。
+- [x] **P2.43 合并提交包含完整合并结果**：完成合并前按 base/ours/theirs 三方语义补齐自动合并的修改、新增与删除，不再遗漏到二次提交；`tests/mergeCompletion.test.ts` 走真实合并链路。
+
+### 10.5 回滚与列表排序（P2.44–P2.45）
+
+- [x] **P2.44 回滚并强推**（`pages/RollbackPage.tsx`）
+  - 入口：详情页「同步」Section 页眉「回滚」按钮（`arrow.uturn.backward`，橙色），仅在有远端且非 mutating / 非合并中 / 有提交时可用。
+  - 选择页只负责展示当前分支历史（`getLogPage`，页大小 50，支持加载更多与去重）并回传选中提交；确认与执行统一由详情页 `PendingAction` / `runPending` 处理。
+  - 服务层：`resetToCommitAndForcePush()`（facade）= `runWithBackgroundKeepAlive` + `runRepoMutation`，内部先 `resetToCommitInternal`（校验目标提交存在、必须在命名分支、**工作区必须干净**，然后 force checkout + `writeRef` + `writeSymbolicHead`），再 `pushInternal(..., force=true)` 强推 origin 同名分支。
+  - 安全语义：确认弹窗明写“重置 + 强制覆盖远端、不可撤销”；全屏 `BusyOverlay` 展示进度并支持 `RemoteCancelToken` 取消；强推被取消时单独提示“本地可能已重置、远端仍为原历史”，不伪装成成功。
+- [x] **P2.45 仓库列表按名称排序**（`utils/repoSort.ts`）
+  - 纯函数 `sortReposByName()` 返回新数组，不修改入参也不改动持久化的仓库数组。
+  - 比较规则：忽略大小写与首尾空格，数字按自然序（`numeric: true`）；ASCII 首字符名称在前、中文名按拼音在后（与系统文件 App 一致）——直接用 `zh-Hans` `localeCompare` 会把中文排到最前。
+  - `RepoListPage` 在渲染与串行刷新状态时均使用排序后的顺序，保证列表与刷新顺序一致。
+  - 测试：`tests/repoSort.test.ts` 轻量探针，覆盖升序与中英分组、返回新数组不污染入参、数字自然序、空名称不抛错。
+
+### 10.6 历史首屏解耦提交同步标记（P2.46，2026-08-07）
+
+- [x] `getLog()` 不再做 `findMergeBase`、父链遍历或全量可达提交差集，避免 fork 与 upstream 分叉的大仓库在历史已可读时仍被拓扑计算阻塞。
+- [x] `syncStatus` 改用当前页深度内的 `origin/<当前分支>` 日志集合恢复“待推送/远端”标签；空仓判定改由 `hasHeadCommit()` 单独解析 `HEAD`，历史分页失败或搜索无结果不再误报空仓库。
+
+### 10.7 最新验证（2026-08-07 补录）
+
+- 全项目 TypeScript 诊断：0 个错误（2026-08-07 复测）。
+- 下列单项测试为 2026-08-05–08-06 各轮变更时的记录，并新增 `github`、`mergeCompletion`、`repoSort`。
 - `scripting-ts project "gitgit"`：运行成功。
 - `tests/reliability.test.ts`：通过。
 - `tests/history.test.ts`：通过。
@@ -433,11 +461,15 @@
 - `tests/inlineDiff.test.ts`：通过。
 - `tests/status-perf-helpers.test.ts`：通过。
 - `tests/widget.test.ts`：通过；systemSmall/systemMedium/systemLarge 与三种 accessory 预览成功。
+- `tests/github.test.ts`：通过（remote URL 解析与头像推导）。
+- `tests/mergeCompletion.test.ts`：通过（真实 merge → completeMerge 链路）。
+- `tests/repoSort.test.ts`：通过（仓库名排序纯逻辑）。
 
-### 10.5 当前剩余项
+### 10.8 当前剩余项
 
 - [ ] Tag 创建、查看和删除。
 - [ ] 仓库健康检查：HEAD、index、objects、config 与工作区访问性。
+- [ ] （可选）回滚强推的服务层集成测试：当前仅有工作区干净校验与取消路径的人工验证，未覆盖 reset+force push 的自动化用例。
 - [ ] （可选）iCloud 协调失败与 index 一致性故障注入。
 - [ ] 第四阶段以后：富通知、多仓库批量同步、更完整 GitHub 仓库管理面。
 
@@ -445,3 +477,5 @@
 
 - [x] Widget 状态面板（P2.36）。
 - [x] GitHub Issues / Pull Requests（P2.38）。
+- [x] 回滚到指定提交并强制推送（P2.44）。
+- [x] 仓库列表按名称排序（P2.45）。

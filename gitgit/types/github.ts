@@ -42,6 +42,8 @@ export interface GitHubIssuePage {
   hasMore: boolean
 }
 
+export type GitHubCommitAvatarMap = Record<string, string>
+
 export interface CreateGitHubIssueInput {
   title: string
   body?: string

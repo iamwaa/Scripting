@@ -3,6 +3,7 @@ import {
   avatarUrlForGitAuthor,
   githubMarkdownForDisplay,
   githubRepoFromRemoteUrl,
+  resolvedGitAuthorAvatarUrl,
 } from "../utils/github"
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -71,6 +72,18 @@ function main(): void {
     "普通邮箱走 Gravatar（去空格并小写后取 MD5），无账号回 GitHub 默认头像"
   )
   assert(avatarUrlForGitAuthor("") === "", "空邮箱不生成头像 URL")
+  assert(
+    resolvedGitAuthorAvatarUrl(
+      "bob@example.com",
+      " https://avatars.githubusercontent.com/u/1?v=4 "
+    ) === "https://avatars.githubusercontent.com/u/1?v=4",
+    "GitHub 已关联账号时优先使用真实头像"
+  )
+  assert(
+    resolvedGitAuthorAvatarUrl(" Bob@Example.COM ") ===
+      avatarUrlForGitAuthor(" Bob@Example.COM "),
+    "GitHub 未关联账号时回退邮箱头像"
+  )
 }
 
 try {

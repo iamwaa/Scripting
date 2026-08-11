@@ -29,6 +29,7 @@ import {
   getChanges,
   getLog,
   getLogPage,
+  getHistoryCacheStats,
   hasHeadCommit,
   getTrackedFiles,
 } from "./git/statusQueryService"
@@ -89,6 +90,8 @@ import {
   getRepoId,
   writeSnapshot,
 } from "./repoStore"
+import { measureOperation } from "../utils/performance"
+import { runSingleFlight } from "../utils/singleFlight"
 import {
   acquireRepoMutationLock,
   releaseRepoMutationLock,
@@ -109,6 +112,7 @@ import type {
 
 
 const repoMutationLocks = new Set<string>()
+const repoStatusReads = new Map<string, Promise<RepoListStatus>>()
 
 async function runRepoMutation<T>(
   bookmarkName: string,
@@ -185,13 +189,23 @@ export async function getRepoListStatus(
   bookmarkName: string,
   knownUncommitted?: number
 ): Promise<RepoListStatus> {
-  const status = await getRepoListStatusInternal(
-    bookmarkName,
-    getMergeConflictState,
-    knownUncommitted
-  )
-  await persistRepoSnapshot(bookmarkName, status)
-  return status
+  const readStatus = async () => {
+    const repoName = findRepo(bookmarkName)?.name || bookmarkName
+    const status = await measureOperation(
+      "读取仓库完整状态",
+      () => getRepoListStatusInternal(
+        bookmarkName,
+        getMergeConflictState,
+        knownUncommitted
+      ),
+      repoName
+    )
+    await persistRepoSnapshot(bookmarkName, status)
+    return status
+  }
+  if (knownUncommitted != null) return readStatus()
+
+  return runSingleFlight(repoStatusReads, bookmarkName, readStatus)
 }
 
 
@@ -208,8 +222,10 @@ export async function addFiles(
   bookmarkName: string,
   filepath: string
 ): Promise<void> {
-  return runRepoMutation(bookmarkName, () =>
-    addFilesInternal(bookmarkName, filepath)
+  return runRepoMutation(
+    bookmarkName,
+    () => addFilesInternal(bookmarkName, filepath),
+    false
   )
 }
 
@@ -223,8 +239,10 @@ export async function unstageFiles(
   bookmarkName: string,
   filepath: string = "."
 ): Promise<void> {
-  return runRepoMutation(bookmarkName, () =>
-    unstageFilesInternal(bookmarkName, filepath)
+  return runRepoMutation(
+    bookmarkName,
+    () => unstageFilesInternal(bookmarkName, filepath),
+    false
   )
 }
 
@@ -560,6 +578,7 @@ export {
   getChanges,
   getLog,
   getLogPage,
+  getHistoryCacheStats,
   hasHeadCommit,
   getTrackedFiles,
   listRemotes,

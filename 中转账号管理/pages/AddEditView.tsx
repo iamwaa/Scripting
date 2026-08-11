@@ -18,7 +18,6 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
   const [password, setPassword] = useState("")
   const [cookie, setCookie] = useState("")
   const [accessToken, setAccessToken] = useState("")
-  const [accessTokenUserId, setAccessTokenUserId] = useState("")
   const [checkinTime, setCheckinTime] = useState(initial?.checkinTime ?? "")
   const [webSelf, setWebSelf] = useState<SelfInfo | undefined>(initial?.lastSelf)
   const [cookieAuthSource, setCookieAuthSource] = useState<Account["authSource"] | undefined>(undefined)
@@ -78,17 +77,6 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
   }
 
   async function save() {
-    // 验证访问令牌必须配合用户 ID
-    if (accessToken.trim() && !accessTokenUserId.trim()) {
-      setToastMessage("使用访问令牌登录时，请填写用户 ID")
-      setShowToast(true)
-      return
-    }
-    if (accessTokenUserId.trim() && !Number.isFinite(Number(accessTokenUserId))) {
-      setToastMessage("用户 ID 必须为数字")
-      setShowToast(true)
-      return
-    }
     setSaving(true)
     try {
       const saved = upsertAccount({
@@ -101,17 +89,22 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
         password,
         cookie,
         accessToken,
-        accessTokenUserId,
         checkinTime,
         lastSelf: webSelf,
         authSource: accessToken.trim() ? "accessToken" : cookie.trim() ? (cookieAuthSource ?? "cookie") : undefined,
       })
+      // 保存后自动用令牌（或会话 Cookie）查询用户信息；访问令牌账号由此自动解析用户 ID
       let balanceMessage = "，余额信息已更新"
       try {
         const self = await fetchSelf(saved)
         patchAccount(saved.id, { lastSelf: self, lastError: "" })
+        if (accessToken.trim() && !self?.id) {
+          balanceMessage = "，但未能自动解析用户 ID，该站点可能不支持令牌查询用户信息"
+        }
       } catch (e: any) {
-        balanceMessage = `，但余额查询失败：${getErrorMessage(e)}`
+        balanceMessage = accessToken.trim()
+          ? `，但未能用访问令牌解析用户 ID，请检查令牌是否有效（${getErrorMessage(e)}）`
+          : `，但余额查询失败：${getErrorMessage(e)}`
         patchAccount(saved.id, { lastError: getErrorMessage(e) })
       }
       onSaved()
@@ -196,9 +189,8 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
         </HStack>
       </Button>
     </Section>
-    {platform !== "sub2api" ? <Section header={<Text>访问令牌登录（NewAPI）</Text>} footer={<Text>适用于 NewAPI 站点的访问令牌（Access Token），可在个人设置中生成。使用访问令牌时需要填写用户 ID，可从页面 URL 或 API 响应中获取。</Text>}>
+    {platform !== "sub2api" ? <Section header={<Text>访问令牌登录（NewAPI）</Text>} footer={<Text>适用于 NewAPI 站点的访问令牌（Access Token），可在个人设置中生成。保存后会自动解析用户 ID，无需手动填写。</Text>}>
       <LabeledTextField title="访问令牌" value={accessToken} onChanged={setAccessToken} prompt="32位 Access Token" />
-      <LabeledTextField title="用户 ID" value={accessTokenUserId} onChanged={setAccessTokenUserId} prompt="必填，用户数字 ID" />
       <Button action={pasteAccessToken}>
         <HStack spacing={8} alignment="center">
           <Image systemName="doc.on.clipboard" foregroundStyle="tintColor" font="body" frame={{ width: 24, alignment: "center" }} />

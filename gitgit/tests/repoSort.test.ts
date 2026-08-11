@@ -2,8 +2,8 @@
  * 轻量探针：仓库列表按名称排序纯逻辑
  */
 import { Script } from "scripting"
-import type { RepoMeta } from "../types/git"
-import { sortReposByName } from "../utils/repoSort"
+import type { RepoListStatus, RepoMeta, RepoSnapshot } from "../types/git"
+import { sortReposByName, sortReposForList } from "../utils/repoSort"
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error("断言失败: " + message)
@@ -52,6 +52,58 @@ async function main() {
     sortReposByName([repo("  b ", "x"), repo("", "y")]).length === 2,
     "空名称可排序"
   )
+
+  const statuses: Record<string, RepoListStatus> = {
+    r1: {
+      branch: "main",
+      uncommitted: 0,
+      ahead: 0,
+      behind: 0,
+      syncState: "upToDate",
+      hasRemote: true,
+      workdirOk: true,
+      conflictCount: 0,
+      mergeInProgress: false,
+    },
+    r3: {
+      branch: "main",
+      uncommitted: 2,
+      ahead: 0,
+      behind: 0,
+      syncState: "upToDate",
+      hasRemote: true,
+      workdirOk: true,
+      conflictCount: 0,
+      mergeInProgress: false,
+    },
+    r5: {
+      branch: "main",
+      uncommitted: 0,
+      ahead: 1,
+      behind: 0,
+      syncState: "ahead",
+      hasRemote: true,
+      workdirOk: true,
+      conflictCount: 0,
+      mergeInProgress: false,
+    },
+  }
+  const snapshots: Record<string, RepoSnapshot> = {
+    r4: {
+      name: "苹果",
+      branch: "main",
+      uncommitted: 0,
+      ahead: 0,
+      behind: 1,
+      updatedAt: 0,
+    },
+  }
+  const prioritized = sortReposForList(list, statuses, snapshots)
+  assert(
+    prioritized.map((r) => r.name).join(",") === "beta,仓库,苹果,Alpha,zeta",
+    "待处理优先且组内按名称: " + prioritized.map((r) => r.name).join(",")
+  )
+  assert(prioritized !== list, "待处理排序返回新数组")
 
   console.log("repoSort 测试通过")
 }

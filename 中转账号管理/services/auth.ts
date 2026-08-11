@@ -281,6 +281,20 @@ async function verifyLoginStatus(account: Account): Promise<Account> {
       try { await loginAccount(account); return reload() }
       catch (loginError: any) { throw throwReloginFailed(loginError) }
     }
+    // 仅剩访问令牌但尚未解析出用户 ID：用裸令牌请求 /api/user/self 自动解析并回填（NewAPI 访问令牌自带用户身份）
+    if (accessToken) {
+      try {
+        const self = await apiRequest<SelfInfo>(account, "GET", "/api/user/self")
+        patchAccount(account.id, { lastSelf: self, lastError: "", authSource: "accessToken" })
+        return loadAccounts().find(a => a.id === account.id) ?? account
+      } catch (e: any) {
+        const err = getErrorMessage(e)
+        if (isAuthExpiredError(e)) {
+          throw new Error(err || "访问令牌无效")
+        }
+        throw new Error(err || "访问令牌校验失败")
+      }
+    }
     throw new Error("缺少 Cookie 或访问令牌")
   }
   try {

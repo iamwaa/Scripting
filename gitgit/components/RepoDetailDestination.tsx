@@ -18,6 +18,7 @@ export function RepoDetailDestination({
   showRollback,
   currentBranch,
   githubFullName,
+  commitGithubFullName,
   selectedCommitOid,
   onUploaded,
   onRemotesChanged,
@@ -33,6 +34,7 @@ export function RepoDetailDestination({
   showRollback: boolean
   currentBranch: string | null
   githubFullName: string | null
+  commitGithubFullName: string | null
   selectedCommitOid: string | null
   onUploaded: (repo: RepoMeta) => void
   onRemotesChanged: () => void
@@ -81,6 +83,7 @@ export function RepoDetailDestination({
         key={selectedCommitOid}
         bookmarkName={bookmarkName}
         oid={selectedCommitOid}
+        githubFullName={commitGithubFullName}
       />
     )
   }

@@ -72,6 +72,9 @@ export function RepoDetailTabContent({
   historyHasMore,
   historySearchBusy,
   historyTotalMatches,
+  historyLoading,
+  historyLimited,
+  githubFullName,
 }: {
   tab: RepoDetailTab
   onTabChange: (tab: RepoDetailTab) => void | Promise<void>
@@ -102,6 +105,9 @@ export function RepoDetailTabContent({
   historyHasMore: boolean
   historySearchBusy: boolean
   historyTotalMatches: number | null
+  historyLoading: boolean
+  historyLimited: boolean
+  githubFullName: string | null
 }) {
   return (
     <>
@@ -149,7 +155,7 @@ export function RepoDetailTabContent({
       ) : (
         <HistoryTab
           log={log}
-          loading={loading}
+          loading={historyLoading}
           onCopy={onCopyCommit}
           onSelect={onSelectCommit}
           onRevert={onRevert}
@@ -160,6 +166,8 @@ export function RepoDetailTabContent({
           hasMore={historyHasMore}
           searchBusy={historySearchBusy}
           totalMatches={historyTotalMatches}
+          limited={historyLimited}
+          githubFullName={githubFullName}
         />
       )}
     </>

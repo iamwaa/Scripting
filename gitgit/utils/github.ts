@@ -20,6 +20,14 @@ export function avatarUrlForGitAuthor(email: string): string {
   return `https://www.gravatar.com/avatar/${hash}?s=64&d=${fallback}`
 }
 
+/** GitHub 已关联账号时优先使用真实头像，否则按作者邮箱回退。 */
+export function resolvedGitAuthorAvatarUrl(
+  email: string,
+  githubAvatarUrl?: string
+): string {
+  return githubAvatarUrl?.trim() || avatarUrlForGitAuthor(email)
+}
+
 /** 从 GitHub remote URL 提取 owner/repo。非 github.com 地址返回 null。 */
 export function githubRepoFromRemoteUrl(url: unknown): string | null {
   const raw = String(url ?? "").trim()

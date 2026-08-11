@@ -36,6 +36,12 @@ import {
   readNotifyEnabled,
   writeNotifyEnabled,
 } from "../services/storage"
+import { getHistoryCacheStats } from "../services/gitService"
+import {
+  buildPerformanceReport,
+  clearSlowOperations,
+  getSlowOperations,
+} from "../utils/performance"
 import { verifyToken, getCurrentUser } from "../api/githubApi"
 import type { GitIdentity } from "../services/authStore"
 import type { VerifiedGithubUser } from "../types/git"
@@ -59,6 +65,9 @@ export function SettingsPage() {
   const [savingIdentity, setSavingIdentity] = useState(false)
   const [showClearAlert, setShowClearAlert] = useState(false)
   const [alertState, setAlertState] = useState<AlertState>(null)
+  const [diagnosticCount, setDiagnosticCount] = useState(
+    () => getSlowOperations().length
+  )
   // 同步读 Storage，避免 useState(true) 先显示开、load 后再变关
   const [notifyEnabled, setNotifyEnabled] = useState(() => readNotifyEnabled())
   // Toggle 挂载/受控同步时可能误触 onChanged(false)，首帧内忽略写盘
@@ -96,7 +105,7 @@ export function SettingsPage() {
             // 忽略持久化失败
           }
         })
-        .catch(() => {})
+        .catch(() => { })
     }
   }
 
@@ -213,25 +222,45 @@ export function SettingsPage() {
     }
   }
 
+  function handleCopyDiagnostics() {
+    const cache = getHistoryCacheStats()
+    const report = buildPerformanceReport({
+      historyRepoCount: cache.repoCount,
+      historyEntryCount: cache.entryCount,
+      historyRepoLimit: cache.repoLimit,
+      historyEntryLimit: cache.entryLimit,
+    })
+    Pasteboard.setString(report)
+    setDiagnosticCount(getSlowOperations().length)
+    showAlert("已复制", "性能诊断已复制到剪贴板")
+  }
+
+  function handleClearDiagnostics() {
+    clearSlowOperations()
+    setDiagnosticCount(0)
+    showAlert("已清除", "内存中的性能诊断已清除")
+  }
+
   // 清除确认优先，否则显示普通提示
   const activeAlert = showClearAlert
     ? {
-        title: "清除 Token？",
-        message: "移除后需要重新输入才能进行远端操作。",
-        isConfirm: true as const,
-      }
+      title: "清除 Token？",
+      message: "移除后需要重新输入才能进行远端操作。",
+      isConfirm: true as const,
+    }
     : alertState
       ? {
-          title: alertState.title,
-          message: alertState.message,
-          isConfirm: false as const,
-        }
+        title: alertState.title,
+        message: alertState.message,
+        isConfirm: false as const,
+      }
       : null
 
   return (
     <List
       navigationTitle="设置"
       navigationBarTitleDisplayMode="large"
+      onAppear={() => setDiagnosticCount(getSlowOperations().length)}
       toolbar={
         <Toolbar>
           <ToolbarItem placement="topBarLeading">
@@ -278,23 +307,6 @@ export function SettingsPage() {
           systemImage="bell"
           value={notifyEnabled}
           onChanged={handleNotifyChanged}
-        />
-      </Section>
-      
-      <Section
-        header={<Text>Git 身份</Text>}
-        footer={
-          <Text font="footnote" foregroundStyle={COLOR_SECONDARY_LABEL}>
-            不填写则默认使用 gitgit / gitgit@local 提交与拉取合并
-          </Text>
-        }
-      >
-        <FormRow label="姓名" value={name} prompt="gitgit" onChanged={setName} />
-        <FormRow label="邮箱" value={email} prompt="gitgit@local" onChanged={setEmail} />
-        <Button
-          title={savingIdentity ? "保存中…" : "保存身份"}
-          action={handleSaveIdentity}
-          disabled={savingIdentity}
         />
       </Section>
 
@@ -357,6 +369,50 @@ export function SettingsPage() {
             />
           </>
         )}
+      </Section>
+
+      <Section
+        header={<Text>Git 身份</Text>}
+        footer={
+          <Text font="footnote" foregroundStyle={COLOR_SECONDARY_LABEL}>
+            不填写则默认使用 gitgit / gitgit@local 提交与拉取合并
+          </Text>
+        }
+      >
+        <FormRow label="姓名" value={name} prompt="gitgit" onChanged={setName} />
+        <FormRow label="邮箱" value={email} prompt="gitgit@local" onChanged={setEmail} />
+        <Button
+          title={savingIdentity ? "保存中…" : "保存身份"}
+          action={handleSaveIdentity}
+          disabled={savingIdentity}
+        />
+      </Section>
+
+      <Section
+        header={<Text>性能诊断</Text>}
+        footer={
+          <Text font={13} foregroundStyle={COLOR_SECONDARY_LABEL}>
+            仅在本次运行中保留超过 2 秒的操作，最多 30 条
+          </Text>
+        }
+      >
+        <HStack alignment="center" spacing={20}>
+          <Image systemName="gauge" foregroundStyle={COLOR_ACCENT} />
+          <Text>慢操作记录</Text>
+          <Text foregroundStyle={COLOR_SECONDARY_LABEL}>{diagnosticCount}</Text>
+        </HStack>
+        <Button
+          title="复制性能诊断"
+          systemImage="doc.on.doc"
+          action={handleCopyDiagnostics}
+        />
+        <Button
+          title="清除诊断记录"
+          systemImage="trash"
+          foregroundStyle="red"
+          action={handleClearDiagnostics}
+          disabled={diagnosticCount === 0}
+        />
       </Section>
     </List>
   )

@@ -8,7 +8,8 @@ import {
   topologyFromCounts,
 } from "../../utils/gitSync"
 import { checkRemoteCancelled, type RemoteOpOptions } from "../../utils/remoteProgress"
-import { resolveWorkdir } from "../repoStore"
+import { measureOperation } from "../../utils/performance"
+import { findRepo, resolveWorkdir } from "../repoStore"
 import { getCtx, resolveGitdir, type GitContext } from "./runtime"
 import { matrixToStatus } from "./statusQueryService"
 
@@ -158,6 +159,7 @@ export async function getRepoListStatusInternal(
     }
 
     const ctx = await getCtx(bookmarkName)
+    const diagnosticName = findRepo(bookmarkName)?.name || bookmarkName
     const { git, fs, dir: workDir, gitdir: contextGitdir } = ctx
     let uncommitted = Math.max(
       0,
@@ -165,11 +167,15 @@ export async function getRepoListStatusInternal(
     )
     if (knownUncommitted == null) {
       try {
-        const matrix = (await git.statusMatrix({
-          fs,
-          dir: workDir,
-          gitdir: contextGitdir,
-        })) as [string, number, number, number][]
+        const matrix = (await measureOperation(
+          "扫描列表仓库状态",
+          () => git.statusMatrix({
+            fs,
+            dir: workDir,
+            gitdir: contextGitdir,
+          }),
+          diagnosticName
+        )) as [string, number, number, number][]
         for (const [, head, work, stage] of matrix) {
           if (head === 1 && work === 1 && stage === 1) continue
           if (matrixToStatus(head, work, stage) !== "unmodified") uncommitted++
@@ -205,7 +211,11 @@ export async function getRepoListStatusInternal(
     }
 
     const topology = hasRemote && current
-      ? await getSyncTopology(bookmarkName, current, ctx)
+      ? await measureOperation(
+          "计算仓库同步拓扑",
+          () => getSyncTopology(bookmarkName, current!, ctx),
+          diagnosticName
+        )
       : { ahead: 0, behind: 0, syncState: "upToDate" as RepoSyncState }
     let conflictCount = 0
     let mergeInProgress = false

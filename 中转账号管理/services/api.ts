@@ -77,6 +77,43 @@ export async function refreshSub2ApiToken(account: Account): Promise<boolean> {
   }
 }
 
+// 用账号密码登录 Sub2API 换取新 access_token（请求级重试优先账号密码，其次才用网页 refresh_token 兜底）
+export async function loginSub2ApiPassword(account: Account): Promise<boolean> {
+  const username = account.username
+  const password = getSecret(account.passwordKey)
+  if (!username || !password) return false
+  const baseUrl = normalizeBaseUrl(account.baseUrl)
+  if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) return false
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: "POST",
+      headers: {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Content-Type": "application/json",
+        "Origin": baseUrl,
+        "Referer": `${baseUrl}/`,
+      },
+      body: JSON.stringify({ email: username, password }),
+      allowInsecureRequest: baseUrl.startsWith("http://"),
+      timeout: 25,
+    } as any)
+    const raw = await response.text()
+    if (!response.ok) return false
+    let json: any
+    try { json = raw ? JSON.parse(raw) : {} } catch { return false }
+    const data = unwrapSub2ApiJson<any>(json)
+    if (data?.requires_2fa) return false
+    const token = data?.access_token
+    if (!token) return false
+    if (account.cookieKey) setSecret(account.cookieKey, token)
+    if (data?.refresh_token) setSecret(getRefreshTokenKey(account), data.refresh_token)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function sub2ApiRequest<T = any>(account: Account, method: string, path: string, body?: any, challengeRetried = false, refreshRetried = false): Promise<T> {
   const baseUrl = normalizeBaseUrl(account.baseUrl)
   if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
@@ -134,8 +171,8 @@ export async function sub2ApiRequest<T = any>(account: Account, method: string, 
     const status = Number(response.status) || 0
     const rawMessage = json?.message || json?.detail || (status ? `HTTP ${status}` : "未知错误")
     const authExpired = status === 401 || AUTH_EXPIRED_MESSAGE_RE.test(rawMessage)
-    // 登录态失效时先用 refresh_token 换新 access_token 再重试一次，避开登录 Turnstile
-    if (authExpired && !refreshRetried && await refreshSub2ApiToken(account)) {
+    // 登录态失效时先尝试账号密码重新登录，未保存密码或密码失效再用网页 refresh_token 换新令牌兜底
+    if (authExpired && !refreshRetried && (await loginSub2ApiPassword(account) || await refreshSub2ApiToken(account))) {
       return await sub2ApiRequest<T>(account, method, path, body, challengeRetried, true)
     }
     throw makeApiError(rawMessage, { status, authExpired })
@@ -310,13 +347,38 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
   }
   // 附加调用方传入的额外请求头（如 PoW 签到签名头）
   if (extraHeaders) Object.assign(headers, extraHeaders)
+  const password = getSecret(account.passwordKey)
+
+  // 认证凭据优先级：访问令牌 > 账号密码（现场登录换新会话） > 网页获取的 Cookie
+  let userId = account.lastSelf?.id
   if (accessToken) {
-    // 使用访问令牌认证
+    // 1) 访问令牌
     headers["Authorization"] = accessToken.startsWith("Bearer ") ? accessToken : `Bearer ${accessToken}`
+  } else if (account.username && password && path !== "/api/user/login") {
+    // 2) 账号密码：现场登录换取新会话 Cookie（登录端点自身跳过，避免递归）
+    try {
+      const login = await apiRequestWithMeta<any>(account, "POST", "/api/user/login", {
+        username: account.username,
+        password,
+      })
+      if (login.data?.require_2fa) {
+        // 2FA 无法自动登录，回退到已有网页 Cookie
+        if (cookie) headers.Cookie = cookie
+      } else {
+        const merged = mergeCookies(cookie, login.cookie)
+        if (merged && account.cookieKey) setSecret(account.cookieKey, merged)
+        if (merged) headers.Cookie = merged
+        if (login.data?.id) userId = login.data.id
+      }
+    } catch {
+      // 登录失败（密码错误/网络异常等）：回退到已有的网页 Cookie
+      if (cookie) headers.Cookie = cookie
+    }
   } else if (cookie) {
+    // 3) 网页获取的 Cookie
     headers.Cookie = cookie
   }
-  if (account.lastSelf?.id) headers["New-Api-User"] = String(account.lastSelf.id)
+  if (userId) headers["New-Api-User"] = String(userId)
   else if (path !== "/api/user/login" && !accessToken) throw new Error("缺少用户 ID，请先登录")
   if (body !== undefined) headers["Content-Type"] = "application/json"
 

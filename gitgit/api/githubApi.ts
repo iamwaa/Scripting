@@ -1,11 +1,12 @@
 /**
- * api/githubApi.ts - GitHub REST API 客户端
+ * api/githubApi.ts - GitHub API 客户端
  *
- * 用于获取当前用户信息、仓库列表、创建远端仓库。
+ * 用于 GitHub REST 与 GraphQL 数据查询。
  * 认证：Bearer token（来自 authStore）。
  */
 
 import { getToken } from "../services/authStore"
+import { setLruEntry } from "../utils/lru"
 import type { GitHubUser, GitHubRepo } from "../types/git"
 import type {
   CreateGitHubIssueInput,
@@ -13,9 +14,13 @@ import type {
   GitHubIssueFilter,
   GitHubIssueItem,
   GitHubIssuePage,
+  GitHubCommitAvatarMap,
 } from "../types/github"
 
 const API_BASE = "https://api.github.com"
+const GRAPHQL_URL = "https://api.github.com/graphql"
+const COMMIT_AVATAR_CACHE_LIMIT = 500
+const commitAvatarCache = new Map<string, string>()
 
 /** 创建仓库时的表单字段（对齐 GitHub 新建仓库页） */
 export interface CreateRepoInput {
@@ -98,8 +103,8 @@ function mapComment(data: any): GitHubComment {
 }
 
 /** 带认证的 fetch 封装，自动注入 token 并处理错误 */
-async function ghFetch(
-  path: string,
+async function githubFetch(
+  url: string,
   options?: { method?: string; body?: unknown }
 ): Promise<any> {
   const token = getToken()
@@ -117,7 +122,7 @@ async function ghFetch(
     headers["Content-Type"] = "application/json"
     body = JSON.stringify(options.body)
   }
-  const res = await fetch(API_BASE + path, {
+  const res = await fetch(url, {
     method,
     headers,
     body,
@@ -145,6 +150,79 @@ async function ghFetch(
   // 204 No Content
   if (res.status === 204) return null
   return await res.json()
+}
+
+async function ghFetch(
+  path: string,
+  options?: { method?: string; body?: unknown }
+): Promise<any> {
+  return await githubFetch(API_BASE + path, options)
+}
+
+function commitAvatarCacheKey(fullName: string, oid: string): string {
+  return `${fullName.toLowerCase()}:${oid.toLowerCase()}`
+}
+
+/** 批量查询 GitHub 已关联账号的提交作者头像；未关联的提交不返回。 */
+export async function getCommitAvatarUrls(
+  fullName: string,
+  oids: string[]
+): Promise<GitHubCommitAvatarMap> {
+  const encoded = encodeRepo(fullName)
+  const [owner, name] = encoded.split("/").map(decodeURIComponent)
+  const uniqueOids = Array.from(
+    new Set(
+      oids
+        .map((oid) => oid.trim().toLowerCase())
+        .filter((oid) => /^[0-9a-f]{40}$/.test(oid))
+    )
+  ).slice(0, 100)
+  const result: GitHubCommitAvatarMap = {}
+  const missing: string[] = []
+  for (const oid of uniqueOids) {
+    const cached = commitAvatarCache.get(commitAvatarCacheKey(fullName, oid))
+    if (cached !== undefined) result[oid] = cached
+    else missing.push(oid)
+  }
+  if (missing.length === 0) return result
+
+  const fields = missing
+    .map(
+      (oid, index) =>
+        `c${index}: object(expression: "${oid}") { ... on Commit { oid author { user { avatarUrl } } } }`
+    )
+    .join("\n")
+  const query = `query CommitAvatars($owner: String!, $name: String!) {
+    repository(owner: $owner, name: $name) {
+      ${fields}
+    }
+  }`
+  const data = await githubFetch(GRAPHQL_URL, {
+    method: "POST",
+    body: { query, variables: { owner, name } },
+  })
+  const repository = data?.data?.repository
+  if (!repository) {
+    const message = Array.isArray(data?.errors)
+      ? data.errors[0]?.message
+      : "GraphQL 查询失败"
+    throw new Error(`GitHub API 请求失败：${String(message || "仓库不可用")}`)
+  }
+  missing.forEach((oid, index) => {
+    const avatarUrl = String(
+      repository[`c${index}`]?.author?.user?.avatarUrl || ""
+    )
+    if (avatarUrl) {
+      setLruEntry(
+        commitAvatarCache,
+        commitAvatarCacheKey(fullName, oid),
+        avatarUrl,
+        COMMIT_AVATAR_CACHE_LIMIT
+      )
+      result[oid] = avatarUrl
+    }
+  })
+  return result
 }
 
 /** 获取当前认证用户信息 */

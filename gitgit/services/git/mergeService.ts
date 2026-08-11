@@ -36,6 +36,56 @@ import {
   throwMergeConflictUserError,
   writeMergeStateFile,
 } from "./mergeConflictService"
+import { readTreeFiles } from "./commitService"
+
+async function filterUnmodifiedDeleteConflicts(
+  git: any,
+  fs: any,
+  dir: string,
+  gitdir: string,
+  conflicts: ReturnType<typeof buildConflictFilesFromErrorData>,
+  oursOid: string,
+  theirsOid: string
+): Promise<ReturnType<typeof buildConflictFilesFromErrorData>> {
+  const [oursCommit, theirsCommit] = await Promise.all([
+    git.readCommit({ fs, dir, gitdir, oid: oursOid }),
+    git.readCommit({ fs, dir, gitdir, oid: theirsOid }),
+  ])
+  const [bases] = await Promise.all([
+    git.findMergeBase({ fs, dir, gitdir, oids: [oursOid, theirsOid] }),
+  ])
+  const baseOid = bases?.[0]
+  if (!baseOid) return conflicts
+  const baseCommit = await git.readCommit({ fs, dir, gitdir, oid: baseOid })
+  const [baseFiles, oursFiles, theirsFiles] = await Promise.all([
+    readTreeFiles(git, fs, dir, gitdir, baseCommit.commit.tree),
+    readTreeFiles(git, fs, dir, gitdir, oursCommit.commit.tree),
+    readTreeFiles(git, fs, dir, gitdir, theirsCommit.commit.tree),
+  ])
+  const kept = []
+  for (const conflict of conflicts) {
+    if (conflict.kind === "bothModified") {
+      kept.push(conflict)
+      continue
+    }
+    const base = baseFiles.get(conflict.filepath) ?? null
+    const unchanged = conflict.kind === "deleteByTheirs"
+      ? (oursFiles.get(conflict.filepath) ?? null) === base
+      : (theirsFiles.get(conflict.filepath) ?? null) === base
+    if (!unchanged) {
+      kept.push(conflict)
+      continue
+    }
+    await git.remove({ fs, dir, gitdir, filepath: conflict.filepath }).catch(() => undefined)
+    if (await fs.exists(conflict.filepath)) {
+      const content = await fs.readFile(conflict.filepath)
+      const hashed = await git.hashBlob({ object: content })
+      if (hashed?.oid === base) await fs.unlink(conflict.filepath)
+      else await git.add({ fs, dir, gitdir, filepath: conflict.filepath })
+    }
+  }
+  return kept
+}
 
 async function runMergeWithConflictHandling(
   git: any,
@@ -74,7 +124,19 @@ async function runMergeWithConflictHandling(
     if (!isMergeConflictError(error)) throw error
     const data = getMergeConflictErrorData(error)
     let conflicts = buildConflictFilesFromErrorData(data)
-    if (conflicts.length === 0) {
+    const hadConflictData = conflicts.length > 0
+    if (hadConflictData) {
+      conflicts = await filterUnmodifiedDeleteConflicts(
+        git,
+        fs,
+        dir,
+        gitdir,
+        conflicts,
+        options.oursOid,
+        options.theirsOid
+      )
+    }
+    if (!hadConflictData && conflicts.length === 0) {
       const unmerged = await listUnmergedPathsFromIndex(git, fs, dir, gitdir)
       conflicts = unmerged.map((filepath) => ({
         filepath,
@@ -82,10 +144,16 @@ async function runMergeWithConflictHandling(
       }))
     }
     if (conflicts.length === 0) {
-      throw new Error(
-        "合并冲突，但未能识别冲突文件列表：" +
-          String(error?.message || error)
-      )
+      await writeMergeStateFile(gitdir, {
+        oursOid: options.oursOid,
+        theirsOid: options.theirsOid,
+        oursLabel: options.oursLabel,
+        theirsLabel: options.theirsLabel,
+        message: mergeMessage,
+        conflicts: [],
+        startedAt: Date.now(),
+      })
+      return
     }
     await writeMergeStateFile(gitdir, {
       oursOid: options.oursOid,

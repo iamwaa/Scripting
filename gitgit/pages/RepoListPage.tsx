@@ -1,8 +1,8 @@
 /**
  * pages/RepoListPage.tsx - 仓库列表页
  *
- * 展示仓库来源（本地/克隆）与改动/待推送/合并冲突摘要。
- * 列表固定按仓库名 A→Z 展示。
+ * 展示仓库来源（本地/克隆）与改动/待推送/待拉取/合并冲突摘要。
+ * 待处理仓库置顶，待处理组与普通组内分别按名称 A→Z 展示。
  * 状态优先显示上次快照，再由实时查询逐行覆盖；未有快照的行显示加载图标。
  * 移除仓库时会清理 gitdir 缓存与访问书签（见 repoStore.removeRepo）。
  */
@@ -50,7 +50,16 @@ import {
 } from "../constants/colors"
 import { formatRepoListMergeSummary } from "../utils/mergeConflict"
 import { yieldForUi } from "../utils/remoteProgress"
-import { sortReposByName } from "../utils/repoSort"
+import { sortReposForList } from "../utils/repoSort"
+import {
+  buildRepoSetSignature,
+  shouldRefreshRepoStatuses,
+} from "../utils/statusFreshness"
+
+let statusRefreshCompletedAt = 0
+let statusRefreshRepoSignature = ""
+let statusRefreshPromise: Promise<void> | null = null
+let cachedStatusMap: Record<string, RepoListStatus> = {}
 
 export function RepoListPage() {
   // 关闭 present 的根界面（设置已独立为 Tab）
@@ -63,22 +72,57 @@ export function RepoListPage() {
     message: string
   } | null>(null)
   // bookmarkName → 列表状态；快照只补首屏占位，实时查询逐行覆盖
-  const [statusMap, setStatusMap] = useState<Record<string, RepoListStatus>>({})
+  const [statusMap, setStatusMap] = useState<Record<string, RepoListStatus>>(
+    cachedStatusMap
+  )
   const [snapshotMap, setSnapshotMap] = useState<Record<string, RepoSnapshot>>({})
   // 移除仓库忙态：删 gitdir 缓存对大仓库可能耗时，用全屏遮罩
   const [removingName, setRemovingName] = useState<string | null>(null)
 
-  async function refreshAll() {
+  function refreshAll(force = false): Promise<void> {
+    if (statusRefreshPromise) {
+      return statusRefreshPromise.then(() => {
+        setRepos(listRepos())
+        setStatusMap(cachedStatusMap)
+      })
+    }
+    const pending = refreshAllInternal(force).finally(() => {
+      if (statusRefreshPromise === pending) statusRefreshPromise = null
+    })
+    statusRefreshPromise = pending
+    return pending
+  }
+
+  async function refreshAllInternal(force: boolean) {
     const latest = listRepos()
     setRepos(latest)
-    setSnapshotMap({})
+    let snapshots: Record<string, RepoSnapshot> = {}
     try {
-      const snapshots = await readSnapshots()
+      snapshots = await readSnapshots()
       setSnapshotMap(snapshots)
     } catch (_e) {
       // 快照只用于首屏占位，读取失败仍继续实时刷新
     }
-    await refreshStatuses(latest)
+    const latestSnapshotAt = Object.values(snapshots).reduce(
+      (latestAt, snapshot) => Math.max(latestAt, snapshot.updatedAt),
+      0
+    )
+    const repoSignature = buildRepoSetSignature(
+      latest.map((repo) => repo.bookmarkName)
+    )
+    if (!shouldRefreshRepoStatuses({
+      now: Date.now(),
+      lastCompletedAt: statusRefreshCompletedAt,
+      repoSignature,
+      lastRepoSignature: statusRefreshRepoSignature,
+      latestSnapshotAt,
+      force,
+    })) {
+      return
+    }
+    await refreshStatuses(latest, snapshots)
+    statusRefreshCompletedAt = Date.now()
+    statusRefreshRepoSignature = repoSignature
   }
 
   function showAlert(title: string, message: string) {
@@ -86,24 +130,27 @@ export function RepoListPage() {
   }
 
   function appendRepo(repo: RepoMeta) {
-    setRepos((current) => {
-      const next = current.some((item) => item.bookmarkName === repo.bookmarkName)
+    setRepos((current) =>
+      current.some((item) => item.bookmarkName === repo.bookmarkName)
         ? current
         : [...current, repo]
-      refreshStatuses(next)
-      return next
-    })
+    )
+    refreshStatuses([repo])
   }
 
-  async function refreshStatuses(list: RepoMeta[]) {
-    // 尚无状态的行由 RepoRow 显示加载图标；串行逐个刷新，避免大仓库并行打爆 FS
-    // 按展示顺序刷新，让顶部可见行先拿到状态
-    for (const repo of sortReposByName(list)) {
+  async function refreshStatuses(
+    list: RepoMeta[],
+    snapshots: Record<string, RepoSnapshot> = snapshotMap
+  ) {
+    // 尚无状态的行由 RepoRow 显示加载图标；串行逐个刷新，避免大仓库并行打爆 FS。
+    // 待处理仓库先刷新，组内顺序与列表展示一致。
+    for (const repo of sortReposForList(list, statusMap, snapshots)) {
       const status = await getRepoListStatus(repo.bookmarkName)
-      setStatusMap((current) => ({
-        ...current,
+      cachedStatusMap = {
+        ...cachedStatusMap,
         [repo.bookmarkName]: status,
-      }))
+      }
+      setStatusMap(cachedStatusMap)
     }
   }
 
@@ -143,11 +190,10 @@ export function RepoListPage() {
         )
         return next
       })
-      setStatusMap((current) => {
-        const next = { ...current }
-        delete next[repo.bookmarkName]
-        return next
-      })
+      const nextStatuses = { ...cachedStatusMap }
+      delete nextStatuses[repo.bookmarkName]
+      cachedStatusMap = nextStatuses
+      setStatusMap(nextStatuses)
     } catch (e: any) {
       showAlert("删除失败", String(e?.message || e))
     } finally {
@@ -172,7 +218,7 @@ export function RepoListPage() {
 
   const showRemovingOverlay = removingName != null
   // 仅影响展示顺序，持久化的仓库数组仍保持添加顺序
-  const sortedRepos = sortReposByName(repos)
+  const sortedRepos = sortReposForList(repos, statusMap, snapshotMap)
 
   return (
     <List
@@ -194,6 +240,7 @@ export function RepoListPage() {
       onAppear={() => {
         refreshAll()
       }}
+      refreshable={() => refreshAll(true)}
       navigationDestination={{
         isPresented: showClone,
         onChanged: setShowClone,
@@ -331,11 +378,12 @@ function RepoRow({
           text: mergeSummary,
           color: (status.conflictCount ?? 0) > 0 ? COLOR_RED : COLOR_ORANGE,
         }
-      } else if (uncommitted > 0 || ahead > 0) {
+      } else if (uncommitted > 0 || ahead > 0 || status.behind > 0) {
         const parts: string[] = []
         if (uncommitted > 0) parts.push(`${uncommitted} 改动`)
         if (ahead > 0) parts.push(`${ahead}推送`)
-        // 本地改动与待推送均用橙色，与历史列表「待推送」一致
+        if (status.behind > 0) parts.push(`${status.behind}拉取`)
+        // 本地改动与同步待处理状态均用橙色。
         trailing = {
           text: parts.join(" · "),
           color: COLOR_ORANGE,
@@ -365,11 +413,13 @@ function RepoRow({
       {/* 放在 NavigationLink 自带 > 的左侧，整行垂直居中 */}
       {status == null ? (
         <HStack spacing={8}>
-          {snapshot && (uncommitted > 0 || ahead > 0) ? (
+          {snapshot &&
+          (uncommitted > 0 || ahead > 0 || snapshot.behind > 0) ? (
             <Text font={12} foregroundStyle={COLOR_ORANGE}>
               {[
                 uncommitted > 0 ? `${uncommitted} 改动` : "",
                 ahead > 0 ? `${ahead}推送` : "",
+                snapshot.behind > 0 ? `${snapshot.behind}拉取` : "",
               ]
                 .filter(Boolean)
                 .join(" · ")}

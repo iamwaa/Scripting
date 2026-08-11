@@ -1,10 +1,14 @@
 /**
  * utils/repoSort.ts - 仓库列表排序（纯函数，无副作用）
  *
- * 列表固定按仓库名 A→Z 展示，不改动持久化的仓库数组本身。
+ * 待处理仓库优先，组内固定按仓库名 A→Z 展示，不改动持久化数组。
  */
 
-import type { RepoMeta } from "../types/git"
+import type {
+  RepoListStatus,
+  RepoMeta,
+  RepoSnapshot,
+} from "../types/git"
 
 /** 首字符是否为 ASCII（数字/英文等） */
 function isAsciiLeading(name: string): boolean {
@@ -33,4 +37,44 @@ function compareName(a: RepoMeta, b: RepoMeta): number {
 /** 按仓库名升序返回新数组，不修改入参 */
 export function sortReposByName(repos: RepoMeta[]): RepoMeta[] {
   return repos.slice().sort(compareName)
+}
+
+function hasPendingStatus(
+  status?: RepoListStatus,
+  snapshot?: RepoSnapshot
+): boolean {
+  if (status) {
+    return status.uncommitted > 0 ||
+      status.ahead > 0 ||
+      status.behind > 0 ||
+      status.mergeInProgress ||
+      status.conflictCount > 0 ||
+      !status.workdirOk ||
+      !!status.error
+  }
+  return !!snapshot && (
+    snapshot.uncommitted > 0 ||
+    snapshot.ahead > 0 ||
+    snapshot.behind > 0
+  )
+}
+
+/** 待处理仓库置顶，待处理组与普通组内仍按名称排序。 */
+export function sortReposForList(
+  repos: RepoMeta[],
+  statuses: Readonly<Record<string, RepoListStatus>>,
+  snapshots: Readonly<Record<string, RepoSnapshot>> = {}
+): RepoMeta[] {
+  return repos.slice().sort((left, right) => {
+    const leftPending = hasPendingStatus(
+      statuses[left.bookmarkName],
+      snapshots[left.bookmarkName]
+    )
+    const rightPending = hasPendingStatus(
+      statuses[right.bookmarkName],
+      snapshots[right.bookmarkName]
+    )
+    if (leftPending !== rightPending) return leftPending ? -1 : 1
+    return compareName(left, right)
+  })
 }
