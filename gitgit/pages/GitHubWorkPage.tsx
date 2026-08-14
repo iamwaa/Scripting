@@ -28,7 +28,7 @@ import {
   COLOR_SECONDARY_LABEL,
 } from "../constants/colors"
 
-type ItemKind = 0 | 1
+type ItemKind = 0 | 1 | 2
 
 type FilterTab = 0 | 1 | 2
 const FILTER_VALUES: Record<FilterTab, GitHubIssueFilter> = {
@@ -97,8 +97,14 @@ function GitHubItemRow({
   )
 }
 
-export function GitHubWorkPage({ fullName }: { fullName: string }) {
-  const [kind, setKind] = useState<ItemKind>(0)
+export function GitHubWorkPage({
+  fullName,
+  initialKind = 0,
+}: {
+  fullName: string
+  initialKind?: number
+}) {
+  const [kind, setKind] = useState<ItemKind>(initialKind as ItemKind)
   const [filter, setFilter] = useState<FilterTab>(0)
   const [items, setItems] = useState<GitHubIssueItem[]>([])
   const [page, setPage] = useState(1)
@@ -174,7 +180,6 @@ export function GitHubWorkPage({ fullName }: { fullName: string }) {
       const created = await createIssue(fullName, { title, body })
       pendingCreatedRef.current = [created, ...pendingCreatedRef.current]
       setShowCreate(false)
-      setKind(0)
       setFilter(0)
       await load(true, 0, 0)
       setSelectedNumber(created.number)
@@ -239,19 +244,9 @@ export function GitHubWorkPage({ fullName }: { fullName: string }) {
     >
       <Section>
         <Picker
-          title="类型"
-          value={kind}
-          onChanged={(value: number) => setKind(value as ItemKind)}
-          pickerStyle="segmented"
-        >
-          <Text tag={0}>Issues</Text>
-          <Text tag={1}>Pull Requests</Text>
-        </Picker>
-        <Picker
           title="状态"
           value={filter}
           onChanged={(value: number) => setFilter(value as FilterTab)}
-          pickerStyle="segmented"
         >
           <Text tag={0}>开放</Text>
           <Text tag={1}>已关闭</Text>

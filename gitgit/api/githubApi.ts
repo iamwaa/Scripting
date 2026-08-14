@@ -15,6 +15,13 @@ import type {
   GitHubIssueItem,
   GitHubIssuePage,
   GitHubCommitAvatarMap,
+  ActionRun,
+  ActionRunPage,
+  ActionJob,
+  ActionJobLog,
+  ActionWorkflow,
+  DispatchWorkflowInput,
+  ActionArtifact,
 } from "../types/github"
 
 const API_BASE = "https://api.github.com"
@@ -346,4 +353,222 @@ export async function createIssue(
       },
     })
   )
+}
+
+// ===== GitHub Actions API =====
+
+/** 将状态字符串映射为联合类型 */
+function mapRunStatus(value: unknown): ActionRun["status"] {
+  return value === "completed" ? "completed" : value === "in_progress" ? "in_progress" : "queued"
+}
+
+/** 将结论字符串映射为联合类型或 null */
+function mapRunConclusion(value: unknown): ActionRun["conclusion"] {
+  if (!value) return null
+  const v = String(value)
+  const valid = ["success", "failure", "cancelled", "neutral", "skipped", "timed_out", "action_required", "stale"]
+  return (valid.includes(v) ? v : null) as ActionRun["conclusion"]
+}
+
+function mapRun(data: any): ActionRun {
+  const sha = String(data.head_sha || "")
+  return {
+    id: Number(data.id),
+    name: String(data.name || ""),
+    workflowName: String(data.workflow_name || data.display_title || ""),
+    headBranch: String(data.head_branch || ""),
+    displayTitle: String(data.display_title || data.name || ""),
+    status: mapRunStatus(data.status),
+    conclusion: mapRunConclusion(data.conclusion),
+    event: String(data.event || ""),
+    actorLogin: String(data.actor?.login || ""),
+    actorAvatarUrl: String(data.actor?.avatar_url || ""),
+    createdAt: String(data.created_at || ""),
+    updatedAt: String(data.updated_at || ""),
+    htmlUrl: String(data.html_url || ""),
+    headShaShort: sha.slice(0, 7),
+    rerunnable: data.run_number !== undefined && data.status !== "in_progress",
+  }
+}
+
+function mapJob(data: any): ActionJob {
+  const steps = Array.isArray(data.steps)
+    ? data.steps.map((s: any) => ({
+        name: String(s.name || ""),
+        status: mapRunStatus(s.status),
+        conclusion: mapRunConclusion(s.conclusion),
+        number: Number(s.number || 0),
+      }))
+    : []
+  return {
+    id: Number(data.id),
+    name: String(data.name || ""),
+    status: mapRunStatus(data.status),
+    conclusion: mapRunConclusion(data.conclusion),
+    startedAt: String(data.started_at || ""),
+    completedAt: String(data.completed_at || ""),
+    steps,
+  }
+}
+
+/** 列出仓库的工作流运行列表
+ *  可选按工作流 ID 筛选。
+ */
+export async function listWorkflowRuns(
+  fullName: string,
+  page = 1,
+  perPage = 30,
+  workflowId?: number
+): Promise<ActionRunPage> {
+  const safePage = Math.max(1, Math.floor(page))
+  const safePerPage = Math.min(100, Math.max(1, Math.floor(perPage)))
+  // 按工作流 ID 筛选使用 /actions/workflows/{id}/runs 端点
+  const basePath = workflowId
+    ? `/repos/${encodeRepo(fullName)}/actions/workflows/${Math.floor(workflowId)}/runs`
+    : `/repos/${encodeRepo(fullName)}/actions/runs`
+  const data = await ghFetch(
+    `${basePath}?per_page=${safePerPage}&page=${safePage}`
+  )
+  const runs = Array.isArray(data.workflow_runs) ? data.workflow_runs.map(mapRun) : []
+  const total = Number(data.total_count || 0)
+  return { runs, hasMore: safePage * safePerPage < total }
+}
+
+/** 获取单个工作流运行详情 */
+export async function getWorkflowRun(
+  fullName: string,
+  runId: number
+): Promise<ActionRun> {
+  return mapRun(
+    await ghFetch(`/repos/${encodeRepo(fullName)}/actions/runs/${Math.floor(runId)}`)
+  )
+}
+
+/** 获取工作流运行下的 Jobs 列表 */
+export async function listWorkflowJobs(
+  fullName: string,
+  runId: number
+): Promise<ActionJob[]> {
+  const data = await ghFetch(
+    `/repos/${encodeRepo(fullName)}/actions/runs/${Math.floor(runId)}/jobs`
+  )
+  return Array.isArray(data.jobs) ? data.jobs.map(mapJob) : []
+}
+
+/** 获取 Job 日志（纯文本） */
+export async function getJobLog(
+  fullName: string,
+  jobId: number
+): Promise<ActionJobLog> {
+  // 日志端点返回 text/plain 且可能 302 重定向到下载链接
+  const token = getToken()
+  if (!token) throw new Error("未配置 GitHub Token")
+  const url = `${API_BASE}/repos/${encodeRepo(fullName)}/actions/jobs/${Math.floor(jobId)}/logs`
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+    timeout: 20,
+    debugLabel: "gitgit GitHub Actions log",
+  })
+  if (!res.ok) {
+  if (res.status === 410) throw new Error("日志已过期或已被删除")
+    throw new Error(`获取日志失败：HTTP ${res.status}`)
+  }
+  return await res.text()
+}
+
+function mapWorkflow(data: any): ActionWorkflow {
+  return {
+    id: Number(data.id),
+    name: String(data.name || ""),
+    displayName: String(data.display_name || data.name || ""),
+    path: String(data.path || ""),
+    state: String(data.state || "active"),
+  }
+}
+
+/** 列出仓库的工作流定义（用于筛选与手动触发） */
+export async function listWorkflows(
+  fullName: string
+): Promise<ActionWorkflow[]> {
+  const data = await ghFetch(`/repos/${encodeRepo(fullName)}/actions/workflows?per_page=100`)
+  return Array.isArray(data.workflows) ? data.workflows.map(mapWorkflow) : []
+}
+
+/** 手动触发工作流（workflow_dispatch）
+ *  GitHub dispatch 端点使用工作流 ID（数字）。
+ *  返回 true 表示触发成功（HTTP 204）。
+ */
+export async function dispatchWorkflow(
+  fullName: string,
+  workflowId: number,
+  input: DispatchWorkflowInput
+): Promise<boolean> {
+  if (!input.ref.trim()) throw new Error("必须指定目标分支或标签")
+  await ghFetch(
+    `/repos/${encodeRepo(fullName)}/actions/workflows/${Math.floor(workflowId)}/dispatches`,
+    {
+      method: "POST",
+      body: {
+        ref: input.ref.trim(),
+        inputs: input.inputs || undefined,
+      },
+    }
+  )
+  return true
+}
+
+function mapArtifact(data: any): ActionArtifact {
+  return {
+    id: Number(data.id),
+    name: String(data.name || ""),
+    sizeInBytes: Number(data.size_in_bytes || 0),
+    archiveDownloadUrl: String(data.archive_download_url || ""),
+    expired: !!data.expired,
+    createdAt: String(data.created_at || ""),
+    expiresAt: String(data.expires_at || ""),
+  }
+}
+
+/** 列出工作流运行的工件 */
+export async function listArtifacts(
+  fullName: string,
+  runId: number
+): Promise<ActionArtifact[]> {
+  const data = await ghFetch(
+    `/repos/${encodeRepo(fullName)}/actions/runs/${Math.floor(runId)}/artifacts`
+  )
+  return Array.isArray(data.artifacts) ? data.artifacts.map(mapArtifact) : []
+}
+
+/** 获取工件下载 URL 和请求头（用于 BackgroundURLSession 下载） */
+export function getArtifactDownloadInfo(
+  fullName: string,
+  artifactId: number
+): { url: string; headers: Record<string, string> } {
+  const token = getToken()
+  if (!token) throw new Error("未配置 GitHub Token")
+  return {
+    url: `${API_BASE}/repos/${encodeRepo(fullName)}/actions/artifacts/${Math.floor(artifactId)}/zip`,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  }
+}
+
+/** 删除工作流运行 */
+export async function deleteWorkflowRun(
+  fullName: string,
+  runId: number
+): Promise<boolean> {
+  await ghFetch(
+    `/repos/${encodeRepo(fullName)}/actions/runs/${Math.floor(runId)}`,
+    { method: "DELETE" }
+  )
+  return true
 }

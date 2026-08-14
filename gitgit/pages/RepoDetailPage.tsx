@@ -9,6 +9,7 @@ import {
   Text,
   Button,
   HStack,
+  Menu,
   Toolbar,
   ToolbarItem,
   ToolbarSpacer,
@@ -151,6 +152,7 @@ export function RepoDetailPage({
   const [showRollback, setShowRollback] = useState(false)
   const [githubFullName, setGithubFullName] = useState<string | null>(null)
   const [showGitHubWork, setShowGitHubWork] = useState(false)
+  const [githubWorkKind, setGithubWorkKind] = useState<number>(0)
   const [mergeInProgress, setMergeInProgress] = useState(false)
   const [conflictCount, setConflictCount] = useState(0)
   const [selectedCommitOid, setSelectedCommitOid] = useState<string | null>(null)
@@ -382,13 +384,14 @@ export function RepoDetailPage({
     setShowConflicts(true)
   }
 
-  function openGitHubWorkPage() {
+  function openGitHubWorkPage(kind: number = 0) {
     skipNextAppearLoadRef.current = true
     setSelectedCommitOid(null)
     setShowUpload(false)
     setShowRemotes(false)
     setShowConflicts(false)
     setShowCompare(false)
+    setGithubWorkKind(kind)
     setShowGitHubWork(true)
   }
 
@@ -919,12 +922,14 @@ export function RepoDetailPage({
           <Toolbar>
             {githubFullName ? (
               <ToolbarItem placement="topBarTrailing">
-                <Button
-                  title="Issues / Pull Requests"
-                  systemImage="bubble.left.and.bubble.right"
-                  action={openGitHubWorkPage}
-                  disabled={mutating}
-                />
+                <Menu
+                  title="GitHub"
+                  systemImage="rectangle.stack"
+                >
+                  <Button title="Issues" systemImage="smallcircle.filled.circle" action={() => openGitHubWorkPage(0)} />
+                  <Button title="Pull Requests" systemImage="arrow.triangle.merge" action={() => openGitHubWorkPage(1)} />
+                  <Button title="Actions" systemImage="hammer.fill" action={() => openGitHubWorkPage(2)} />
+                </Menu>
               </ToolbarItem>
             ) : null}
             {githubFullName ? (
@@ -943,12 +948,14 @@ export function RepoDetailPage({
           topBarTrailing: (
             <HStack spacing={10}>
               {githubFullName ? (
-                <Button
-                  title="Issues / Pull Requests"
-                  systemImage="bubble.left.and.bubble.right"
-                  action={openGitHubWorkPage}
-                  disabled={mutating}
-                />
+                <Menu
+                  title="GitHub"
+                  systemImage="rectangle.stack"
+                >
+                  <Button title="Issues" systemImage="smallcircle.filled.circle" action={() => openGitHubWorkPage(0)} />
+                  <Button title="Pull Requests" systemImage="arrow.triangle.merge" action={() => openGitHubWorkPage(1)} />
+                  <Button title="Actions" systemImage="hammer.fill" action={() => openGitHubWorkPage(2)} />
+                </Menu>
               ) : null}
               <Button
                 title="刷新"
@@ -993,6 +1000,7 @@ export function RepoDetailPage({
             showRollback={showRollback}
             currentBranch={branchInfo.current}
             githubFullName={showGitHubWork ? githubFullName : null}
+            githubWorkKind={githubWorkKind}
             commitGithubFullName={githubFullName}
             selectedCommitOid={selectedCommitOid}
             onRollbackSelect={handleRollbackSelect}

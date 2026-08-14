@@ -6,6 +6,7 @@ import { ComparePage } from "../pages/ComparePage"
 import { RemotesPage } from "../pages/RemotesPage"
 import { ConflictsPage } from "../pages/ConflictsPage"
 import { GitHubWorkPage } from "../pages/GitHubWorkPage"
+import { ActionsPage } from "../pages/ActionsPage"
 import { RollbackPage } from "../pages/RollbackPage"
 
 export function RepoDetailDestination({
@@ -18,6 +19,7 @@ export function RepoDetailDestination({
   showRollback,
   currentBranch,
   githubFullName,
+  githubWorkKind,
   commitGithubFullName,
   selectedCommitOid,
   onUploaded,
@@ -34,6 +36,7 @@ export function RepoDetailDestination({
   showRollback: boolean
   currentBranch: string | null
   githubFullName: string | null
+  githubWorkKind: number
   commitGithubFullName: string | null
   selectedCommitOid: string | null
   onUploaded: (repo: RepoMeta) => void
@@ -76,7 +79,18 @@ export function RepoDetailDestination({
       />
     )
   }
-  if (githubFullName) return <GitHubWorkPage fullName={githubFullName} />
+  if (githubFullName) {
+    if (githubWorkKind === 2) {
+      return <ActionsPage key={`actions-${githubFullName}`} fullName={githubFullName} />
+    }
+    return (
+      <GitHubWorkPage
+        key={`work-${githubWorkKind}-${githubFullName}`}
+        fullName={githubFullName}
+        initialKind={githubWorkKind}
+      />
+    )
+  }
   if (selectedCommitOid) {
     return (
       <CommitDetailPage

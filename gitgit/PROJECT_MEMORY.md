@@ -76,6 +76,8 @@
     - **本次备份**：`backup/gitgit/gitgit_修复删除修改冲突误判已解决_20260807_170824`、`backup/gitgit/gitgit_冲突页状态行添加图标_20260807_174430`。
    - **P2.51 普通邮箱作者优先显示 GitHub 真实头像（2026-08-07）**：GitHub `origin` 仓库的历史页通过 `api/githubApi.ts::getCommitAvatarUrls()` 用一次 GraphQL 请求批量查询当前列表最多 100 个提交 OID，读取 GitHub `Commit.author.user.avatarUrl`；提交详情复用同一查询与最多 500 条的内存 LRU。真实头像只在 GitHub 已关联提交账号时覆盖，未关联、未推送、无 Token、网络失败及非 GitHub 仓库继续走 noreply/Gravatar/灰色占位回退，且失败不阻塞页面。空结果不缓存，推送后同步状态变化会重新查询。测试：`tests/github.test.ts` 覆盖真实头像优先和邮箱回退。
      - **本次备份**：`backup/gitgit/gitgit_邮箱作者显示GitHub真实头像_20260807_191513`。
+   - **P2.52 GitHub Actions CI/CD 浏览（2026-08-14）**：`GitHubWorkPage` 的类型 segmented Picker 从 Issues/Pull Requests 扩展为三段式（Issues / Pull Requests / Actions）；选中 Actions 时早期返回独立页面 `pages/ActionsPage.tsx`，不加载 Issue/PR 数据。`ActionsPage` 展示工作流运行列表（`api/githubApi.ts::listWorkflowRuns`，GitHub REST `/repos/{o}/{r}/actions/runs`），每行显示状态图标（成功绿/失败红/进行中橙/排队/取消/跳过/超时）、displayTitle、工作流名、分支、触发事件、触发者头像、短 SHA 与相对时间，支持分页加载更多与请求竞态保护。点击运行项进入 `pages/ActionRunDetailPage.tsx`（受控 `navigationDestination` + `key={runId}`），展示运行概要（状态/工作流名/分支/事件/提交短 SHA/触发者头像）与 Job 列表（`listWorkflowJobs`，`/actions/runs/{id}/jobs`）；每个 Job 可展开查看步骤列表（图标+名称+状态）和日志（`getJobLog`，`/actions/jobs/{id}/logs` 端点，返回 text/plain，410 表示日志已过期）。日志超过 20000 字符截断并提示。类型位于 `types/github.ts`（`ActionRun`/`ActionRunPage`/`ActionJob`/`ActionStep`/`ActionJobLog` 等）。`foregroundStyle` 的动态颜色变量需显式断言为 `ShapeStyle`，否则被推断成 `string` 报错。
+   - **P2.53 Actions 入口菜单化 + 手动触发 + 筛选 + 富文本日志（2026-08-14）**：① `GitHubWorkPage` 的类型切换从 segmented Picker 改为 toolbar 右上角 `Menu`（`Menu` 组件从 `scripting` 导入，`title` + `systemImage` + 子 `Button`），三个选项各有图标：Issues（`smallcircle.filled.circle`）/ Pull Requests（`arrow.triangle.merge`）/ Actions（`hammer.fill`），菜单标题显示当前选中类型；页面主体的「类型」Picker 移除，仅保留 Issue/PR 的「状态」Picker。② 新增 `listWorkflows`（`/actions/workflows`）、`dispatchWorkflow`（`/actions/workflows/{name}/dispatches`，POST + `ref` + `inputs`）API；`listWorkflowRuns` 增加可选 `workflowName` 参数，按工作流名筛选时走 `/actions/workflows/{name}/runs` 端点。③ `ActionsPage` 增加工作流筛选 Picker（`listWorkflows` 拉取，`null`=全部）与 toolbar 右上角手动触发 `Menu`（`play.circle` 图标，列出可触发工作流，`Dialog.prompt` 输入分支名默认 main，触发后延迟 2s 刷新列表；非 active 工作流禁用）。④ 新增 `components/ActionLogViewer.tsx` 富文本日志查看器：纯文本日志按行解析级别（error/warning/success/info），error 红色（`error`/`failed`/`exception`/`panic`/`##[error]`）、warning 橙色（`warning:`/`##[warning]`）、success 绿色（`passed`/`success`/`✓`），用 List 逐行渲染（虚拟化性能），toolbar Menu 提供级别筛选（全部/错误/警告/成功/信息），footer 显示错误/警告行数摘要。`ActionRunDetailPage` Job 展开后显示步骤列表 + 日志摘要（错误/警告行数 + 前 500 字符预览）+「查看完整日志」按钮（`doc.text.magnifyingglass`），通过受控 `navigationDestination` 进入 `ActionLogViewer`。`Dialog.prompt` 返回 `null` 需先判断取消；禁用状态的 `Button` 也必须传 `action`。
    - **P2.22 Diff 省略行样式**（折叠区原先仅 `context`+`…`，不明显）：
     - `DiffLineType` 增加 `skip`；`trimContext` 插入 `{ type: "skip", content: "省略未改动的行" }`。
     - `DiffViewer` 独立 `DiffSkipLineView`：浅灰底、居中 `⋯ 省略未改动的行 ⋯`，明暗模式各有 skipBg/skipFg。
@@ -132,6 +134,7 @@
   - Tag 创建/查看/删除；仓库健康检查（HEAD/index/objects/config/工作区访问性）
   - 可选：回滚强推的服务层集成测试、iCloud 协调失败与 index 一致性故障注入
   - 富通知 UI（notification.tsx）、多仓库批量同步、更完整的 GitHub 仓库管理面
+  - 可选：Actions 重新运行（rerun workflow / failed jobs）
 - Scripting UI API 要点（避免再踩坑）：
   - `Color`/`Font` 是字符串联合类型，不是对象。用 `foregroundStyle="label"`、`font="body"`。
   - `Font` 枚举只有 caption，无 caption1。
