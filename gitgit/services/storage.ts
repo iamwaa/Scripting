@@ -34,6 +34,8 @@ export const STORAGE_KEYS = {
   identity: PREFIX + "identity",
   /** 操作完成本地通知开关（默认 true） */
   notifyEnabled: PREFIX + "notifyEnabled",
+  /** 操作失败本地通知开关（默认 false，避免过多打扰） */
+  errorNotifyEnabled: PREFIX + "errorNotifyEnabled",
   /** Token 验证成功的 GitHub 用户（非敏感缓存；token 变更时作废） */
   githubUser: PREFIX + "githubUser",
 } as const
@@ -125,5 +127,20 @@ export function readNotifyEnabled(): boolean {
 export function writeNotifyEnabled(enabled: boolean): void {
   if (!Storage.set(STORAGE_KEYS.notifyEnabled, enabled)) {
     throw new Error("通知设置保存失败")
+  }
+}
+
+// === 错误通知偏好 ===
+
+/** 是否发送操作失败通知；未配置时默认关闭（避免过多打扰） */
+export function readErrorNotifyEnabled(): boolean {
+  const v = Storage.get<boolean>(STORAGE_KEYS.errorNotifyEnabled)
+  return v === true
+}
+
+/** 保存错误通知开关 */
+export function writeErrorNotifyEnabled(enabled: boolean): void {
+  if (!Storage.set(STORAGE_KEYS.errorNotifyEnabled, enabled)) {
+    throw new Error("错误通知设置保存失败")
   }
 }

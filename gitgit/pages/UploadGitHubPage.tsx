@@ -15,6 +15,8 @@ import {
   useEffect,
 } from "scripting"
 import { FormRow } from "../components/FormRow"
+import { toastContent } from "../components/Toast"
+import { useToast } from "../hooks/useToast"
 import type { RepoMeta } from "../types/git"
 import { createRepo, getCurrentUser } from "../api/githubApi"
 import { hasToken } from "../services/authStore"
@@ -26,7 +28,7 @@ import {
   initRepo,
 } from "../services/gitService"
 import { updateRepo, findRepo } from "../services/repoStore"
-import { notifySync } from "../services/notifyService"
+import { notifySync, notifyError } from "../services/notifyService"
 import { DEFAULT_BRANCH } from "../constants/git"
 import { COLOR_SECONDARY_LABEL } from "../constants/colors"
 import {
@@ -56,10 +58,7 @@ export function UploadGitHubPage({
   const [homepage, setHomepage] = useState("")
   const [owner, setOwner] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
-  const [alertState, setAlertState] = useState<{
-    title: string
-    message: string
-  } | null>(null)
+  const { toastState, showToast, handleToastChanged, toastPresented } = useToast()
 
   useEffect(() => {
     if (hasToken()) {
@@ -69,18 +68,14 @@ export function UploadGitHubPage({
     }
   }, [])
 
-  function showAlert(title: string, message: string) {
-    setAlertState({ title, message })
-  }
-
   async function handleUpload() {
     const name = repoName.trim()
     if (!name) {
-      showAlert("gitgit", "请填写仓库名称")
+      showToast("请填写仓库名称", "warning")
       return
     }
     if (!hasToken()) {
-      showAlert("需要 Token", "请先在设置页配置 GitHub Token（需 repo 权限）")
+      showToast("需要 Token，请先在设置页配置", "warning")
       return
     }
 
@@ -93,10 +88,7 @@ export function UploadGitHubPage({
       // 空仓 HEAD 可能已是 main，但无提交仍不能 push
       const log = await getLog(bookmarkName, 1)
       if (log.length === 0) {
-        showAlert(
-          "没有提交",
-          `请先在「改动」页完成至少一次提交（默认分支 ${DEFAULT_BRANCH}），再上传到 GitHub。`
-        )
+        showToast("没有提交，请先在「改动」页完成至少一次提交", "warning")
         return
       }
 
@@ -144,7 +136,8 @@ export function UploadGitHubPage({
         onUploaded(finalRepo)
       }
     } catch (e: any) {
-      showAlert("上传失败", String(e?.message || e))
+      showToast("上传失败：" + String(e?.message || e), "error")
+      notifyError("push", repoName.trim() || defaultName, String(e?.message || e))
     } finally {
       setUploading(false)
     }
@@ -155,17 +148,17 @@ export function UploadGitHubPage({
       navigationTitle="上传到 GitHub"
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
-      alert={{
-        title: alertState?.title ?? "",
-        message: <Text>{alertState?.message ?? ""}</Text>,
-        isPresented: alertState != null,
-        onChanged: (presented: boolean) => {
-          if (!presented) setAlertState(null)
-        },
-        actions: (
-          <Button title="好" role="cancel" action={() => setAlertState(null)} />
-        ),
-      }}
+      toast={
+        toastState
+          ? {
+              isPresented: toastPresented,
+              onChanged: handleToastChanged,
+              content: toastContent(toastState.message, toastState.type),
+              duration: toastState.duration,
+              position: "top",
+            }
+          : undefined
+      }
     >
       <Section
         header={<Text>仓库信息</Text>}

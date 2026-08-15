@@ -22,6 +22,8 @@ import type {
   ActionWorkflow,
   DispatchWorkflowInput,
   ActionArtifact,
+  ActionAnnotation,
+  AnnotationLevel,
 } from "../types/github"
 
 const API_BASE = "https://api.github.com"
@@ -398,8 +400,15 @@ function mapJob(data: any): ActionJob {
         status: mapRunStatus(s.status),
         conclusion: mapRunConclusion(s.conclusion),
         number: Number(s.number || 0),
+        startedAt: String(s.started_at || ""),
+        completedAt: String(s.completed_at || ""),
       }))
     : []
+  // 从 check_run_url 中提取 check-run ID（用于获取注解）
+  let checkRunId: number | undefined
+  const checkRunUrl = String(data.check_run_url || "")
+  const match = checkRunUrl.match(/\/check-runs\/(\d+)/)
+  if (match) checkRunId = Number(match[1])
   return {
     id: Number(data.id),
     name: String(data.name || ""),
@@ -408,6 +417,7 @@ function mapJob(data: any): ActionJob {
     startedAt: String(data.started_at || ""),
     completedAt: String(data.completed_at || ""),
     steps,
+    checkRunId,
   }
 }
 
@@ -478,6 +488,34 @@ export async function getJobLog(
     throw new Error(`获取日志失败：HTTP ${res.status}`)
   }
   return await res.text()
+}
+
+/** 获取 Job 的注解列表（类似 GitHub 网页 Annotations 区域）
+ *  需要传入 Job 的 checkRunId（从 mapJob 解析）。
+ *  端点：GET /repos/{owner}/{repo}/check-runs/{check_run_id}/annotations
+ */
+export async function getJobAnnotations(
+  fullName: string,
+  checkRunId: number
+): Promise<ActionAnnotation[]> {
+  const data = await ghFetch(
+    `/repos/${encodeRepo(fullName)}/check-runs/${Math.floor(checkRunId)}/annotations`
+  )
+  if (!Array.isArray(data)) return []
+  return data.map(mapAnnotation)
+}
+
+function mapAnnotation(data: any): ActionAnnotation {
+  const level = String(data.annotation_level || "notice") as AnnotationLevel
+  return {
+    level: (level === "warning" || level === "failure") ? level : "notice",
+    title: data.title ? String(data.title) : undefined,
+    message: String(data.message || ""),
+    path: data.path ? String(data.path) : undefined,
+    startLine: data.start_line != null ? Number(data.start_line) : undefined,
+    endLine: data.end_line != null ? Number(data.end_line) : undefined,
+    rawDetails: data.raw_details ? String(data.raw_details) : undefined,
+  }
 }
 
 function mapWorkflow(data: any): ActionWorkflow {

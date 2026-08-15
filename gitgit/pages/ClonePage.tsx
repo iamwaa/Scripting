@@ -18,6 +18,8 @@ import {
 } from "scripting"
 import { FormRow } from "../components/FormRow"
 import { BusyOverlay } from "../components/BusyOverlay"
+import { toastContent } from "../components/Toast"
+import { useToast } from "../hooks/useToast"
 import type { GitHubRepo, RepoMeta } from "../types/git"
 import {
   pickDirectory,
@@ -31,7 +33,7 @@ import {
   RemoteCancelToken,
 } from "../services/gitService"
 import { hasToken } from "../services/authStore"
-import { notifySync } from "../services/notifyService"
+import { notifySync, notifyError } from "../services/notifyService"
 import { listMyRepos, getRepo } from "../api/githubApi"
 import { repoNameFromUrl } from "../utils/format"
 import {
@@ -58,11 +60,7 @@ export function ClonePage({ onCloned }: { onCloned: (repo: RepoMeta) => void }) 
   const [cancelToken, setCancelToken] = useState<RemoteCancelToken | null>(null)
   const [myRepos, setMyRepos] = useState<GitHubRepo[]>([])
   const [loadingRepos, setLoadingRepos] = useState(false)
-  // 声明式提示框，避免命令式 alert 在部分导航栈中不弹窗
-  const [alertState, setAlertState] = useState<{
-    title: string
-    message: string
-  } | null>(null)
+  const { toastState, showToast, handleToastChanged, toastPresented } = useToast()
 
   useEffect(() => {
     if (hasToken()) {
@@ -70,17 +68,13 @@ export function ClonePage({ onCloned }: { onCloned: (repo: RepoMeta) => void }) 
     }
   }, [])
 
-  function showAlert(title: string, message: string) {
-    setAlertState({ title, message })
-  }
-
   async function loadMyRepos() {
     setLoadingRepos(true)
     try {
       const repos = await listMyRepos(20)
       setMyRepos(repos)
     } catch (e: any) {
-      showAlert("在线仓库加载失败", String(e?.message || e))
+      showToast("在线仓库加载失败：" + String(e?.message || e), "error")
     } finally {
       setLoadingRepos(false)
     }
@@ -96,7 +90,7 @@ export function ClonePage({ onCloned }: { onCloned: (repo: RepoMeta) => void }) 
         setParentAccessBookmark(result.accessBookmarkName)
       }
     } catch (e: any) {
-      showAlert("选择目录失败", String(e?.message || e))
+      showToast("选择目录失败：" + String(e?.message || e), "error")
     }
   }
 
@@ -104,11 +98,11 @@ export function ClonePage({ onCloned }: { onCloned: (repo: RepoMeta) => void }) 
   async function handleClone(cloneUrl?: string, githubRepo?: GitHubRepo) {
     const finalUrl = (cloneUrl || url).trim()
     if (!finalUrl) {
-      showAlert("gitgit", "请输入仓库 URL")
+      showToast("请输入仓库 URL", "warning")
       return
     }
     if (!parentPath) {
-      showAlert("gitgit", "请先选择目标目录")
+      showToast("请先选择目标目录", "warning")
       return
     }
 
@@ -121,11 +115,11 @@ export function ClonePage({ onCloned }: { onCloned: (repo: RepoMeta) => void }) 
         const details = await getRepo(githubRepo.fullName)
         upstream = details.fork ? details.parent : undefined
         if (details.fork && !upstream) {
-          showAlert("无法读取源仓库", "GitHub 未返回该 fork 的源仓库信息")
+          showToast("无法读取源仓库：GitHub 未返回该 fork 的源仓库信息", "error")
           return
         }
       } catch (e: any) {
-        showAlert("无法读取仓库详情", String(e?.message || e))
+        showToast("无法读取仓库详情：" + String(e?.message || e), "error")
         return
       }
     }
@@ -135,10 +129,7 @@ export function ClonePage({ onCloned }: { onCloned: (repo: RepoMeta) => void }) 
       try {
         const items = await FileManager.readDirectory(workdir)
         if (items.length > 0) {
-          showAlert(
-            "目标已存在",
-            `目录「${repoName}」已存在且非空，请换父目录或先清空。`
-          )
+          showToast("目标已存在：目录「" + repoName + "」已存在且非空，请换父目录或先清空", "warning")
           return
         }
       } catch (_e) {
@@ -188,16 +179,10 @@ export function ClonePage({ onCloned }: { onCloned: (repo: RepoMeta) => void }) 
       setParentName("")
       setParentAccessBookmark(null)
       if (isRemoteOperationCancelled(e)) {
-        showAlert(
-          "已取消克隆",
-          "临时内容已清理，请重新选择目标目录后重试。"
-        )
+        showToast("已取消克隆，临时内容已清理", "warning")
       } else {
-        showAlert(
-          "克隆失败",
-          String(e?.message || e) +
-            "\n临时内容已清理，请重新选择目标目录后重试。"
-        )
+        showToast("克隆失败：" + String(e?.message || e) + "，临时内容已清理", "error")
+        notifyError("clone", repoName, String(e?.message || e))
       }
     } finally {
       setCloning(false)
@@ -235,21 +220,17 @@ export function ClonePage({ onCloned }: { onCloned: (repo: RepoMeta) => void }) 
             }
           : undefined
       }
-      alert={{
-        title: alertState?.title ?? "",
-        message: <Text>{alertState?.message ?? ""}</Text>,
-        isPresented: alertState != null,
-        onChanged: (presented: boolean) => {
-          if (!presented) setAlertState(null)
-        },
-        actions: (
-          <Button
-            title="好"
-            role="cancel"
-            action={() => setAlertState(null)}
-          />
-        ),
-      }}
+      toast={
+        toastState
+          ? {
+              isPresented: toastPresented,
+              onChanged: handleToastChanged,
+              content: toastContent(toastState.message, toastState.type),
+              duration: toastState.duration,
+              position: "top",
+            }
+          : undefined
+      }
     >
       {/* 步骤 1：目标父目录；Section title 与 footer 互斥，说明放 header */}
       <Section

@@ -31,6 +31,8 @@ import {
   buildConflictReport,
   formatAutoMarkSummary,
 } from "../utils/mergeConflict"
+import { toastContent } from "../components/Toast"
+import { useToast } from "../hooks/useToast"
 import {
   COLOR_SECONDARY_LABEL,
   COLOR_ORANGE,
@@ -52,6 +54,7 @@ export function ConflictsPage({
   const [busy, setBusy] = useState(false)
   const [pendingAbort, setPendingAbort] = useState(false)
   const [alertState, setAlertState] = useState<AlertState>(null)
+  const { toastState, showToast, handleToastChanged, toastPresented } = useToast()
 
   function showAlert(title: string, message: string) {
     setAlertState({ title, message })
@@ -63,7 +66,7 @@ export function ConflictsPage({
       const next = await getMergeConflictState(bookmarkName)
       setState(next)
     } catch (e: any) {
-      showAlert("加载失败", String(e?.message || e))
+      showToast("加载失败：" + String(e?.message || e), "error")
     } finally {
       setLoading(false)
     }
@@ -97,9 +100,9 @@ export function ConflictsPage({
           : resolution === "theirs"
             ? "已保留对方"
             : "已标记解决"
-      showAlert(label, file.filepath)
+      showToast(label + ": " + file.filepath, "success")
     } catch (e: any) {
-      showAlert("解决失败", String(e?.message || e))
+      showToast("解决失败：" + String(e?.message || e), "error")
     } finally {
       setBusy(false)
     }
@@ -114,9 +117,9 @@ export function ConflictsPage({
       await loadState()
       notifyParent()
       const summary = formatAutoMarkSummary(result)
-      showAlert(summary.title, summary.message)
+      showToast(summary.title + ": " + summary.message, summary.title.includes("失败") ? "error" : "success")
     } catch (e: any) {
-      showAlert("检测失败", String(e?.message || e))
+      showToast("检测失败：" + String(e?.message || e), "error")
     } finally {
       setBusy(false)
     }
@@ -129,9 +132,9 @@ export function ConflictsPage({
       const oid = await completeMerge(bookmarkName)
       await loadState()
       notifyParent("completed")
-      showAlert("合并完成", `已创建合并提交 ${String(oid).slice(0, 7)}`)
+      showToast("合并完成：已创建提交 " + String(oid).slice(0, 7), "success")
     } catch (e: any) {
-      showAlert("完成合并失败", String(e?.message || e))
+      showToast("完成合并失败：" + String(e?.message || e), "error")
     } finally {
       setBusy(false)
     }
@@ -159,9 +162,9 @@ export function ConflictsPage({
         conflicts,
       })
       await Pasteboard.setString(report)
-      showAlert("已复制", "冲突清单已复制到剪贴板")
+      showToast("已复制：冲突清单已复制到剪贴板", "success")
     } catch (e: any) {
-      showAlert("复制失败", String(e?.message || e))
+      showToast("复制失败：" + String(e?.message || e), "error")
     } finally {
       setBusy(false)
     }
@@ -175,9 +178,9 @@ export function ConflictsPage({
       await abortMerge(bookmarkName)
       await loadState()
       notifyParent()
-      showAlert("已中止合并", "工作区已尝试恢复到合并前状态")
+      showToast("已中止合并：工作区已尝试恢复到合并前状态", "warning")
     } catch (e: any) {
-      showAlert("中止失败", String(e?.message || e))
+      showToast("中止失败：" + String(e?.message || e), "error")
     } finally {
       setBusy(false)
     }
@@ -205,6 +208,17 @@ export function ConflictsPage({
       navigationTitle="合并冲突"
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
+      toast={
+        toastState
+          ? {
+              isPresented: toastPresented,
+              onChanged: handleToastChanged,
+              content: toastContent(toastState.message, toastState.type),
+              duration: toastState.duration,
+              position: "top",
+            }
+          : undefined
+      }
       onAppear={() => {
         loadState()
       }}

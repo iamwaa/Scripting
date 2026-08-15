@@ -32,6 +32,8 @@ import {
   fetchRemote,
 } from "../services/gitService"
 import { COLOR_SECONDARY_LABEL } from "../constants/colors"
+import { toastContent } from "../components/Toast"
+import { useToast } from "../hooks/useToast"
 
 type AlertState = { title: string; message: string } | null
 
@@ -60,6 +62,7 @@ export function RemotesPage({
 
   const [pendingDelete, setPendingDelete] = useState<RemoteInfo | null>(null)
   const [alertState, setAlertState] = useState<AlertState>(null)
+  const { toastState, showToast, handleToastChanged, toastPresented } = useToast()
 
   function showAlert(title: string, message: string) {
     setAlertState({ title, message })
@@ -112,7 +115,7 @@ export function RemotesPage({
         setBranchLoadWarning(null)
       }
     } catch (e: any) {
-      showAlert("加载失败", String(e?.message || e))
+      showToast("加载失败：" + String(e?.message || e), "error")
     } finally {
       setLoading(false)
     }
@@ -145,9 +148,9 @@ export function RemotesPage({
       setShowAddSheet(false)
       await loadAll()
       notifyParent()
-      showAlert("已添加", "远端已写入仓库配置")
+      showToast("已添加：远端已写入仓库配置", "success")
     } catch (e: any) {
-      showAlert("添加失败", String(e?.message || e))
+      showToast("添加失败：" + String(e?.message || e), "error")
     } finally {
       setBusy(false)
     }
@@ -168,9 +171,9 @@ export function RemotesPage({
       await setRemoteUrl(bookmarkName, remote.remote, next)
       await loadAll()
       notifyParent()
-      showAlert("已更新", `${remote.remote} 的 URL 已修改`)
+      showToast("已更新：" + remote.remote + " 的 URL 已修改", "success")
     } catch (e: any) {
-      showAlert("修改失败", String(e?.message || e))
+      showToast("修改失败：" + String(e?.message || e), "error")
     } finally {
       setBusy(false)
     }
@@ -190,9 +193,9 @@ export function RemotesPage({
       await deleteRemote(bookmarkName, remote.remote)
       await loadAll()
       notifyParent()
-      showAlert("已删除", `远端 ${remote.remote} 已移除`)
+      showToast("已删除：远端 " + remote.remote + " 已移除", "success")
     } catch (e: any) {
-      showAlert("删除失败", String(e?.message || e))
+      showToast("删除失败：" + String(e?.message || e), "error")
     } finally {
       setBusy(false)
     }
@@ -201,7 +204,7 @@ export function RemotesPage({
   async function handleSetUpstream() {
     if (busy) return
     if (!currentBranch) {
-      showAlert("无法设置", "当前没有本地分支")
+      showToast("当前没有本地分支，无法设置", "warning")
       return
     }
     setBusy(true)
@@ -216,9 +219,9 @@ export function RemotesPage({
       notifyParent()
       const track =
         `${upstreamRemote}/${(upstreamMerge.trim() || currentBranch)}`
-      showAlert("已设置", `${currentBranch} ← ${track}`)
+      showToast("已设置：" + currentBranch + " ← " + track, "success")
     } catch (e: any) {
-      showAlert("设置失败", String(e?.message || e))
+      showToast("设置失败：" + String(e?.message || e), "error")
     } finally {
       setBusy(false)
     }
@@ -254,6 +257,17 @@ export function RemotesPage({
       navigationTitle="远端管理"
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
+      toast={
+        toastState
+          ? {
+              isPresented: toastPresented,
+              onChanged: handleToastChanged,
+              content: toastContent(toastState.message, toastState.type),
+              duration: toastState.duration,
+              position: "top",
+            }
+          : undefined
+      }
       toolbar={{
         topBarTrailing: (
           <Button

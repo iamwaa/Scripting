@@ -17,6 +17,8 @@ import {
   useState,
 } from "scripting"
 import { BusyOverlay } from "../components/BusyOverlay"
+import { toastContent } from "../components/Toast"
+import { useToast } from "../hooks/useToast"
 import { RepoBranchSection } from "../components/RepoBranchSection"
 import { RepoRemoteSections } from "../components/RepoRemoteSections"
 import {
@@ -157,6 +159,7 @@ export function RepoDetailPage({
   const [conflictCount, setConflictCount] = useState(0)
   const [selectedCommitOid, setSelectedCommitOid] = useState<string | null>(null)
   const [alertState, setAlertState] = useState<AlertState>(null)
+  const { toastState, showToast, dismissToast, handleToastChanged, toastPresented } = useToast()
   const [pending, setPending] = useState<PendingAction>(null)
   const [amendMessage, setAmendMessage] = useState("")
   // 普通提交与重编共用同一个半屏表单
@@ -214,7 +217,7 @@ export function RepoDetailPage({
       if (tab === 3) await loadLog()
       await getRepoListStatus(bookmarkName, currentChanges.length)
     } catch (e: any) {
-      showAlert("加载失败", String(e?.message || e))
+      showToast("加载失败：" + String(e?.message || e), "error")
     } finally {
       setLoading(false)
     }
@@ -271,7 +274,7 @@ export function RepoDetailPage({
     try {
       await loadLog(true, query)
     } catch (e: any) {
-      showAlert("搜索失败", String(e?.message || e))
+      showToast("搜索失败：" + String(e?.message || e), "error")
     } finally {
       setHistorySearchBusy(false)
     }
@@ -283,7 +286,7 @@ export function RepoDetailPage({
     try {
       await loadLog(false)
     } catch (e: any) {
-      showAlert("加载历史失败", String(e?.message || e))
+      showToast("加载历史失败：" + String(e?.message || e), "error")
     } finally {
       setHistorySearchBusy(false)
     }
@@ -303,7 +306,7 @@ export function RepoDetailPage({
       try {
         await loadStashes()
       } catch (e: any) {
-        showAlert("加载失败", String(e?.message || e))
+        showToast("加载失败：" + String(e?.message || e), "error")
       } finally {
         setLoading(false)
       }
@@ -314,7 +317,7 @@ export function RepoDetailPage({
       try {
         await loadTrackedFiles()
       } catch (e: any) {
-        showAlert("加载失败", String(e?.message || e))
+        showToast("加载失败：" + String(e?.message || e), "error")
       } finally {
         setLoading(false)
       }
@@ -325,7 +328,7 @@ export function RepoDetailPage({
       try {
         await loadLog()
       } catch (e: any) {
-        showAlert("加载历史失败", String(e?.message || e))
+        showToast("加载历史失败：" + String(e?.message || e), "error")
       } finally {
         setHistoryLoading(false)
       }
@@ -414,7 +417,7 @@ export function RepoDetailPage({
       await addFiles(bookmarkName, filepath)
       await refreshChangesAndSnapshot()
     } catch (e: any) {
-      showAlert("暂存失败", String(e?.message || e))
+      showToast(`暂存失败：${String(e?.message || e)}`, "error")
     } finally {
       setStagingBusy(false)
     }
@@ -427,7 +430,7 @@ export function RepoDetailPage({
       await stageAll(bookmarkName)
       await refreshChangesAndSnapshot()
     } catch (e: any) {
-      showAlert("全部暂存失败", String(e?.message || e))
+      showToast(`全部暂存失败：${String(e?.message || e)}`, "error")
     } finally {
       setStagingBusy(false)
     }
@@ -440,7 +443,7 @@ export function RepoDetailPage({
       await unstageAll(bookmarkName)
       await refreshChangesAndSnapshot()
     } catch (e: any) {
-      showAlert("全部取消暂存失败", String(e?.message || e))
+      showToast(`全部取消暂存失败：${String(e?.message || e)}`, "error")
     } finally {
       setStagingBusy(false)
     }
@@ -460,9 +463,9 @@ export function RepoDetailPage({
       setStashBusy(true)
       await createStash(bookmarkName, message)
       await Promise.all([loadChanges(), loadStashes()])
-      showAlert("已保存到 Stash", message.trim() || "当前改动已保存")
+      showToast("已保存到 Stash：" + (message.trim() || "当前改动已保存"), "success")
     } catch (e: any) {
-      showAlert("保存 Stash 失败", String(e?.message || e))
+      showToast("保存 Stash 失败：" + String(e?.message || e), "error")
     } finally {
       setStashBusy(false)
     }
@@ -474,14 +477,14 @@ export function RepoDetailPage({
     try {
       await applyStash(bookmarkName, entry.index)
       await Promise.all([loadChanges(), loadStashes()])
-      showAlert("Stash 已应用", `「${entry.message}」已恢复，列表项仍保留`)
+      showToast("Stash 已应用：" + entry.message + "已恢复", "success")
     } catch (e: any) {
       try {
         await Promise.all([loadChanges(), loadStashes()])
       } catch (_refreshError) {
         /* 保留原错误提示 */
       }
-      showAlert("应用 Stash 失败", String(e?.message || e))
+      showToast("应用 Stash 失败：" + String(e?.message || e), "error")
     } finally {
       setStashBusy(false)
     }
@@ -504,11 +507,11 @@ export function RepoDetailPage({
   async function handleCommit(titleText: string, descriptionText: string) {
     const title = titleText.trim()
     if (!title) {
-      showAlert("gitgit", "请填写提交信息（标题）")
+      showToast("请填写提交信息（标题）", "warning")
       return
     }
     if (!changes.some((change) => change.staged)) {
-      showAlert("没有暂存内容", "请先暂存要提交的文件。")
+      showToast("没有暂存内容，请先暂存要提交的文件", "warning")
       return
     }
     setCommitSheetMode(null)
@@ -521,9 +524,9 @@ export function RepoDetailPage({
       setChanges([])
       await loadAll()
       await notifySync("commit", displayName, shortOid(oid))
-      showAlert("提交成功", shortOid(oid))
+      showToast("提交成功：" + shortOid(oid), "success")
     } catch (e: any) {
-      showAlert("提交失败", String(e?.message || e))
+      showToast("提交失败：" + String(e?.message || e), "error")
     } finally {
       setCommitting(false)
       setOpBusy(null)
@@ -536,16 +539,16 @@ export function RepoDetailPage({
     try {
       // 只复制完整 oid，不要其它信息
       await Pasteboard.setString(entry.oid)
-      showAlert("已复制", shortOid(entry.oid))
+      showToast("已复制：" + shortOid(entry.oid), "success")
     } catch (e: any) {
-      showAlert("复制失败", String(e?.message || e))
+      showToast("复制失败：" + String(e?.message || e), "error")
     }
   }
 
   function handleRollbackSelect(entry: CommitEntry) {
     const branch = branchInfo.current
     if (!branch) {
-      showAlert("回滚失败", "当前没有命名分支，无法回滚")
+      showToast("当前没有命名分支，无法回滚", "error")
       return
     }
     // 关闭选择页，再弹确认
@@ -572,7 +575,7 @@ export function RepoDetailPage({
   function handleAmendFormConfirm(titleText: string, descriptionText: string) {
     const title = titleText.trim()
     if (!title) {
-      showAlert("gitgit", "提交信息不能为空")
+      showToast("提交信息不能为空", "warning")
       return
     }
     setAmendMessage(buildCommitMessage(title, descriptionText))
@@ -615,7 +618,7 @@ export function RepoDetailPage({
   async function submitAmend() {
     const msg = amendMessage.trim()
     if (!msg) {
-      showAlert("gitgit", "提交信息不能为空")
+      showToast("提交信息不能为空", "warning")
       return
     }
     try {
@@ -634,9 +637,9 @@ export function RepoDetailPage({
       setAmendMessage("")
       await updateOpBusy("正在重编", "刷新仓库状态…")
       await loadAll()
-      showAlert("已重编", shortOid(oid))
+      showToast("已重编：" + shortOid(oid), "success")
     } catch (e: any) {
-      showAlert("重编失败", String(e?.message || e))
+      showToast("重编失败：" + String(e?.message || e), "error")
     } finally {
       setOpBusy(null)
     }
@@ -658,7 +661,7 @@ export function RepoDetailPage({
         try {
           await dropStash(bookmarkName, action.entry.index)
           await loadStashes()
-          showAlert("Stash 已删除", `「${action.entry.message}」已删除`)
+          showToast("Stash 已删除：" + action.entry.message, "success")
         } finally {
           setStashBusy(false)
         }
@@ -668,14 +671,14 @@ export function RepoDetailPage({
         await beginOpBusy("正在删除分支", action.branch)
         await deleteBranch(bookmarkName, action.branch)
         await loadAll()
-        showAlert("已删除", `本地分支 ${action.branch} 已删除`)
+        showToast("已删除：本地分支 " + action.branch, "success")
         return
       }
       if (action.type === "deleteRemoteBranch") {
         await beginOpBusy("正在删除远端分支", `origin/${action.branch}`)
         await deleteRemoteBranch(bookmarkName, "origin", action.branch)
         await loadAll()
-        showAlert("已删除", `远端分支 origin/${action.branch} 已删除`)
+        showToast("已删除：远端分支 origin/" + action.branch, "success")
         return
       }
       if (action.type === "revert") {
@@ -689,7 +692,7 @@ export function RepoDetailPage({
         const oid = await revertCommit(bookmarkName, action.entry.oid)
         await updateOpBusy("正在撤销", "刷新仓库状态…")
         await loadAll()
-        showAlert("已撤销", `新建反向提交 ${shortOid(oid)}`)
+        showToast("已撤销：新建反向提交 " + shortOid(oid), "success")
         return
       }
       if (action.type === "softReset") {
@@ -707,7 +710,7 @@ export function RepoDetailPage({
         await softResetHead(bookmarkName)
         await updateOpBusy("正在回退", "刷新仓库状态…")
         await loadAll()
-        showAlert("已回退", "已 soft 回退 HEAD，改动保留在工作区/暂存区")
+        showToast("已回退：已 soft 回退 HEAD，改动保留在工作区", "success")
         return
       }
       if (action.type === "amend") {
@@ -733,9 +736,9 @@ export function RepoDetailPage({
         )
         await updateOpBusy("正在回滚", "刷新仓库状态…")
         await loadAll()
-        showAlert(
-          "已回滚",
-          `${result.branch} 已重置到 ${shortOid(action.entry.oid)} 并强制推送到 origin/${result.branch}`
+        showToast(
+          "已回滚：" + result.branch + " 已重置到 " + shortOid(action.entry.oid) + " 并强制推送到 origin/" + result.branch,
+          "success"
         )
         return
       }
@@ -792,7 +795,7 @@ export function RepoDetailPage({
       } catch (_e) {
         /* 忽略刷新失败 */
       }
-      showAlert(title, String(e?.message || e))
+      showToast(title + ": " + String(e?.message || e), "error")
     } finally {
       // 操作遮罩统一收尾；submitAmend 内也会清，重复赋值无害
       setOpBusy(null)
@@ -824,6 +827,7 @@ export function RepoDetailPage({
     endOpBusy: () => setOpBusy(null),
     reloadRepo: loadAll,
     showAlert,
+    showToast,
     openConflictsPage,
   })
   const { handlePush, handlePull } = useRepoSyncActions({
@@ -849,6 +853,7 @@ export function RepoDetailPage({
     },
     reloadRepo: loadAll,
     showAlert,
+    showToast,
     openConflictsPage,
   })
   const mergeSources = branchInfo.branches.filter(
@@ -908,6 +913,17 @@ export function RepoDetailPage({
               />
             ),
           }
+          : undefined
+      }
+      toast={
+        toastState
+          ? {
+              isPresented: toastPresented,
+              onChanged: handleToastChanged,
+              content: toastContent(toastState.message, toastState.type),
+              duration: toastState.duration,
+              position: "top",
+            }
           : undefined
       }
       onAppear={() => {
@@ -1010,7 +1026,7 @@ export function RepoDetailPage({
               setHasRemote(true)
               setShowUpload(false)
               loadAll().then(() => {
-                showAlert("上传成功", `已上传到 ${repo.name}`)
+                showToast("上传成功：已上传到 " + repo.name, "success")
               })
             }}
             onRemotesChanged={() => {

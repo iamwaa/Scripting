@@ -19,6 +19,8 @@ import type {
 import { createIssue, listIssuesOrPulls } from "../api/githubApi"
 import { CreateIssueSheet } from "../components/CreateIssueSheet"
 import { AvatarView } from "../components/AvatarView"
+import { toastContent } from "../components/Toast"
+import { useToast } from "../hooks/useToast"
 import { GitHubItemDetailPage } from "./GitHubItemDetailPage"
 import { relativeTime } from "../utils/format"
 import {
@@ -114,7 +116,7 @@ export function GitHubWorkPage({
   const [creating, setCreating] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [selectedNumber, setSelectedNumber] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const { toastState, showToast, handleToastChanged, toastPresented } = useToast()
   const requestRef = useRef(0)
   // 新建 Issue 后 GitHub Search 索引有延迟，先乐观保留，避免回列表看不到
   const pendingCreatedRef = useRef<GitHubIssueItem[]>([])
@@ -141,7 +143,6 @@ export function GitHubWorkPage({
     const request = ++requestRef.current
     const nextPage = reset ? 1 : page + 1
     reset ? setLoading(true) : setLoadingMore(true)
-    setError(null)
     try {
       const result = await listIssuesOrPulls(
         fullName,
@@ -159,7 +160,7 @@ export function GitHubWorkPage({
       setPage(nextPage)
       setHasMore(result.hasMore)
     } catch (e: any) {
-      if (request === requestRef.current) setError(String(e?.message || e))
+      if (request === requestRef.current) showToast("加载失败：" + String(e?.message || e), "error")
     } finally {
       if (request === requestRef.current) {
         setLoading(false)
@@ -183,8 +184,9 @@ export function GitHubWorkPage({
       setFilter(0)
       await load(true, 0, 0)
       setSelectedNumber(created.number)
+      showToast("Issue 已创建：#" + created.number, "success")
     } catch (e: any) {
-      setError(String(e?.message || e))
+      showToast("创建 Issue 失败：" + String(e?.message || e), "error")
     } finally {
       setCreating(false)
     }
@@ -232,15 +234,17 @@ export function GitHubWorkPage({
           />
         ),
       }}
-      alert={{
-        title: "GitHub 请求失败",
-        message: <Text>{error || ""}</Text>,
-        isPresented: error != null,
-        onChanged: (presented: boolean) => {
-          if (!presented) setError(null)
-        },
-        actions: <Button title="好" role="cancel" action={() => setError(null)} />,
-      }}
+      toast={
+        toastState
+          ? {
+              isPresented: toastPresented,
+              onChanged: handleToastChanged,
+              content: toastContent(toastState.message, toastState.type),
+              duration: toastState.duration,
+              position: "top",
+            }
+          : undefined
+      }
     >
       <Section>
         <Picker

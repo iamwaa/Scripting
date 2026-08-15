@@ -3,10 +3,11 @@
  *
  * 在 push/pull/commit/clone 等关键操作完成后发送即时通知。
  * 使用 Scripting 内置 Notification.schedule（省略 trigger 即立即发送）。
+ * 错误类操作（push/pull/clone 失败）也会发送通知，方便后台操作时及时知晓。
  */
 
 import { Notification } from "scripting"
-import { readNotifyEnabled } from "./storage"
+import { readNotifyEnabled, readErrorNotifyEnabled } from "./storage"
 
 /** 同步操作类型 → 对应的完成提示文案 */
 type SyncKind = "commit" | "push" | "pull" | "fetch" | "clone"
@@ -17,6 +18,14 @@ const KIND_TITLE: Record<SyncKind, string> = {
   pull: "拉取完成",
   fetch: "获取完成",
   clone: "克隆完成",
+}
+
+const KIND_ERROR_TITLE: Record<SyncKind, string> = {
+  commit: "提交失败",
+  push: "推送失败",
+  pull: "拉取失败",
+  fetch: "获取失败",
+  clone: "克隆失败",
 }
 
 function redactSensitive(value?: string): string | undefined {
@@ -56,19 +65,27 @@ export async function notifySync(
   }
 }
 
-/** 发送错误通知 */
+/**
+ * 发送操作失败通知
+ * @param kind 操作类型（用于标题文案）
+ * @param repoName 仓库名称
+ * @param message 错误信息
+ */
 export async function notifyError(
+  kind: SyncKind,
   repoName: string,
   message: string
 ): Promise<void> {
-  if (!readNotifyEnabled()) return
+  if (!readErrorNotifyEnabled()) return
   try {
     await Notification.schedule({
-      title: "操作失败",
+      title: KIND_ERROR_TITLE[kind],
       subtitle: redactSensitive(repoName),
       body: redactSensitive(message),
       silent: false,
       threadIdentifier: "gitgit-error",
+      interruptionLevel: "active",
+      tapAction: { type: "runScript", scriptName: "gitgit" },
     })
   } catch (e) {
     console.warn("⚠️ 发送通知失败: " + e)

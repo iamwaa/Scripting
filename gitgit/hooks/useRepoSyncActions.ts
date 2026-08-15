@@ -5,9 +5,10 @@ import {
   push,
   RemoteCancelToken,
 } from "../services/gitService"
-import { notifySync } from "../services/notifyService"
+import { notifySync, notifyError } from "../services/notifyService"
 import { formatPullSuccessAlert } from "../utils/branchMerge"
 import type { RemoteProgressInfo } from "../utils/remoteProgress"
+import type { ToastType } from "../hooks/useToast"
 
 type UseRepoSyncActionsProps = {
   bookmarkName: string
@@ -26,6 +27,7 @@ type UseRepoSyncActionsProps = {
   refreshSyncState: () => Promise<void>
   reloadRepo: () => Promise<void>
   showAlert: (title: string, message: string) => void
+  showToast: (message: string, type?: ToastType, duration?: number) => void
   openConflictsPage: () => void
 }
 
@@ -42,6 +44,7 @@ export function useRepoSyncActions({
   refreshSyncState,
   reloadRepo,
   showAlert,
+  showToast,
   openConflictsPage,
 }: UseRepoSyncActionsProps) {
   async function handlePush() {
@@ -76,10 +79,10 @@ export function useRepoSyncActions({
       }
       await push(bookmarkName, "origin", branch, false, remoteOptions)
       await notifySync("push", displayName, branch)
-      showAlert("推送成功", `已发布到 GitHub：origin/${branch}`)
+      showToast(`推送成功：origin/${branch}`, "success")
     } catch (error: any) {
       if (isRemoteOperationCancelled(error)) {
-        showAlert("已取消", "推送已取消")
+        showToast("推送已取消", "warning")
       } else {
         const code = String(error?.code || "")
         const message = String(error?.message || error)
@@ -87,7 +90,8 @@ export function useRepoSyncActions({
           openConflictsPage()
           showAlert("合并冲突", message)
         } else {
-          showAlert("推送失败", message)
+          showToast(`推送失败：${message}`, "error")
+          notifyError("push", displayName, message)
         }
       }
     } finally {
@@ -113,10 +117,10 @@ export function useRepoSyncActions({
       setPulledAt(result.branch, Date.now())
       await notifySync("pull", displayName, result.branch || currentBranch || "")
       const alert = formatPullSuccessAlert(result)
-      showAlert(alert.title, alert.message)
+      showToast(`${alert.title}：${alert.message}`, "success")
     } catch (error: any) {
       if (isRemoteOperationCancelled(error)) {
-        showAlert("已取消", "拉取已取消")
+        showToast("拉取已取消", "warning")
         return
       }
       const code = String(error?.code || "")
@@ -130,7 +134,8 @@ export function useRepoSyncActions({
         openConflictsPage()
         showAlert("合并冲突", message)
       } else {
-        showAlert("拉取失败", message)
+        showToast(`拉取失败：${message}`, "error")
+        notifyError("pull", displayName, message)
       }
     } finally {
       try {

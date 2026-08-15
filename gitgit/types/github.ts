@@ -115,6 +115,8 @@ export interface ActionJob {
   completedAt: string
   /** Job 步骤列表 */
   steps: ActionStep[]
+  /** 关联的 check-run ID（用于获取注解） */
+  checkRunId?: number
 }
 
 /** Job 中的单个步骤 */
@@ -123,10 +125,35 @@ export interface ActionStep {
   status: ActionJobStatus
   conclusion: ActionJobConclusion
   number: number
+  /** 步骤开始时间（ISO 8601，可能为空） */
+  startedAt?: string
+  /** 步骤结束时间（ISO 8601，可能为空） */
+  completedAt?: string
 }
 
 /** Job 日志（纯文本） */
 export type ActionJobLog = string
+
+/** 注解级别 */
+export type AnnotationLevel = "notice" | "warning" | "failure"
+
+/** 检查运行注解（类似 GitHub 网页 Annotations 区域） */
+export interface ActionAnnotation {
+  /** 注解级别 */
+  level: AnnotationLevel
+  /** 注解标题（可能为空） */
+  title?: string
+  /** 注解消息内容 */
+  message: string
+  /** 关联的文件路径（可能为空） */
+  path?: string
+  /** 起始行号 */
+  startLine?: number
+  /** 结束行号 */
+  endLine?: number
+  /** 原始详情（可能为空） */
+  rawDetails?: string
+}
 
 /** 工作流定义（用于筛选与手动触发） */
 export interface ActionWorkflow {

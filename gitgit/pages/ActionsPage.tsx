@@ -25,6 +25,8 @@ import {
 import type { ActionRun, ActionWorkflow } from "../types/github"
 import { deleteWorkflowRun, dispatchWorkflow, listWorkflows, listWorkflowRuns } from "../api/githubApi"
 import { AvatarView } from "../components/AvatarView"
+import { toastContent } from "../components/Toast"
+import { useToast } from "../hooks/useToast"
 import { ActionRunDetailPage } from "./ActionRunDetailPage"
 import { relativeTime } from "../utils/format"
 import {
@@ -132,7 +134,7 @@ export function ActionsPage({ fullName }: { fullName: string }) {
   const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const { toastState, showToast, handleToastChanged, toastPresented } = useToast()
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
   const requestRef = useRef(0)
 
@@ -141,13 +143,11 @@ export function ActionsPage({ fullName }: { fullName: string }) {
   // null = 全部工作流；否则为工作流 ID
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<number | null>(null)
   const [dispatching, setDispatching] = useState(false)
-  const [dispatchMessage, setDispatchMessage] = useState<string | null>(null)
 
   async function load(reset = true) {
     const request = ++requestRef.current
     const nextPage = reset ? 1 : page + 1
     reset ? setLoading(true) : setLoadingMore(true)
-    setError(null)
     try {
       const result = await listWorkflowRuns(fullName, nextPage, PAGE_SIZE, selectedWorkflowId || undefined)
       if (request !== requestRef.current) return
@@ -155,7 +155,7 @@ export function ActionsPage({ fullName }: { fullName: string }) {
       setPage(nextPage)
       setHasMore(result.hasMore)
     } catch (e: any) {
-      if (request === requestRef.current) setError(String(e?.message || e))
+      if (request === requestRef.current) showToast("加载失败：" + String(e?.message || e), "error")
     } finally {
       if (request === requestRef.current) {
         setLoading(false)
@@ -196,11 +196,11 @@ export function ActionsPage({ fullName }: { fullName: string }) {
     setDispatching(true)
     try {
       await dispatchWorkflow(fullName, workflow.id, { ref })
-      setDispatchMessage(`已触发 ${workflow.displayName}（${ref}）`)
+      showToast("已触发 " + workflow.displayName + "（" + ref + "）", "success")
       // 触发后延迟刷新列表
       setTimeout(() => load(true), 2000)
     } catch (e: any) {
-      setError(String(e?.message || e))
+      showToast("触发失败：" + String(e?.message || e), "error")
     } finally {
       setDispatching(false)
     }
@@ -223,8 +223,9 @@ export function ActionsPage({ fullName }: { fullName: string }) {
       await deleteWorkflowRun(fullName, run.id)
       // 从列表中移除已删除的运行
       setRuns((current) => current.filter((r) => r.id !== run.id))
+      showToast("已删除运行 #" + run.id, "success")
     } catch (e: any) {
-      setError(String(e?.message || e))
+      showToast("删除失败：" + String(e?.message || e), "error")
     }
   }
 
@@ -270,15 +271,17 @@ export function ActionsPage({ fullName }: { fullName: string }) {
           </Menu>
         ),
       }}
-      alert={{
-        title: "GitHub 请求失败",
-        message: <Text>{error || ""}</Text>,
-        isPresented: error != null,
-        onChanged: (presented: boolean) => {
-          if (!presented) setError(null)
-        },
-        actions: <Button title="好" role="cancel" action={() => setError(null)} />,
-      }}
+      toast={
+        toastState
+          ? {
+              isPresented: toastPresented,
+              onChanged: handleToastChanged,
+              content: toastContent(toastState.message, toastState.type),
+              duration: toastState.duration,
+              position: "top",
+            }
+          : undefined
+      }
     >
       {/* 工作流筛选 */}
       {workflows.length > 0 ? (

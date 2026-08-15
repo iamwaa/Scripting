@@ -6,6 +6,7 @@ import {
 } from "../services/gitService"
 import { validateBranchName } from "../utils/branch"
 import { formatMergeSuccessAlert } from "../utils/branchMerge"
+import type { ToastType } from "../hooks/useToast"
 
 type UseRepoBranchActionsProps = {
   bookmarkName: string
@@ -18,6 +19,7 @@ type UseRepoBranchActionsProps = {
   endOpBusy: () => void
   reloadRepo: () => Promise<void>
   showAlert: (title: string, message: string) => void
+  showToast: (message: string, type?: ToastType, duration?: number) => void
   openConflictsPage: () => void
 }
 
@@ -32,6 +34,7 @@ export function useRepoBranchActions({
   endOpBusy,
   reloadRepo,
   showAlert,
+  showToast,
   openConflictsPage,
 }: UseRepoBranchActionsProps) {
   async function handleMergeIntoCurrent(source: string) {
@@ -43,7 +46,7 @@ export function useRepoBranchActions({
       )
       const result = await mergeBranchIntoCurrent(bookmarkName, source)
       const alert = formatMergeSuccessAlert(result)
-      showAlert(alert.title, alert.message)
+      showToast(`${alert.title}：${alert.message}`, "success")
     } catch (error: any) {
       const code = String(error?.code || "")
       const message = String(error?.message || error)
@@ -56,7 +59,7 @@ export function useRepoBranchActions({
         openConflictsPage()
         showAlert("合并冲突", message)
       } else {
-        showAlert("合并失败", message)
+        showToast(`合并失败：${message}`, "error")
       }
     } finally {
       try {
@@ -74,8 +77,9 @@ export function useRepoBranchActions({
       await beginOpBusy("正在切换分支", ref)
       await checkoutBranch(bookmarkName, ref)
       await reloadRepo()
+      showToast(`已切换到 ${ref}`, "success")
     } catch (error: any) {
-      showAlert("切换失败", String(error?.message || error))
+      showToast(`切换失败：${String(error?.message || error)}`, "error")
     } finally {
       endOpBusy()
     }
@@ -84,7 +88,7 @@ export function useRepoBranchActions({
   async function handleRenameBranch() {
     const from = currentBranch
     if (!from) {
-      showAlert("gitgit", "当前没有可重命名的分支")
+      showToast("当前没有可重命名的分支", "warning")
       return
     }
     try {
@@ -100,7 +104,7 @@ export function useRepoBranchActions({
       try {
         to = validateBranchName(input)
       } catch (error: any) {
-        showAlert("名称无效", String(error?.message || error))
+        showToast(`名称无效：${String(error?.message || error)}`, "warning")
         return
       }
       if (to === from) return
@@ -108,20 +112,20 @@ export function useRepoBranchActions({
       const result = await renameBranch(bookmarkName, from, to)
       await reloadRepo()
       if (!result.oldRemote) {
-        showAlert("已重命名", `${from} → ${to}`)
+        showToast(`已重命名：${from} → ${to}`, "success")
       } else if (result.remoteError) {
         showAlert(
           "本地已重命名，远端同步失败",
           `${from} → ${to}。${result.pushedNewBranch ? "新分支已推送，但删除远端旧分支失败" : "推送新分支失败"}：${result.remoteError}`
         )
       } else {
-        showAlert(
-          "已重命名并同步远端",
-          `${from} → ${to}。已推送新分支并删除远端旧分支「${from}」。`
+        showToast(
+          `已重命名并同步远端：${from} → ${to}`,
+          "success"
         )
       }
     } catch (error: any) {
-      showAlert("重命名失败", String(error?.message || error))
+      showToast(`重命名失败：${String(error?.message || error)}`, "error")
     } finally {
       endOpBusy()
     }
@@ -139,23 +143,23 @@ export function useRepoBranchActions({
       if (input == null) return
       const name = input.trim()
       if (!name) {
-        showAlert("gitgit", "分支名称不能为空")
+        showToast("分支名称不能为空", "warning")
         return
       }
       const emptyBefore = !hasCommits
       await beginOpBusy("正在新建分支", name)
       await createBranch(bookmarkName, name)
       await reloadRepo()
-      showAlert(
-        emptyBefore ? "已设置" : "已创建本地分支",
+      showToast(
         emptyBefore
           ? `空仓库目标分支已设为 ${name}，首次提交后生效`
           : hasRemote
-            ? `已创建并切换到 ${name}。点击「推送 Push」发布到 GitHub。`
-            : `已创建并切换到 ${name}`
+            ? `已创建并切换到 ${name}，点击「推送」发布到 GitHub`
+            : `已创建并切换到 ${name}`,
+        "success"
       )
     } catch (error: any) {
-      showAlert("创建失败", String(error?.message || error))
+      showToast(`创建失败：${String(error?.message || error)}`, "error")
     } finally {
       endOpBusy()
     }

@@ -18,23 +18,29 @@ import {
   useState,
   type ShapeStyle,
 } from "scripting"
-import type { ActionArtifact, ActionJob, ActionRun } from "../types/github"
+import type { ActionAnnotation, ActionArtifact, ActionJob, ActionRun, ActionStep } from "../types/github"
 import {
   getWorkflowRun,
   listWorkflowJobs,
   getJobLog,
+  getJobAnnotations,
   listArtifacts,
   getArtifactDownloadInfo,
 } from "../api/githubApi"
 import { AvatarView } from "../components/AvatarView"
 import { ActionLogViewer } from "../components/ActionLogViewer"
+import { toastContent } from "../components/Toast"
+import { useToast } from "../hooks/useToast"
 import { relativeTime } from "../utils/format"
+import { formatStepDuration } from "../utils/actionsLog"
 import {
   COLOR_GREEN,
   COLOR_LABEL,
   COLOR_ORANGE,
   COLOR_RED,
+  COLOR_ACCENT,
   COLOR_SECONDARY_LABEL,
+  COLOR_TERTIARY_LABEL,
 } from "../constants/colors"
 
 /** 运行/Job 状态对应的图标与颜色（与 ActionsPage 一致） */
@@ -79,32 +85,6 @@ function stepIcon(
   return { icon: v.icon, color: v.color }
 }
 
-/** 快速统计日志中的错误与警告行数 */
-function countLogLevels(text: string): { errors: number; warnings: number } {
-  let errors = 0
-  let warnings = 0
-  for (const line of text.split("\n")) {
-    const lower = line.toLowerCase()
-    if (
-      /\berror\b/.test(lower) ||
-      lower.includes("failed") ||
-      lower.includes("exception") ||
-      lower.includes("panic") ||
-      lower.startsWith("error:") ||
-      lower.includes("##[error]")
-    ) {
-      errors++
-    } else if (
-      lower.includes("warning:") ||
-      lower.includes("##[warning]") ||
-      lower.includes("warn:")
-    ) {
-      warnings++
-    }
-  }
-  return { errors, warnings }
-}
-
 export function ActionRunDetailPage({
   fullName,
   runId,
@@ -115,16 +95,24 @@ export function ActionRunDetailPage({
   const [run, setRun] = useState<ActionRun | null>(null)
   const [jobs, setJobs] = useState<ActionJob[]>([])
   const [error, setError] = useState<string | null>(null)
+  const { toastState, showToast, handleToastChanged, toastPresented } = useToast()
   // 当前展开查看日志的 Job ID
   const [expandedJobId, setExpandedJobId] = useState<number | null>(null)
   const [logText, setLogText] = useState<string | null>(null)
   const [logLoading, setLogLoading] = useState(false)
   const [logError, setLogError] = useState<string | null>(null)
-  const [logCounts, setLogCounts] = useState<{ errors: number; warnings: number } | null>(null)
-  // 进入富文本日志查看器的 Job（名称用于标题）
-  const [viewerJob, setViewerJob] = useState<{ name: string; log: string } | null>(null)
+  // 进入富文本日志查看器的 Job（名称用于标题、步骤列表与预选步骤）
+  const [viewerJob, setViewerJob] = useState<{
+    name: string
+    log: string
+    steps?: ActionStep[]
+    initialStepNumber?: number
+  } | null>(null)
   // 工件列表
   const [artifacts, setArtifacts] = useState<ActionArtifact[]>([])
+  // 注解列表（所有 Job 的注解合并）
+  const [annotations, setAnnotations] = useState<ActionAnnotation[]>([])
+  const [annotationsLoading, setAnnotationsLoading] = useState(false)
   // 工件下载
   const [downloadingId, setDownloadingId] = useState<number | null>(null)
   const [downloadProgress, setDownloadProgress] = useState<number>(0)
@@ -140,8 +128,31 @@ export function ActionRunDetailPage({
       setRun(runData)
       setJobs(jobsData)
       setArtifacts(artifactsData)
+      // 后台获取注解（不阻塞首屏渲染）
+      loadAnnotations(jobsData)
     } catch (e: any) {
       setError(String(e?.message || e))
+    }
+  }
+
+  /** 获取所有 Job 的注解并合并 */
+  async function loadAnnotations(jobsData: ActionJob[]) {
+    const checkRunIds = jobsData
+      .map((j) => j.checkRunId)
+      .filter((id): id is number => id != null)
+    if (checkRunIds.length === 0) return
+    setAnnotationsLoading(true)
+    try {
+      const results = await Promise.all(
+        checkRunIds.map((id) => getJobAnnotations(fullName, id))
+      )
+      const merged = results.flat()
+      setAnnotations(merged)
+    } catch {
+      // 注解加载失败不阻塞页面
+      setAnnotations([])
+    } finally {
+      setAnnotationsLoading(false)
     }
   }
 
@@ -155,20 +166,52 @@ export function ActionRunDetailPage({
       setExpandedJobId(null)
       setLogText(null)
       setLogError(null)
-      setLogCounts(null)
       return
     }
     setExpandedJobId(job.id)
     setLogText(null)
     setLogError(null)
-    setLogCounts(null)
     setLogLoading(true)
     try {
       const text = await getJobLog(fullName, job.id)
       setLogText(text)
-      setLogCounts(countLogLevels(text))
     } catch (e: any) {
       setLogError(String(e?.message || e))
+    } finally {
+      setLogLoading(false)
+    }
+  }
+
+  /** 点击步骤：确保日志已加载后打开查看器并预选该步骤 */
+  async function handleStepClick(job: ActionJob, step: ActionStep) {
+    // 日志已在当前展开 Job 中加载过
+    if (expandedJobId === job.id && logText) {
+      setViewerJob({
+        name: job.name,
+        log: logText,
+        steps: job.steps,
+        initialStepNumber: step.number,
+      })
+      return
+    }
+    // 日志未加载：先展开 Job 并加载日志
+    setExpandedJobId(job.id)
+    setLogText(null)
+    setLogError(null)
+    setLogLoading(true)
+    try {
+      const text = await getJobLog(fullName, job.id)
+      setLogText(text)
+      // 加载成功后直接打开查看器
+      setViewerJob({
+        name: job.name,
+        log: text,
+        steps: job.steps,
+        initialStepNumber: step.number,
+      })
+    } catch (e: any) {
+      setLogError(String(e?.message || e))
+      showToast("日志加载失败：" + String(e?.message || e), "error")
     } finally {
       setLogLoading(false)
     }
@@ -212,8 +255,9 @@ export function ActionRunDetailPage({
       })
       // 弹出分享面板供用户保存
       await ShareSheet.present([filepath])
+      showToast("工件已下载", "success")
     } catch (e: any) {
-      setError(String(e?.message || e))
+      showToast("下载失败：" + String(e?.message || e), "error")
     } finally {
       // 无论成功、失败或取消，都清理临时文件
       try {
@@ -248,6 +292,8 @@ export function ActionRunDetailPage({
             key={viewerJob.name}
             logText={viewerJob.log}
             jobName={viewerJob.name}
+            steps={viewerJob.steps}
+            initialStepNumber={viewerJob.initialStepNumber}
           />
         ) : (
           <Text>加载中…</Text>
@@ -262,15 +308,17 @@ export function ActionRunDetailPage({
           />
         ) : undefined,
       }}
-      alert={{
-        title: "提示",
-        message: <Text>{error || ""}</Text>,
-        isPresented: error != null,
-        onChanged: (presented: boolean) => {
-          if (!presented) setError(null)
-        },
-        actions: <Button title="好" role="cancel" action={() => setError(null)} />,
-      }}
+      toast={
+        toastState
+          ? {
+              isPresented: toastPresented,
+              onChanged: handleToastChanged,
+              content: toastContent(toastState.message, toastState.type),
+              duration: toastState.duration,
+              position: "top",
+            }
+          : undefined
+      }
     >
       {error ? (
         <Section footer={<Text>{error}</Text>}>
@@ -318,6 +366,51 @@ export function ActionRunDetailPage({
             ) : null}
           </Section>
 
+          {/* 注解（类似 GitHub 网页 Annotations） */}
+          {annotationsLoading ? (
+            <Section header={<Text>注解</Text>}>
+              <HStack alignment="center" spacing={6}>
+                <Image systemName="arrow.triangle.2.circlepath" font={12} foregroundStyle={COLOR_SECONDARY_LABEL} />
+                <Text font={13} foregroundStyle={COLOR_SECONDARY_LABEL}>加载注解中…</Text>
+              </HStack>
+            </Section>
+          ) : annotations.length > 0 ? (
+            <Section header={<Text>注解（{annotations.length}）</Text>}>
+              {annotations.map((ann, idx) => {
+                const isFailure = ann.level === "failure"
+                const isWarning = ann.level === "warning"
+                const icon = isFailure ? "xmark.octagon.fill" : isWarning ? "exclamationmark.triangle.fill" : "info.circle.fill"
+                const color = isFailure ? COLOR_RED : isWarning ? COLOR_ORANGE : COLOR_ACCENT
+                return (
+                  <VStack key={idx} alignment="leading" spacing={4}>
+                    {/* 图标与文本紧贴：图标自然尺寸 + 零间距，消除 SF Symbol 内边距造成的视觉空隙 */}
+                    <HStack alignment="center" spacing={0} frame={{ maxWidth: "infinity" }}>
+                      <Image systemName={icon} font={17} foregroundStyle={color} />
+                      <VStack alignment="leading" spacing={2} frame={{ maxWidth: "infinity", alignment: "leading" }} padding={{ leading: 6 }}>
+                        {ann.title ? (
+                          <Text font={13} foregroundStyle={COLOR_LABEL} lineLimit={2}>
+                            {ann.title}
+                          </Text>
+                        ) : null}
+                        <Text font={12} foregroundStyle={isFailure ? COLOR_RED : COLOR_SECONDARY_LABEL} lineLimit={4}>
+                          {ann.message}
+                        </Text>
+                        {ann.path ? (
+                          <HStack alignment="center" spacing={4}>
+                            <Image systemName="doc.text" font={10} foregroundStyle={COLOR_TERTIARY_LABEL} />
+                            <Text font={11} foregroundStyle={COLOR_TERTIARY_LABEL} lineLimit={1}>
+                              {ann.path}{ann.startLine ? `:${ann.startLine}` : ""}
+                            </Text>
+                          </HStack>
+                        ) : null}
+                      </VStack>
+                    </HStack>
+                  </VStack>
+                )
+              })}
+            </Section>
+          ) : null}
+
           {/* Jobs */}
           <Section header={<Text>Jobs（{jobs.length}）</Text>}>
             {jobs.length === 0 ? (
@@ -347,90 +440,48 @@ export function ActionRunDetailPage({
                       </HStack>
                     </Button>
 
-                    {/* 步骤列表 */}
+                    {/* 步骤列表（可点击查看对应步骤日志） */}
                     {isExpanded && job.steps.length > 0 ? (
                       <VStack alignment="leading" spacing={4} frame={{ maxWidth: "infinity" }}>
                         {job.steps.map((step) => {
                           const si = stepIcon(step.status, step.conclusion)
+                          const duration = formatStepDuration(step.startedAt, step.completedAt)
                           return (
-                            <HStack key={step.number} alignment="center" spacing={6}>
-                              <Image systemName={si.icon} font={11} foregroundStyle={si.color} />
-                              <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL} lineLimit={1}>
-                                {step.name}
-                              </Text>
-                            </HStack>
+                            <Button
+                              key={step.number}
+                              action={() => handleStepClick(job, step)}
+                              buttonStyle="plain"
+                              disabled={logLoading}
+                              frame={{ maxWidth: "infinity", alignment: "leading" }}
+                            >
+                              <HStack alignment="center" spacing={6}>
+                                <Image systemName={si.icon} font={11} foregroundStyle={si.color} />
+                                <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL} lineLimit={1} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+                                  {step.name}
+                                </Text>
+                                {duration ? (
+                                  <Text font={11} foregroundStyle={COLOR_TERTIARY_LABEL}>
+                                    {duration}
+                                  </Text>
+                                ) : null}
+                                {logLoading ? (
+                                  <Image systemName="arrow.triangle.2.circlepath" font={10} foregroundStyle={COLOR_TERTIARY_LABEL} />
+                                ) : (
+                                  <Image systemName="chevron.right" font={10} foregroundStyle={COLOR_TERTIARY_LABEL} />
+                                )}
+                              </HStack>
+                            </Button>
                           )
                         })}
                       </VStack>
                     ) : null}
 
-                    {/* 展开时显示日志摘要与查看入口 */}
-                    {isExpanded ? (
-                      <VStack alignment="leading" spacing={6}>
-                        {logLoading ? (
-                          <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL}>加载日志中…</Text>
-                        ) : logError ? (
-                          <Text font={12} foregroundStyle={COLOR_RED}>日志加载失败：{logError}</Text>
-                        ) : logText ? (
-                          <>
-                            {/* 日志摘要：错误/警告行数 */}
-                            {logCounts && logCounts.errors > 0 ? (
-                              <HStack alignment="center" spacing={4}>
-                                <Image systemName="xmark.octagon.fill" font={11} foregroundStyle={COLOR_RED} />
-                                <Text font={12} foregroundStyle={COLOR_RED}>
-                                  {logCounts.errors} 行错误
-                                </Text>
-                                {logCounts.warnings > 0 ? (
-                                  <>
-                                    <Image systemName="exclamationmark.triangle.fill" font={11} foregroundStyle={COLOR_ORANGE} />
-                                    <Text font={12} foregroundStyle={COLOR_ORANGE}>
-                                      {logCounts.warnings} 行警告
-                                    </Text>
-                                  </>
-                                ) : null}
-                              </HStack>
-                            ) : logCounts && logCounts.warnings > 0 ? (
-                              <HStack alignment="center" spacing={4}>
-                                <Image systemName="exclamationmark.triangle.fill" font={11} foregroundStyle={COLOR_ORANGE} />
-                                <Text font={12} foregroundStyle={COLOR_ORANGE}>
-                                  {logCounts.warnings} 行警告
-                                </Text>
-                              </HStack>
-                            ) : (
-                              <HStack alignment="center" spacing={4}>
-                                <Image systemName="checkmark.circle.fill" font={11} foregroundStyle={COLOR_GREEN} />
-                                <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL}>
-                                  无错误或警告
-                                </Text>
-                              </HStack>
-                            )}
-
-                            {/* 日志预览：前几行 */}
-                            <Text
-                              font={11}
-                              foregroundStyle={COLOR_SECONDARY_LABEL}
-                              lineLimit={5}
-                              frame={{ maxWidth: "infinity", alignment: "leading" }}
-                            >
-                              {logText.slice(0, 500)}
-                            </Text>
-
-                            {/* 查看完整日志按钮 */}
-                            <Button
-                              action={() => setViewerJob({ name: job.name, log: logText })}
-                              buttonStyle="plain"
-                              frame={{ maxWidth: "infinity", alignment: "leading" }}
-                            >
-                              <HStack alignment="center" spacing={4}>
-                                <Image systemName="doc.text.magnifyingglass" font={13} foregroundStyle="systemBlue" />
-                                <Text font={13} foregroundStyle="systemBlue">查看完整日志</Text>
-                              </HStack>
-                            </Button>
-                          </>
-                        ) : (
-                          <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL}>无日志</Text>
-                        )}
-                      </VStack>
+                    {/* 步骤加载中提示 */}
+                    {isExpanded && logLoading ? (
+                      <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL}>加载日志中…</Text>
+                    ) : null}
+                    {isExpanded && logError ? (
+                      <Text font={12} foregroundStyle={COLOR_RED}>日志加载失败：{logError}</Text>
                     ) : null}
                   </VStack>
                 )
