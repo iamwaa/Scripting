@@ -7,6 +7,7 @@ import {
   NavigationLink,
   Image,
   useEffect,
+  useRef,
   useState,
 } from "scripting"
 import type { CommitEntry, RefCompareResult } from "../types/git"
@@ -112,45 +113,53 @@ export function ComparePage({ bookmarkName }: { bookmarkName: string }) {
   const [progress, setProgress] = useState<RemoteProgressInfo | null>(null)
   const [cancelToken, setCancelToken] = useState<RemoteCancelToken | null>(null)
   const [cancelling, setCancelling] = useState(false)
+  const requestRef = useRef(0)
+  const tokenRef = useRef<RemoteCancelToken | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
+  async function loadCompare() {
+    const request = ++requestRef.current
+    tokenRef.current?.cancel()
+    const token = new RemoteCancelToken()
+    tokenRef.current = token
     setLoading(true)
     setResult(null)
     setError(null)
     setNoTrack(false)
     setProgress(null)
     setCancelling(false)
-    const token = new RemoteCancelToken()
     setCancelToken(token)
-    compareWithUpstream(bookmarkName, undefined, {
-      cancelToken: token,
-      onProgress: async (next) => {
-        if (!cancelled) setProgress(next)
-      },
-    })
-      .then((next) => {
-        if (cancelled) return
-        setResult(next)
-        setNoTrack(next == null)
+    try {
+      const next = await compareWithUpstream(bookmarkName, undefined, {
+        cancelToken: token,
+        onProgress: async (progressInfo) => {
+          if (request === requestRef.current) setProgress(progressInfo)
+        },
       })
-      .catch((e: any) => {
-        if (cancelled) return
-        if (isRemoteOperationCancelled(e)) {
-          setError("对比已取消")
-        } else {
-          setError(String(e?.message || e))
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false)
-          setCancelToken(null)
-        }
-      })
+      if (request !== requestRef.current) return
+      setResult(next)
+      setNoTrack(next == null)
+    } catch (e: any) {
+      if (request !== requestRef.current) return
+      setError(
+        isRemoteOperationCancelled(e)
+          ? "对比已取消"
+          : String(e?.message || e)
+      )
+    } finally {
+      if (request === requestRef.current) {
+        setLoading(false)
+        setCancelToken(null)
+        tokenRef.current = null
+      }
+    }
+  }
+
+  useEffect(() => {
+    loadCompare()
     return () => {
-      cancelled = true
-      token.cancel()
+      requestRef.current++
+      tokenRef.current?.cancel()
+      tokenRef.current = null
     }
   }, [bookmarkName])
 
@@ -196,6 +205,7 @@ export function ComparePage({ bookmarkName }: { bookmarkName: string }) {
       navigationTitle="与远端差异"
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
+      refreshable={loadCompare}
       overlay={
         loading
           ? {

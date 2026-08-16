@@ -182,6 +182,10 @@ export function ActionsPage({ fullName }: { fullName: string }) {
     loadWorkflows()
   }, [fullName])
 
+  async function handleRefresh() {
+    await Promise.all([load(true), loadWorkflows()])
+  }
+
   // 手动触发工作流
   async function handleDispatch(workflow: ActionWorkflow) {
     if (dispatching) return
@@ -234,6 +238,7 @@ export function ActionsPage({ fullName }: { fullName: string }) {
       navigationTitle={fullName}
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
+      refreshable={handleRefresh}
       navigationDestination={{
         isPresented: selectedRunId != null,
         onChanged: (presented: boolean) => {

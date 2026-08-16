@@ -10,9 +10,6 @@ import {
   Button,
   HStack,
   Menu,
-  Toolbar,
-  ToolbarItem,
-  ToolbarSpacer,
   useRef,
   useState,
 } from "scripting"
@@ -91,13 +88,6 @@ import { COLOR_SECONDARY_LABEL } from "../constants/colors"
 import { githubRepoFromRemoteUrl } from "../utils/github"
 
 const HISTORY_PAGE_SIZE = 50
-const supportsToolbarSpacer = (() => {
-  const major = Number.parseInt(
-    String(Device.systemVersion).split(".")[0] ?? "0",
-    10
-  )
-  return Number.isFinite(major) && major >= 26
-})()
 
 type AlertState = {
   title: string
@@ -933,56 +923,19 @@ export function RepoDetailPage({
         }
         loadAll()
       }}
-      toolbar={
-        supportsToolbarSpacer ? (
-          <Toolbar>
-            {githubFullName ? (
-              <ToolbarItem placement="topBarTrailing">
-                <Menu
-                  title="GitHub"
-                  systemImage="rectangle.stack"
-                >
-                  <Button title="Issues" systemImage="smallcircle.filled.circle" action={() => openGitHubWorkPage(0)} />
-                  <Button title="Pull Requests" systemImage="arrow.triangle.merge" action={() => openGitHubWorkPage(1)} />
-                  <Button title="Actions" systemImage="hammer.fill" action={() => openGitHubWorkPage(2)} />
-                </Menu>
-              </ToolbarItem>
-            ) : null}
-            {githubFullName ? (
-              <ToolbarSpacer sizing="fixed" placement="topBarTrailing" />
-            ) : null}
-            <ToolbarItem placement="topBarTrailing">
-              <Button
-                title="刷新"
-                systemImage="arrow.clockwise"
-                action={handleRefresh}
-                disabled={loading}
-              />
-            </ToolbarItem>
-          </Toolbar>
-        ) : {
-          topBarTrailing: (
-            <HStack spacing={10}>
-              {githubFullName ? (
-                <Menu
-                  title="GitHub"
-                  systemImage="rectangle.stack"
-                >
-                  <Button title="Issues" systemImage="smallcircle.filled.circle" action={() => openGitHubWorkPage(0)} />
-                  <Button title="Pull Requests" systemImage="arrow.triangle.merge" action={() => openGitHubWorkPage(1)} />
-                  <Button title="Actions" systemImage="hammer.fill" action={() => openGitHubWorkPage(2)} />
-                </Menu>
-              ) : null}
-              <Button
-                title="刷新"
-                systemImage="arrow.clockwise"
-                action={handleRefresh}
-                disabled={loading}
-              />
-            </HStack>
-          ),
-        }
-      }
+      refreshable={handleRefresh}
+      toolbar={{
+        topBarTrailing: githubFullName ? (
+          <Menu
+            title="GitHub"
+            systemImage="rectangle.stack"
+          >
+            <Button title="Issues" systemImage="smallcircle.filled.circle" action={() => openGitHubWorkPage(0)} />
+            <Button title="Pull Requests" systemImage="arrow.triangle.merge" action={() => openGitHubWorkPage(1)} />
+            <Button title="Actions" systemImage="hammer.fill" action={() => openGitHubWorkPage(2)} />
+          </Menu>
+        ) : undefined,
+      }}
       navigationDestination={{
         isPresented:
           showUpload ||

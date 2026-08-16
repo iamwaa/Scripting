@@ -257,6 +257,7 @@ export function RemotesPage({
       navigationTitle="远端管理"
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
+      refreshable={loadAll}
       toast={
         toastState
           ? {

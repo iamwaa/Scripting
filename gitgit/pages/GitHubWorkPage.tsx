@@ -200,6 +200,7 @@ export function GitHubWorkPage({
       navigationTitle={fullName}
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
+      refreshable={() => load(true)}
       toolbar={{
         topBarTrailing: kind === 0 ? (
           <Button

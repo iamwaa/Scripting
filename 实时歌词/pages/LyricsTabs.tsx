@@ -37,6 +37,7 @@ type LyricsTabsProps = {
   openMusic: boolean
   locationKeepAlive: boolean
   adaptiveKeepAlive: boolean
+  autoCloseInactiveMinutes: number
   supportsMinimization: boolean
   onClose: () => void
   onStart: () => void
@@ -51,6 +52,7 @@ type LyricsTabsProps = {
   onOpenMusicChanged: (value: boolean) => void
   onLocationKeepAliveChanged: (value: boolean) => void
   onAdaptiveKeepAliveChanged: (value: boolean) => void
+  onAutoCloseInactiveMinutesChanged: (value: number) => void
   onClearCache: () => void
 }
 
@@ -83,6 +85,7 @@ export function LyricsTabs(props: LyricsTabsProps) {
     openMusic,
     locationKeepAlive,
     adaptiveKeepAlive,
+    autoCloseInactiveMinutes,
     supportsMinimization,
     onClose,
     onStart,
@@ -97,6 +100,7 @@ export function LyricsTabs(props: LyricsTabsProps) {
     onOpenMusicChanged,
     onLocationKeepAliveChanged,
     onAdaptiveKeepAliveChanged,
+    onAutoCloseInactiveMinutesChanged,
     onClearCache,
   } = props
 
@@ -124,6 +128,7 @@ export function LyricsTabs(props: LyricsTabsProps) {
           openMusic={openMusic}
           locationKeepAlive={locationKeepAlive}
           adaptiveKeepAlive={adaptiveKeepAlive}
+          autoCloseInactiveMinutes={autoCloseInactiveMinutes}
           cache={cache}
           onClose={onClose}
           onIncrementOffset={onIncrementOffset}
@@ -132,6 +137,7 @@ export function LyricsTabs(props: LyricsTabsProps) {
           onOpenMusicChanged={onOpenMusicChanged}
           onLocationKeepAliveChanged={onLocationKeepAliveChanged}
           onAdaptiveKeepAliveChanged={onAdaptiveKeepAliveChanged}
+          onAutoCloseInactiveMinutesChanged={onAutoCloseInactiveMinutesChanged}
           onClearCache={onClearCache}
         />
       </Tab>

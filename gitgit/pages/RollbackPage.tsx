@@ -15,6 +15,7 @@ import {
   Text,
   VStack,
   useEffect,
+  useRef,
   useState,
 } from "scripting"
 import type { CommitEntry } from "../types/git"
@@ -91,25 +92,28 @@ export function RollbackPage({
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const requestRef = useRef(0)
 
-  useEffect(() => {
-    let cancelled = false
+  async function loadInitial() {
+    const request = ++requestRef.current
     setLoading(true)
     setError(null)
-    getLogPage(bookmarkName, 0, ROLLBACK_PAGE_SIZE)
-      .then((page) => {
-        if (cancelled) return
-        setEntries(page.entries)
-        setHasMore(page.hasMore)
-      })
-      .catch((e: any) => {
-        if (!cancelled) setError(String(e?.message || e))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+    try {
+      const page = await getLogPage(bookmarkName, 0, ROLLBACK_PAGE_SIZE)
+      if (request !== requestRef.current) return
+      setEntries(page.entries)
+      setHasMore(page.hasMore)
+    } catch (e: any) {
+      if (request === requestRef.current) setError(String(e?.message || e))
+    } finally {
+      if (request === requestRef.current) setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadInitial()
     return () => {
-      cancelled = true
+      requestRef.current++
     }
   }, [bookmarkName])
 
@@ -140,6 +144,7 @@ export function RollbackPage({
     <List
       navigationTitle="回滚并强推"
       navigationBarTitleDisplayMode="inline"
+      refreshable={loadInitial}
     >
       <Section
         footer={

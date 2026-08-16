@@ -40,6 +40,8 @@ const SETTING_LOCATION_KEEPALIVE = "setting_location_keepalive"
 const SETTING_ADAPTIVE_KEEPALIVE = "setting_adaptive_keepalive"
 // 仅控制应用内歌词页是否应用已设置的时间偏移
 const SETTING_LYRICS_PAGE_OFFSET = "setting_lyrics_page_offset"
+// 进入后台或非活跃状态后的自动关闭时长（分钟，0 表示关闭）
+const SETTING_AUTO_CLOSE_INACTIVE = "setting_auto_close_inactive"
 const MUSIC_SCHEME = "music://"
 
 /** 页面展示状态 */
@@ -71,6 +73,9 @@ const ctx: {
   started: boolean
   starting: boolean
   timerId: number | null
+  autoCloseTimerId: number | null
+  // 首次看到「非活跃且暂停」的时间：条件不成立或重计时时清 0
+  autoCloseStartAt: number
   // 上次推送到实时活动的状态键，仅在变化时才推送，避免系统限流
   lastPushKey: string
   // 节流：后台 keepAlive 续约间隔
@@ -95,6 +100,8 @@ const ctx: {
   started: false,
   starting: false,
   timerId: null,
+  autoCloseTimerId: null,
+  autoCloseStartAt: 0,
   lastPushKey: "",
   lastKeepAliveAt: 0,
   keepAliveHeld: false,
@@ -219,6 +226,16 @@ function clearTimer() {
   }
 }
 
+function clearAutoCloseTimer() {
+  if (ctx.autoCloseTimerId != null) {
+    clearTimeout(ctx.autoCloseTimerId)
+    ctx.autoCloseTimerId = null
+  }
+}
+
+/** 非活跃时的自动关闭：当切到后台、暂停、调整时长时同步计时的入口，由 Page 渲染时注入 */
+let inactiveAutoCloseDidChange: (() => void) | null = null
+
 /** 停止定时器与后台保活 */
 async function stopTimer() {
   clearTimer()
@@ -266,6 +283,7 @@ async function endExistingLyricsActivities() {
 async function cleanup() {
   // 先停 ticker，再清空引用，避免后续 update 与 end 竞态
   await stopTimer()
+  clearAutoCloseTimer()
   // 停止定位保活，避免脚本结束后仍占用定位
   stopLocationKeepAlive()
   ctx.started = false
@@ -321,6 +339,9 @@ function Page() {
   const [adaptiveKeepAlive, setAdaptiveKeepAlive] = useState<boolean>(
     Storage.get<boolean>(SETTING_ADAPTIVE_KEEPALIVE) ?? true,
   )
+  const [autoCloseInactiveMinutes, setAutoCloseInactiveMinutes] = useState<number>(
+    Storage.get<number>(SETTING_AUTO_CLOSE_INACTIVE) ?? 0,
+  )
   const [disp, setDisp] = useState<DispState>({
     title: "",
     artist: "",
@@ -356,6 +377,30 @@ function Page() {
     }
   }
 
+  function scheduleAutoClose(minutes: number) {
+    clearAutoCloseTimer()
+    // 联合条件：非活跃（后台/最小化）且歌曲暂停；
+    // 前台运行、播放中或未设置时长都不计时
+    if (minutes <= 0 || !ctx.isBackground || isNowPlaying()) {
+      ctx.autoCloseStartAt = 0
+      return
+    }
+    if (ctx.autoCloseStartAt === 0) ctx.autoCloseStartAt = Date.now()
+    const ms = minutes * 60 * 1000
+    // 精确到截止时刻：重复调用不会重新计时，也不会覆盖首次起点
+    const deadline = ctx.autoCloseStartAt + ms
+    if (deadline <= Date.now()) {
+      ctx.autoCloseStartAt = 0
+      closeScript()
+      return
+    }
+    ctx.autoCloseTimerId = setTimeout(() => {
+      ctx.autoCloseTimerId = null
+      ctx.autoCloseStartAt = 0
+      closeScript()
+    }, deadline - Date.now()) as unknown as number
+  }
+
   // 进入页面时读取缓存统计，并判断是否由小组件/意图自动唤起启动。
   useEffect(() => {
     setCache(getCacheStats())
@@ -368,6 +413,7 @@ function Page() {
     const onPhase = (phase: string) => {
       if (phase === "background" || phase === "inactive") {
         ctx.isBackground = true
+        scheduleAutoClose(Storage.get<number>(SETTING_AUTO_CLOSE_INACTIVE) ?? 0)
         if (ctx.started) {
           void ensureKeepAlive().then((ok) => {
             const loc = isLocationKeepAliveActive()
@@ -383,6 +429,8 @@ function Page() {
         }
       } else if (phase === "active") {
         ctx.isBackground = false
+        clearAutoCloseTimer()
+        ctx.autoCloseStartAt = 0
         // 前台定时器可正常运行，释放 keepAlive 请求
         void releaseKeepAlive()
         if (ctx.started) {
@@ -397,6 +445,8 @@ function Page() {
       }
     }
     const onPlaybackStateChanged = () => {
+      // 播放/暂停会改变自动关闭条件，先同步计时
+      scheduleAutoClose(Storage.get<number>(SETTING_AUTO_CLOSE_INACTIVE) ?? 0)
       if (!ctx.started) return
       try {
         pushUpdate()
@@ -404,9 +454,17 @@ function Page() {
         // 忽略单次播放状态事件失败，ticker 仍会兜底
       }
     }
+    // 注册给 run() 的最小化/恢复事件：重算自动关闭计时
+    const syncAutoCloseFromSetting = () => {
+      scheduleAutoClose(Storage.get<number>(SETTING_AUTO_CLOSE_INACTIVE) ?? 0)
+    }
+    inactiveAutoCloseDidChange = syncAutoCloseFromSetting
     AppEvents.scenePhase.addListener(onPhase)
     SystemMusicPlayer.addEventListener("playbackStateDidChange", onPlaybackStateChanged)
     return () => {
+      if (inactiveAutoCloseDidChange === syncAutoCloseFromSetting) {
+        inactiveAutoCloseDidChange = null
+      }
       AppEvents.scenePhase.removeListener(onPhase)
       SystemMusicPlayer.removeEventListener("playbackStateDidChange", onPlaybackStateChanged)
     }
@@ -623,6 +681,15 @@ function Page() {
   }
 
   // 设置项变更时持久化
+  function setAutoCloseInactive(minutes: number) {
+    const value = Math.max(0, Math.round(minutes))
+    setAutoCloseInactiveMinutes(value)
+    Storage.set(SETTING_AUTO_CLOSE_INACTIVE, value)
+    // 调整时长后从当前时刻重新计时，避免沿用旧的起始点
+    ctx.autoCloseStartAt = 0
+    scheduleAutoClose(value)
+  }
+
   function toggleOpenMusic(v: boolean) {
     setOpenMusic(v)
     Storage.set(SETTING_OPEN_MUSIC, v)
@@ -846,6 +913,7 @@ function Page() {
       openMusic={openMusic}
       locationKeepAlive={locationKeepAlive}
       adaptiveKeepAlive={adaptiveKeepAlive}
+      autoCloseInactiveMinutes={autoCloseInactiveMinutes}
       supportsMinimization={Script.supportsMinimization()}
       onClose={closeScript}
       onStart={start}
@@ -875,6 +943,7 @@ function Page() {
       onOpenMusicChanged={toggleOpenMusic}
       onLocationKeepAliveChanged={toggleLocationKeepAlive}
       onAdaptiveKeepAliveChanged={toggleAdaptiveKeepAlive}
+      onAutoCloseInactiveMinutesChanged={setAutoCloseInactive}
       onClearCache={async () => {
         await clearCache()
         ctx.artworkPath = ""
@@ -897,12 +966,14 @@ async function run() {
   // 仅在按钮主动 minimize 后继续 keepAlive；resume 时释放
   const removeMinimize = Script.onMinimize(() => {
     ctx.isBackground = true
+    inactiveAutoCloseDidChange?.()
     if (ctx.started) {
       void ensureKeepAlive()
     }
   })
   const removeResume = Script.onResume(() => {
     ctx.isBackground = false
+    inactiveAutoCloseDidChange?.()
     void releaseKeepAlive()
   })
 

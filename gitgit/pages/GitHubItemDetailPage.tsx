@@ -73,6 +73,7 @@ export function GitHubItemDetailPage({
       navigationTitle={item ? `#${item.number} ${kind}` : "加载中…"}
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
+      refreshable={load}
       fullScreenCover={{
         isPresented: previewUrl != null,
         onChanged: (isPresented) => {

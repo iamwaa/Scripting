@@ -208,6 +208,7 @@ export function ConflictsPage({
       navigationTitle="合并冲突"
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
+      refreshable={loadState}
       toast={
         toastState
           ? {

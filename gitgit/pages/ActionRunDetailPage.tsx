@@ -282,6 +282,7 @@ export function ActionRunDetailPage({
       navigationTitle={run ? `#${run.id}` : "加载中…"}
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
+      refreshable={load}
       navigationDestination={{
         isPresented: viewerJob != null,
         onChanged: (presented: boolean) => {
@@ -497,36 +498,41 @@ export function ActionRunDetailPage({
                   <HStack alignment="center" spacing={8} frame={{ maxWidth: "infinity" }}>
                     <Image
                       systemName={artifact.expired ? "tray.fill" : "tray"}
-                      font={14}
+                      font={16}
+                      frame={{ width: 20, height: 20, alignment: "center" }}
                       foregroundStyle={artifact.expired ? COLOR_RED : COLOR_SECONDARY_LABEL}
                     />
-                    <Text font={14} foregroundStyle={COLOR_LABEL} lineLimit={1} frame={{ maxWidth: "infinity", alignment: "leading" }}>
-                      {artifact.name}
-                    </Text>
+                    <VStack alignment="leading" spacing={2} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+                      <Text font={14} foregroundStyle={COLOR_LABEL} lineLimit={1}>
+                        {artifact.name}
+                      </Text>
+                      <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL}>
+                        {formatBytes(artifact.sizeInBytes)}
+                        {artifact.expired ? " · 已过期" : " · 有效"}
+                        · 创建于 {relativeTime(artifact.createdAt)}
+                      </Text>
+                    </VStack>
                     {!artifact.expired ? (
                       downloadingId === artifact.id ? (
                         <Text font={14} foregroundStyle={COLOR_SECONDARY_LABEL}>
                           {Math.round(downloadProgress * 100)}%
                         </Text>
                       ) : (
-                        <HStack alignment="center">
-                          <Button
-                            action={() => handleDownload(artifact)}
-                            disabled={downloadingId != null}
-                          >
-                            <Image systemName="square.and.arrow.down" font={16} />
-                          </Button>
-                        </HStack>
+                        <Button
+                          action={() => handleDownload(artifact)}
+                          disabled={downloadingId != null}
+                        >
+                          <Image
+                            systemName="square.and.arrow.down"
+                            font={16}
+                            frame={{ width: 20, height: 20, alignment: "center" }}
+                          />
+                        </Button>
                       )
                     ) : (
                       <Text font={14} foregroundStyle={COLOR_RED}>已过期</Text>
                     )}
                   </HStack>
-                  <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL}>
-                    {formatBytes(artifact.sizeInBytes)}
-                    {artifact.expired ? " · 已过期" : " · 有效"}
-                    · 创建于 {relativeTime(artifact.createdAt)}
-                  </Text>
                   {/* 下载进度条 */}
                   {downloadingId === artifact.id && !artifact.expired ? (
                     <ProgressView value={downloadProgress} />

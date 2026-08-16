@@ -18,6 +18,7 @@ type SettingsPageProps = {
   openMusic: boolean
   locationKeepAlive: boolean
   adaptiveKeepAlive: boolean
+  autoCloseInactiveMinutes: number
   cache: CacheStats
   onClose: () => void
   onIncrementOffset: () => void
@@ -26,6 +27,7 @@ type SettingsPageProps = {
   onOpenMusicChanged: (value: boolean) => void
   onLocationKeepAliveChanged: (value: boolean) => void
   onAdaptiveKeepAliveChanged: (value: boolean) => void
+  onAutoCloseInactiveMinutesChanged: (value: number) => void
   onClearCache: () => void
 }
 
@@ -36,6 +38,7 @@ export function SettingsPage(props: SettingsPageProps) {
     openMusic,
     locationKeepAlive,
     adaptiveKeepAlive,
+    autoCloseInactiveMinutes,
     cache,
     onClose,
     onIncrementOffset,
@@ -44,6 +47,7 @@ export function SettingsPage(props: SettingsPageProps) {
     onOpenMusicChanged,
     onLocationKeepAliveChanged,
     onAdaptiveKeepAliveChanged,
+    onAutoCloseInactiveMinutesChanged,
     onClearCache,
   } = props
 
@@ -99,6 +103,23 @@ export function SettingsPage(props: SettingsPageProps) {
               </Text>
             </VStack>
           ) : null}
+          <VStack alignment="leading" spacing={5} frame={{ maxWidth: Infinity, alignment: "topLeading" }}>
+            <HStack spacing={12} frame={{ maxWidth: Infinity, alignment: "center" }}>
+              <Text font={16}>不活跃自动关闭</Text>
+              <Spacer minLength={0} />
+              <Stepper
+                onIncrement={() => onAutoCloseInactiveMinutesChanged(autoCloseInactiveMinutes + 1)}
+                onDecrement={() => onAutoCloseInactiveMinutesChanged(autoCloseInactiveMinutes - 1)}
+              >
+                <Text font={16} fontWeight="semibold">
+                  {autoCloseInactiveMinutes > 0 ? `${autoCloseInactiveMinutes} 分钟` : "永不"}
+                </Text>
+              </Stepper>
+            </HStack>
+            <Text font={13} foregroundStyle="gray">
+              只有在后台/最小化且歌曲已暂停时才计时；回到前台或恢复播放会取消计时。
+            </Text>
+          </VStack>
         </Section>
 
         <Section title="缓存">

@@ -68,6 +68,7 @@ export function DiffPage({
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
       listStyle="plain"
+      refreshable={loadDiff}
       safeAreaInset={
         diff && stats
           ? {
