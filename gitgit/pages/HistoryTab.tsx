@@ -15,10 +15,15 @@ import {
   Spacer,
   useEffect,
   useState,
+  type ShapeStyle,
 } from "scripting"
 import type { CommitEntry } from "../types/git"
-import type { GitHubCommitAvatarMap } from "../types/github"
-import { getCommitAvatarUrls } from "../api/githubApi"
+import type {
+  CommitCheckState,
+  CommitCheckStatusMap,
+  GitHubCommitAvatarMap,
+} from "../types/github"
+import { getCommitAvatarUrls, getCommitCheckStatuses } from "../api/githubApi"
 import { HistorySearchBar } from "../components/HistorySearchBar"
 import { AvatarView } from "../components/AvatarView"
 import { resolvedGitAuthorAvatarUrl } from "../utils/github"
@@ -34,12 +39,30 @@ import {
   COLOR_ACCENT,
   COLOR_ORANGE,
   COLOR_GREEN,
+  COLOR_RED,
 } from "../constants/colors"
+
+/** 提交检查状态对应的图标与颜色（与 ActionsPage 运行状态语义对齐） */
+function commitCheckVisual(
+  state: CommitCheckState
+): { icon: string; color: ShapeStyle } {
+  switch (state) {
+    case "success":
+      return { icon: "checkmark.circle.fill", color: COLOR_GREEN }
+    case "failure":
+      return { icon: "xmark.circle.fill", color: COLOR_RED }
+    case "pending":
+      return { icon: "arrow.triangle.2.circlepath", color: COLOR_ORANGE }
+    case "queued":
+      return { icon: "clock", color: COLOR_ORANGE }
+  }
+}
 
 /** 单行独立组件：props 固定本行数据，降低 List 复用时闭包串行风险 */
 function HistoryRow({
   entry,
   githubAvatarUrl,
+  checkState,
   onCopy,
   onSelectOid,
   onRevert,
@@ -48,6 +71,7 @@ function HistoryRow({
 }: {
   entry: CommitEntry
   githubAvatarUrl?: string
+  checkState?: CommitCheckState
   onCopy: (entry: CommitEntry) => void
   /** 只回传 oid，避免 action 闭包持有错误 entry 引用 */
   onSelectOid: (oid: string) => void
@@ -98,6 +122,8 @@ function HistoryRow({
     badge = { text: "本地", color: COLOR_SECONDARY_LABEL }
   }
 
+  const checkVisual = checkState ? commitCheckVisual(checkState) : null
+
   return (
     <HStack
       alignment="center"
@@ -112,6 +138,13 @@ function HistoryRow({
     >
       <VStack alignment="leading" spacing={2}>
         <HStack alignment="center" spacing={6}>
+          {checkState ? (
+            <Image
+              systemName={checkVisual!.icon}
+              font="caption2"
+              foregroundStyle={checkVisual!.color}
+            />
+          ) : null}
           <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
             {shortOid(oid)}
           </Text>
@@ -204,6 +237,12 @@ export function HistoryTab({
   githubFullName?: string | null
 }) {
   const [githubAvatars, setGithubAvatars] = useState<GitHubCommitAvatarMap>({})
+  const [commitChecks, setCommitChecks] = useState<CommitCheckStatusMap>({})
+
+  // 头像与检查状态共用同一签名作为依赖，以便加载更多 / 推送后同步刷新两者
+  const pageSignature = log
+    .map((entry) => `${entry.oid}:${entry.syncStatus || ""}`)
+    .join(",")
 
   useEffect(() => {
     if (!githubFullName || log.length === 0) {
@@ -221,10 +260,25 @@ export function HistoryTab({
     return () => {
       cancelled = true
     }
-  }, [
-    githubFullName,
-    log.map((entry) => `${entry.oid}:${entry.syncStatus || ""}`).join(","),
-  ])
+  }, [githubFullName, pageSignature])
+
+  useEffect(() => {
+    if (!githubFullName || log.length === 0) {
+      setCommitChecks({})
+      return
+    }
+    let cancelled = false
+    getCommitCheckStatuses(githubFullName, log.map((entry) => entry.oid))
+      .then((checks) => {
+        if (!cancelled) setCommitChecks(checks)
+      })
+      .catch(() => {
+        // 检查状态查询失败不阻断页面，保留已有缓存
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [githubFullName, pageSignature])
   function handleSelectOid(oid: string) {
     const entry = log.find((item) => item.oid === oid)
     // 详情页只依赖 oid；找不到条目时仍用 oid 打开，避免点击无响应
@@ -295,6 +349,7 @@ export function HistoryTab({
             key={entry.oid}
             entry={entry}
             githubAvatarUrl={githubAvatars[entry.oid.toLowerCase()]}
+            checkState={commitChecks[entry.oid.toLowerCase()]}
             onCopy={onCopy}
             onSelectOid={handleSelectOid}
             onRevert={onRevert}

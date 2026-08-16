@@ -15,6 +15,8 @@ import type {
   GitHubIssueItem,
   GitHubIssuePage,
   GitHubCommitAvatarMap,
+  CommitCheckState,
+  CommitCheckStatusMap,
   ActionRun,
   ActionRunPage,
   ActionJob,
@@ -231,6 +233,103 @@ export async function getCommitAvatarUrls(
       result[oid] = avatarUrl
     }
   })
+  return result
+}
+
+const COMMIT_CHECK_CACHE_LIMIT = 500
+const commitCheckCache = new Map<string, CommitCheckState>()
+
+function commitCheckCacheKey(fullName: string, oid: string): string {
+  return `${fullName.toLowerCase()}:${oid.toLowerCase()}`
+}
+
+/**
+ * 批量查询提交的 GitHub Actions / Checks 合并状态（StatusState rollup）。
+ * 仅 success/failure/pending/queued 会被缓存；无 rollup 的提交返回空且不缓存，
+ * 避免对未配置 CI 的仓库错误缓存。无 Token、网络失败返回空映射不阻断。
+ */
+export async function getCommitCheckStatuses(
+  fullName: string,
+  oids: string[]
+): Promise<CommitCheckStatusMap> {
+  const encoded = encodeRepo(fullName)
+  const [owner, name] = encoded.split("/").map(decodeURIComponent)
+  const uniqueOids = Array.from(
+    new Set(
+      oids
+        .map((oid) => oid.trim().toLowerCase())
+        .filter((oid) => /^[0-9a-f]{40}$/.test(oid))
+    )
+  ).slice(0, 100)
+  const result: CommitCheckStatusMap = {}
+  const missing: string[] = []
+  for (const oid of uniqueOids) {
+    const cached = commitCheckCache.get(commitCheckCacheKey(fullName, oid))
+    if (cached !== undefined) result[oid] = cached
+    else missing.push(oid)
+  }
+  if (missing.length === 0) return result
+
+  // 没有 Token 时直接返回缓存部分，其余空位不缓存
+  const token = getToken()
+  if (!token) return result
+
+  const fields = missing
+    .map(
+      (oid, index) =>
+        `c${index}: object(expression: "${oid}") { ... on Commit { oid statusCheckRollup { state } } }`
+    )
+    .join("\n")
+  const query = `query CommitChecks($owner: String!, $name: String!) {
+    repository(owner: $owner, name: $name) {
+      ${fields}
+    }
+  }`
+  try {
+    const data = await githubFetch(GRAPHQL_URL, {
+      method: "POST",
+      body: { query, variables: { owner, name } },
+    })
+    const repository = data?.data?.repository
+    if (!repository) {
+      // GraphQL 出错时不缓存，下次请求保留缓存部分
+      return result
+    }
+    missing.forEach((oid, index) => {
+      const raw = String(
+        repository[`c${index}`]?.statusCheckRollup?.state || ""
+      ).toUpperCase()
+      let state: CommitCheckState | null = null
+      switch (raw) {
+        case "SUCCESS":
+          state = "success"
+          break
+        case "FAILURE":
+        case "ERROR":
+          state = "failure"
+          break
+        case "PENDING":
+          state = "pending"
+          break
+        case "EXPECTED":
+          state = "queued"
+          break
+        default:
+          state = null
+      }
+      if (state) {
+        setLruEntry(
+          commitCheckCache,
+          commitCheckCacheKey(fullName, oid),
+          state,
+          COMMIT_CHECK_CACHE_LIMIT
+        )
+        result[oid] = state
+      }
+    })
+  } catch (_e) {
+    // 有 Token 但请求失败时不缓存剩余查询，仅返回已缓存结果
+  }
   return result
 }
 

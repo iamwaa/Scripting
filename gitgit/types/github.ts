@@ -177,6 +177,22 @@ export interface DispatchWorkflowInput {
   inputs?: Record<string, string>
 }
 
+/*
+ * GitHub StatusState 的合并视图：
+ * SUCCESS -> success；FAILURE / ERROR -> failure；PENDING -> pending；
+ * EXPECTED -> queued；无 rollup -> 跳过缓存，岭致下次刷新重新查。
+ */
+
+/** 单个提交的检查状态，用于历史行徽标 */
+export type CommitCheckState =
+  | "success"
+  | "failure"
+  | "pending"
+  | "queued"
+
+/** 提交 oid（小写） -> 检查状态映射 */
+export type CommitCheckStatusMap = Record<string, CommitCheckState>
+
 /** 工件（构建产物） */
 export interface ActionArtifact {
   id: number
