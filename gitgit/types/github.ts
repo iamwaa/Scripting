@@ -91,8 +91,6 @@ export interface ActionRun {
   htmlUrl: string
   /** 触发提交的短 SHA */
   headShaShort: string
-  /** 是否可重新运行 */
-  rerunnable: boolean
 }
 
 /** 工作流运行分页结果 */

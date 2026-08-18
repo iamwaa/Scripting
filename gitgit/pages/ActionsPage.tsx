@@ -23,12 +23,25 @@ import {
   type ShapeStyle,
 } from "scripting"
 import type { ActionRun, ActionWorkflow } from "../types/github"
-import { deleteWorkflowRun, dispatchWorkflow, listWorkflows, listWorkflowRuns } from "../api/githubApi"
+import {
+  deleteWorkflowRun,
+  dispatchWorkflow,
+  listWorkflows,
+  listWorkflowRuns,
+  rerunFailedJobs,
+  rerunWorkflowRun,
+} from "../api/githubApi"
 import { AvatarView } from "../components/AvatarView"
 import { toastContent } from "../components/Toast"
 import { useToast } from "../hooks/useToast"
 import { ActionRunDetailPage } from "./ActionRunDetailPage"
 import { relativeTime } from "../utils/format"
+import {
+  optimisticRerunRun,
+  rerunAvailability,
+  rerunModeLabel,
+  type RerunMode,
+} from "../utils/actionsRerun"
 import {
   COLOR_GREEN,
   COLOR_LABEL,
@@ -68,12 +81,33 @@ function ActionRunRow({
   run,
   onSelect,
   onDelete,
+  onRerun,
 }: {
   run: ActionRun
   onSelect: () => void
   onDelete: () => void
+  onRerun: () => void
 }) {
   const { icon, color, label } = runStatusVisual(run)
+  // 左滑操作：普通项在前、危险项在后（与历史行一致），仅已结束的运行可重跑
+  const swipeActions: any[] = []
+  if (rerunAvailability(run).canRerunAll) {
+    swipeActions.push(
+      <Button
+        title="重跑"
+        systemImage="arrow.clockwise"
+        action={onRerun}
+      />
+    )
+  }
+  swipeActions.push(
+    <Button
+      title="删除"
+      systemImage="trash"
+      tint="systemRed"
+      action={onDelete}
+    />
+  )
   return (
     <Button
       action={onSelect}
@@ -81,13 +115,7 @@ function ActionRunRow({
       frame={{ maxWidth: "infinity", alignment: "leading" }}
       trailingSwipeActions={{
         allowsFullSwipe: false,
-        actions: [
-          <Button
-            title="删除"
-            tint="red"
-            action={onDelete}
-          />,
-        ],
+        actions: swipeActions,
       }}
     >
       <HStack alignment="center" spacing={10} frame={{ maxWidth: "infinity" }}>
@@ -143,6 +171,8 @@ export function ActionsPage({ fullName }: { fullName: string }) {
   // null = 全部工作流；否则为工作流 ID
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<number | null>(null)
   const [dispatching, setDispatching] = useState(false)
+  // 是否正在发起重跑（防重复提交）
+  const [rerunning, setRerunning] = useState(false)
 
   async function load(reset = true) {
     const request = ++requestRef.current
@@ -230,6 +260,57 @@ export function ActionsPage({ fullName }: { fullName: string }) {
       showToast("已删除运行 #" + run.id, "success")
     } catch (e: any) {
       showToast("删除失败：" + String(e?.message || e), "error")
+    }
+  }
+
+  // 左滑重新运行：有失败 Job 时让用户选全部还是仅失败
+  async function handleRerunRun(run: ActionRun) {
+    if (rerunning) return
+    const avail = rerunAvailability(run)
+    if (!avail.canRerunAll) {
+      showToast(avail.reason || "当前运行不可重跑", "warning")
+      return
+    }
+    let mode: RerunMode = "all"
+    if (avail.canRerunFailed) {
+      const result = await Dialog.actionSheet({
+        title: "重新运行",
+        message: `#${run.id}（${run.displayTitle || run.name}）`,
+        cancelButton: false,
+        actions: [
+          { label: "取消" },
+          { label: rerunModeLabel("failed") },
+          { label: rerunModeLabel("all") },
+        ],
+      })
+      // actions 索引：0=取消，1=仅失败 Job，2=全部 Job；取消返回 null
+      if (result === 1) mode = "failed"
+      else if (result === 2) mode = "all"
+      else return
+    } else {
+      const confirmed = await Dialog.confirm({
+        title: rerunModeLabel("all"),
+        message: `确认重新运行 #${run.id}（${run.displayTitle || run.name}）的全部 Job？`,
+        confirmLabel: "重新运行",
+      })
+      if (confirmed !== true) return
+    }
+    setRerunning(true)
+    try {
+      if (mode === "all") await rerunWorkflowRun(fullName, run.id)
+      else await rerunFailedJobs(fullName, run.id)
+      // 乐观更新为排队中，避免刷新前仍显示旧结论
+      setRuns((current) =>
+        current.map((r) => (r.id === run.id ? optimisticRerunRun(r) : r))
+      )
+      showToast("已发起" + rerunModeLabel(mode), "success")
+      setTimeout(() => load(true), 2000)
+    } catch (e: any) {
+      showToast("重新运行失败：" + String(e?.message || e), "error")
+      // 失败时回拉真实状态
+      load(true)
+    } finally {
+      setRerunning(false)
     }
   }
 
@@ -329,6 +410,7 @@ export function ActionsPage({ fullName }: { fullName: string }) {
             run={run}
             onSelect={() => setSelectedRunId(run.id)}
             onDelete={() => handleDeleteRun(run)}
+            onRerun={() => handleRerunRun(run)}
           />
         ))}
       </Section>

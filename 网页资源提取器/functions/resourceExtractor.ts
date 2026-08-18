@@ -12,6 +12,7 @@ import {
 } from "./resourceRuntime"
 import { validateResources } from "./resourceValidator"
 import { extractURLFromText } from "../utils/url"
+import { parseSiteResources } from "../services/parsers"
 import {
   pageURL,
   isLoading,
@@ -72,33 +73,54 @@ export async function extractResources() {
       return
     }
 
-    const response = await fetch(targetURL)
+    let response = await fetch(targetURL)
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`)
     }
-    const html = await response.text()
+    let pageTargetURL = response.url || targetURL
+    let html = await response.text()
 
     statusText.setValue("正在解析资源...")
 
-    const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i)
-    pageTitle.setValue(titleMatch ? titleMatch[1].trim() : targetURL)
+    let titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i)
+    pageTitle.setValue(titleMatch ? titleMatch[1].trim() : pageTargetURL)
 
-    const htmlResults = parseHtmlResources(html, targetURL, (message) => statusText.setValue(message))
+    statusText.setValue("正在解析站点资源...")
+    let siteResult = await parseSiteResources({ url: pageTargetURL, html })
+    const nextPageURL = siteResult.pageUrl
+    if (nextPageURL && nextPageURL.split("#")[0] !== pageTargetURL.split("#")[0]) {
+      statusText.setValue("正在获取作品页面...")
+      response = await fetch(nextPageURL)
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+      pageTargetURL = response.url || nextPageURL
+      pageURL.setValue(pageTargetURL)
+      html = await response.text()
+      titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i)
+      pageTitle.setValue(titleMatch ? titleMatch[1].trim() : pageTargetURL)
+      statusText.setValue("正在解析作品资源...")
+      siteResult = await parseSiteResources({ url: pageTargetURL, html })
+    }
+    if (siteResult.title) pageTitle.setValue(siteResult.title)
+
+    statusText.setValue("正在解析通用资源...")
+    const htmlResults = parseHtmlResources(html, pageTargetURL, (message) => statusText.setValue(message))
 
     statusText.setValue("正在读取 Safari 运行时快照...")
-    const runtimeSnapshot = await readRuntimeSnapshot(targetURL)
+    const runtimeSnapshot = await readRuntimeSnapshot(pageTargetURL)
     const runtimeResults = runtimeSnapshot
-      ? parseRuntimeSnapshotResources(runtimeSnapshot, targetURL)
+      ? parseRuntimeSnapshotResources(runtimeSnapshot, pageTargetURL)
       : []
 
-    const results = mergeResourceLists(runtimeResults, htmlResults)
-    if (runtimeSnapshot?.title && (!pageTitle.value || pageTitle.value === targetURL)) {
+    const results = mergeResourceLists(siteResult.resources, runtimeResults, htmlResults)
+    if (runtimeSnapshot?.title && (!pageTitle.value || pageTitle.value === pageTargetURL)) {
       pageTitle.setValue(runtimeSnapshot.title)
     }
 
     if (filterInvalidResources.value && results.length > 0) {
       statusText.setValue(`正在验证资源有效性 (0/${results.length})...`)
-      const validResults = await validateResources(results, targetURL, (completed, total) => {
+      const validResults = await validateResources(results, pageTargetURL, (completed, total) => {
         statusText.setValue(`正在验证有效性 (${completed}/${total})...`)
       })
 

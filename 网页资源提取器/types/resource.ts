@@ -1,10 +1,23 @@
+import { sanitizeFileName } from "../utils/fileName"
+
 export interface ResourceItem {
   type: "image" | "css" | "js" | "video" | "audio" | "font" | "document" | "archive" | "other"
   url: string
   name: string
-  /** 启发式判断：疑似图标/缩略图 */
   likelyThumbnail?: boolean
+  source?: string
+  quality?: string
+  format?: string
+  width?: number
+  height?: number
+  audioUrl?: string
+  headers?: Record<string, string>
+  sourceUrl?: string
+  videoFormatId?: string
+  audioFormatId?: string
 }
+
+export { sanitizeFileName }
 
 export const CATEGORY_ORDER: ResourceItem["type"][] = [
   "image", "video", "audio", "document", "archive", "css", "js", "font", "other"

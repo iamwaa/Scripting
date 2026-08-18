@@ -17,6 +17,9 @@ import {
   exportDownloadTask,
   removeDownloadTask,
   cancelDownloadTask,
+  pauseDownloadTask,
+  resumeDownloadTask,
+  retryDownloadTask,
   clearFinishedDownloadTasks,
   getActiveDownloadCount,
   type DownloadTaskItem,
@@ -28,18 +31,12 @@ declare const Dialog: any
 
 function statusText(status: string): string {
   if (status === "downloading") return "下载中"
+  if (status === "paused") return "已暂停"
   if (status === "completed") return "已完成"
   if (status === "failed") return "失败"
   if (status === "cancelled") return "已取消"
   if (status === "saving") return "导出中"
   return status
-}
-
-function statusColor(status: string): any {
-  if (status === "completed") return "#34C759"
-  if (status === "failed" || status === "cancelled") return "#FF3B30"
-  if (status === "saving") return "#FF9500"
-  return "#007AFF"
 }
 
 function formatFileSize(bytes?: number): string {
@@ -60,9 +57,6 @@ function formatFileSize(bytes?: number): string {
 function savedText(task: DownloadTaskItem): string {
   if (task.savedTo === "photos") return "已保存相册"
   if (task.savedTo === "file") return "已保存文件"
-  if (task.status === "completed") return "未保存"
-  if (task.status === "cancelled") return "未保存"
-  if (task.status === "failed") return "未保存"
   return "未保存"
 }
 
@@ -79,11 +73,61 @@ async function confirmDestructiveAction(title: string, message: string): Promise
   return index === 1
 }
 
+function deleteAction(task: DownloadTaskItem) {
+  return (
+    <Button
+      title="删除"
+      systemImage="trash"
+      tint="#FF3B30"
+      action={async () => {
+        const confirmed = await confirmDestructiveAction(
+          "删除下载任务",
+          `确定要删除「${task.resource.name}」吗？相关下载文件也会被删除。`
+        )
+        if (confirmed) removeDownloadTask(task.id)
+      }}
+    />
+  )
+}
+
+function swipeActions(task: DownloadTaskItem) {
+  if (task.status === "completed") {
+    return [
+      <Button
+        title="导出"
+        systemImage="square.and.arrow.up"
+        tint="accentColor"
+        action={async () => {
+          await exportDownloadTask(task.id)
+          showToast("导出操作已完成")
+        }}
+      />,
+      deleteAction(task),
+    ]
+  }
+
+  if (task.status === "failed" || task.status === "cancelled") {
+    return [
+      <Button
+        title="重试"
+        systemImage="arrow.clockwise"
+        tint="accentColor"
+        action={() => retryDownloadTask(task.id)}
+      />,
+      deleteAction(task),
+    ]
+  }
+
+  return []
+}
+
 export function DownloadManagerView() {
   const dismiss = Navigation.useDismiss()
   const tasks = downloadTasks.value
   const activeCount = getActiveDownloadCount()
-  const hasFinishedTasks = tasks.some((item: DownloadTaskItem) => item.status !== "downloading" && item.status !== "saving")
+  const hasFinishedTasks = tasks.some((item: DownloadTaskItem) =>
+    item.status === "completed" || item.status === "failed" || item.status === "cancelled"
+  )
 
   return (
     <NavigationStack>
@@ -96,7 +140,7 @@ export function DownloadManagerView() {
               <Image systemName="chevron.left" foregroundStyle="accentColor" fontWeight="semibold" />
             </Button>
           ),
-              primaryAction: (
+          primaryAction: (
             <Button
               disabled={!hasFinishedTasks}
               action={async () => {
@@ -141,7 +185,7 @@ export function DownloadManagerView() {
             listRowSeparator="hidden"
             listRowInsets={0}
           >
-            <Image systemName="tray" font="largeTitle" foregroundStyle="secondaryLabel" />
+            <Image systemName="tray" font={34} foregroundStyle="secondaryLabel" />
             <Text foregroundStyle="secondaryLabel">暂无下载任务</Text>
           </VStack>
         ) : (
@@ -154,77 +198,48 @@ export function DownloadManagerView() {
                   alignment="leading"
                   spacing={8}
                   padding={{ vertical: 6 }}
-                  trailingSwipeActions={{
-                    allowsFullSwipe: false,
-                    actions: task.status === "completed" ? [
-                      <Button
-                        title="导出"
-                        systemImage="square.and.arrow.up"
-                        tint="accentColor"
-                        action={async () => {
-                          await exportDownloadTask(task.id)
-                          showToast("导出操作已完成")
-                        }}
-                      />,
-                      <Button
-                        title="删除"
-                        systemImage="trash"
-                        tint="#FF3B30"
-                        action={async () => {
-                          const confirmed = await confirmDestructiveAction(
-                            "删除下载任务",
-                            `确定要删除「${task.resource.name}」吗？相关下载文件也会被删除。`
-                          )
-                          if (confirmed) removeDownloadTask(task.id)
-                        }}
-                      />,
-                    ] : task.status !== "downloading" && task.status !== "saving" ? [
-                      <Button
-                        title="删除"
-                        systemImage="trash"
-                        tint="#FF3B30"
-                        action={async () => {
-                          const confirmed = await confirmDestructiveAction(
-                            "删除下载任务",
-                            `确定要删除「${task.resource.name}」吗？相关下载文件也会被删除。`
-                          )
-                          if (confirmed) removeDownloadTask(task.id)
-                        }}
-                      />,
-                    ] : [],
-                  }}
+                  trailingSwipeActions={{ allowsFullSwipe: false, actions: swipeActions(task) }}
                 >
                   <HStack spacing={12}>
-                    <Image systemName={info.icon} foregroundStyle={info.color} font="title2" frame={{ width: 34 }} />
+                    <Image systemName={info.icon} foregroundStyle={info.color} font={22} frame={{ width: 34 }} />
                     <VStack alignment="leading" spacing={3}>
-                      <Text font="subheadline" lineLimit={1}>{task.resource.name}</Text>
-                      <Text font="caption2" foregroundStyle="secondaryLabel" lineLimit={1}>
+                      <Text font={15} lineLimit={1}>{task.resource.name}</Text>
+                      <Text font={11} foregroundStyle="secondaryLabel" lineLimit={1}>
                         {formatFileSize(task.fileSize)}·{statusText(task.status)}·{savedText(task)}
                       </Text>
                     </VStack>
                     <Spacer />
-                    {task.status === "downloading" ? (
+                    {task.status === "downloading" && task.pause ? (
+                      <Button action={() => pauseDownloadTask(task.id)} buttonStyle="borderless">
+                        <Image systemName="pause.circle.fill" foregroundStyle="#FF9500" font={20} />
+                      </Button>
+                    ) : null}
+                    {task.status === "paused" && task.resume ? (
+                      <Button action={() => resumeDownloadTask(task.id)} buttonStyle="borderless">
+                        <Image systemName="play.circle.fill" foregroundStyle="#34C759" font={20} />
+                      </Button>
+                    ) : null}
+                    {task.status === "downloading" || task.status === "paused" ? (
                       <Button action={() => cancelDownloadTask(task.id)} buttonStyle="borderless">
-                        <Image systemName="xmark.circle.fill" foregroundStyle="#FF3B30" font="title3" />
+                        <Image systemName="xmark.circle.fill" foregroundStyle="#FF3B30" font={20} />
                       </Button>
                     ) : null}
                   </HStack>
 
-                  {task.status === "downloading" || task.status === "saving" ? (
+                  {task.status === "downloading" || task.status === "paused" || task.status === "saving" ? (
                     <VStack alignment="leading" spacing={4}>
                       <ProgressView value={task.progress / 100} progressViewStyle="linear" />
                       <HStack>
-                        <Text font="caption2" foregroundStyle="secondaryLabel">{task.speed || " "}</Text>
+                        <Text font={11} foregroundStyle="secondaryLabel">{task.speed || task.label || " "}</Text>
                         <Spacer />
-                        <Text font="caption2" foregroundStyle="secondaryLabel">{task.progress}%</Text>
+                        <Text font={11} foregroundStyle="secondaryLabel">{task.progress}%</Text>
                       </HStack>
                     </VStack>
                   ) : null}
 
                   {task.error ? (
-                    <Text font="caption2" foregroundStyle="#FF3B30" lineLimit={2}>{task.error}</Text>
+                    <Text font={11} foregroundStyle="#FF3B30" lineLimit={2}>{task.error}</Text>
                   ) : null}
-
                 </VStack>
               )
             })}

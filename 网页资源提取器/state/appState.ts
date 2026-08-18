@@ -1,19 +1,23 @@
 import type { ResourceItem } from "../types/resource"
 
-// 状态管理
-export const pageURL = new Observable("")
-export const isLoading = new Observable(false)
-export const statusText = new Observable("输入网址后点击「提取资源」")
-export const resources = new Observable<ResourceItem[]>([])
-export const pageTitle = new Observable("")
-export const selectedCategory = new Observable("all")
-export const initialViewMode = new (Observable as any)("main") as Observable<"main" | "downloads">
-export const toastMessage = new Observable("")
-export const toastVisible = new Observable(false)
-export const filterInvalidResources = new Observable(false)
-export const hideThumbnails = new Observable(false)
-export const isFiltering = new Observable(false)
-export const filterProgress = new Observable({ completed: 0, total: 0 })
+function createObservable<T>(initialValue: T): Observable<T> {
+  const ObservableRuntime = Observable as any
+  return new ObservableRuntime(initialValue) as Observable<T>
+}
+
+export const pageURL = createObservable("")
+export const isLoading = createObservable(false)
+export const statusText = createObservable("输入网址后点击「提取资源」")
+export const resources = createObservable<ResourceItem[]>([])
+export const pageTitle = createObservable("")
+export const selectedCategory = createObservable("all")
+export const initialViewMode = createObservable<"main" | "downloads">("main")
+export const toastMessage = createObservable("")
+export const toastVisible = createObservable(false)
+export const filterInvalidResources = createObservable(false)
+export const hideThumbnails = createObservable(false)
+export const isFiltering = createObservable(false)
+export const filterProgress = createObservable({ completed: 0, total: 0 })
 
 export function showToast(message: string) {
   toastMessage.setValue(message)

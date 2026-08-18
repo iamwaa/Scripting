@@ -96,6 +96,7 @@ async function validateImageByContent(item: ResourceItem, referer: string): Prom
       "Referer": referer,
       "Accept": "image/*,*/*",
       "Range": "bytes=0-63",
+      ...item.headers,
     }
   }, 5000)
 
@@ -123,12 +124,13 @@ export async function validateResources(
   const CONCURRENCY_LIMIT = 15
   let completedCount = 0
 
-  const fetchOptions = (method: string) => ({
+  const fetchOptions = (item: ResourceItem, method: string) => ({
     method,
     headers: {
       "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
       "Referer": referer,
-      "Accept": "*/*"
+      "Accept": "*/*",
+      ...item.headers,
     }
   })
 
@@ -139,7 +141,7 @@ export async function validateResources(
       const isMedia = item.type === "video" || item.type === "audio"
 
       try {
-        const res = await fetchWithTimeout(item.url, fetchOptions("HEAD"), 5000)
+        const res = await fetchWithTimeout(item.url, fetchOptions(item, "HEAD"), 5000)
         const ct = getContentType(res)
 
         if (res.status === 404 || res.status === 410 || hasEmptyBody(res)) return null
@@ -152,7 +154,7 @@ export async function validateResources(
           return (!ct || isCompatibleContentType(item, ct)) ? item : null
         }
 
-        const getOpts = fetchOptions("GET")
+        const getOpts = fetchOptions(item, "GET")
         // @ts-ignore
         getOpts.headers["Range"] = item.type === "image" ? "bytes=0-63" : "bytes=0-0"
 

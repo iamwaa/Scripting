@@ -36,6 +36,7 @@ import { getCategoryStats, getFilteredResources } from "../functions/resourceInf
 import { validateResources } from "../functions/resourceValidator"
 import { ResourceItemRow } from "../components/ResourceItemRow"
 import { DownloadManagerView } from "./DownloadManagerView"
+import { SettingsView } from "./SettingsView"
 import { hasDownloadManagerContent, getActiveDownloadCount } from "../state/downloadManager"
 
 export function MainView() {
@@ -50,6 +51,10 @@ export function MainView() {
   function openDownloadManager() {
     initialViewMode.setValue("main")
     Navigation.present(<DownloadManagerView />)
+  }
+
+  function openSettings() {
+    Navigation.present(<SettingsView />)
   }
 
   useEffect(() => {
@@ -80,20 +85,27 @@ export function MainView() {
             fontWeight="semibold" />
             </Button>
           ),
-          primaryAction: hasDownloads ? (
-            <Button action={openDownloadManager}>
-              <HStack spacing={4}>
-                <Image
-                  systemName={activeDownloadCount > 0 ? "arrow.down.circle.fill" : "arrow.down.circle"}
-                  foregroundStyle="#007AFF"
-                  fontWeight="semibold"
-                />
-                {activeDownloadCount > 0 ? (
-                  <Text font="subheadline" fontWeight="semibold">{activeDownloadCount}</Text>
-                ) : null}
-              </HStack>
-            </Button>
-          ) : undefined,
+          primaryAction: (
+            <HStack spacing={12}>
+              {hasDownloads ? (
+                <Button action={openDownloadManager}>
+                  <HStack spacing={4}>
+                    <Image
+                      systemName={activeDownloadCount > 0 ? "arrow.down.circle.fill" : "arrow.down.circle"}
+                      foregroundStyle="#007AFF"
+                      fontWeight="semibold"
+                    />
+                    {activeDownloadCount > 0 ? (
+                      <Text font="subheadline" fontWeight="semibold">{activeDownloadCount}</Text>
+                    ) : null}
+                  </HStack>
+                </Button>
+              ) : null}
+              <Button action={openSettings}>
+                <Image systemName="gearshape" fontWeight="semibold" foregroundStyle="accentColor" />
+              </Button>
+            </HStack>
+          ),
         }}
         toast={{
           message: toastMessage.value,

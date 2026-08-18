@@ -1,8 +1,8 @@
 # gitgit 代码审查、修复与优化进度
 
-> 记录时间：2026-08-07（进度同步至 P2.46）  
+> 记录时间：2026-08-18（进度同步至 P2.63）  
 > 项目：`scripts/gitgit`  
-> 当前阶段：第三阶段主线与 M7-1、结构债拆分已完成；Widget 状态面板（P2.36）、Issues/PR（P2.38）、回滚强推（P2.44）与列表排序（P2.45）已完成；下一步可选 Tag 管理或仓库健康检查
+> 当前阶段：第三阶段主线与 M7-1、结构债拆分已完成；Widget 状态面板（P2.36）、Issues/PR（P2.38）、回滚强推（P2.44）、列表排序（P2.45）、大仓库读取与状态优化（P2.46–P2.49）、GitHub Actions CI/CD 浏览与重跑闭环（P2.52–P2.63）已完成；下一步可选 Tag 管理或仓库健康检查
 
 ## 一、项目概况
 
@@ -302,9 +302,9 @@
 
 ### 3.4 结构债（已完成，2026-08-04）
 
-- [x] `services/gitService.ts` 已从约 3960 行收缩为 515 行 facade，仅保留仓库 mutation 锁、快照刷新、后台保活与公开 API 包装。
+- [x] `services/gitService.ts` 已从约 3960 行收缩为 facade（拆分时 515 行，随后新增公开签名后现为 590 行），仅保留仓库 mutation 锁、快照刷新、后台保活与公开 API 包装。
 - [x] Git 职责已拆入 `services/git/`：`runtime`、`worktreeService`、`branchQueryService`、`branchService`、`remoteConfigService`、`remoteService`、`mergeService`、`mergeConflictService`、`statusQueryService`、`repoStatusService`、`commitService`、`compareService`、`stashService`、`historyMutationService`。
-- [x] `RepoDetailPage.tsx` 已从约 1534 行降至 971 行；分支/远端视图、导航目标、Tab 内容拆入 `components/`，分支与同步动作编排拆入 `hooks/`。
+- [x] `RepoDetailPage.tsx` 已从约 1534 行降至 971 行；分支/远端视图、导航目标、Tab 内容拆入 `components/`，分支与同步动作编排拆入 `hooks/`。（2026-08-18 复核：因 Actions 与 GitHub 功能接入，该页已回升至 1174 行，需再次拆分。）
 - [x] 公开页面继续只从 `services/gitService.ts` 导入 Git API；子服务不得反向导入 facade，页面不得绕过 facade 直接调用 internal mutation。
 
 后续结构约束：新增 Git 行为优先落入对应 `services/git/*Service.ts`，facade 只维持公开签名、mutation 锁、快照刷新与后台保活。
@@ -314,7 +314,8 @@
 - [x] GitHub Issues 和 Pull Requests（P2.38：浏览 + 创建 Issue；PR 只读）。
 - [ ] GitHub 仓库列表、创建、删除和远端绑定管理（超出当前上传闭环的管理面）。
 - [x] Widget（P2.36：多尺寸状态面板 + 锁屏 accessory + 参数筛选；不做交互式写操作）。
-- [ ] 富通知和同步进度通知（`notification.tsx` 等）。
+- [x] GitHub Actions CI/CD 浏览（P2.52–P2.62：运行列表、注解、Jobs、步骤分段日志、工件下载、手动触发、删除运行）。
+- [x] 失败通知（P2.54：设置页开关控制的 push/pull/clone/upload 失败本地通知）；富通知自定义 UI（`notification.tsx`）仍未做。
 - [ ] 多仓库批量同步。
 
 ### 第三阶段里程碑
@@ -347,9 +348,9 @@
 | 全量代码审查 | 已完成 |
 | 第一阶段数据安全修复 | 已完成 |
 | 第二阶段可靠性与失败恢复 | 已完成 |
-| TypeScript 诊断 | 2026-08-07 全项目通过，0 个错误 |
-| 项目入口运行验证 | 2026-08-05 `scripting-ts project "gitgit"` 运行成功 |
-| 自动化测试 | `reliability`、`history`、`compare`、`inlineDiff`、`status-perf-helpers`、`widget`、`github`、`mergeCompletion`、`repoSort` |
+| TypeScript 诊断 | 2026-08-18 全项目通过，0 个错误 |
+| 项目入口运行验证 | 2026-08-05 `scripting-ts project "gitgit"` 运行成功；之后未重跑 |
+| 自动化测试 | 15 个文件：`reliability`、`history`、`compare`、`inlineDiff`、`status-perf-helpers`、`widget`、`github`、`mergeCompletion`、`repoSort`、`performance`、`statusFreshness`、`singleFlight`、`commitTreeDiff`、`actionsLog`、`logLevel` |
 | Clone 失败恢复 | 已完成 |
 | GitHub 上传失败恢复 | 已完成 |
 | Diff 与历史拓扑优化 | 已完成 |
@@ -360,11 +361,12 @@
 | M5 冲突展示/解决/Abort | 已完成 |
 | M6 远程操作进度与取消 | 已完成 |
 | M7-1 分支管理 | 已完成 |
-| 结构债拆分 | 已完成：Git facade + 14 个职责模块；详情页组件/hooks 拆分 |
+| 结构债拆分 | 2026-08-04 已完成：Git facade + 14 个职责模块；详情页组件/hooks 拆分。**详情页已回升至 1174 行，需再次拆分** |
 | 第三阶段主线 | M1–M7-1 与结构拆分完成；下一步可选 Tag 管理或仓库健康检查 |
-| 近期新增功能 | 分支/远端差异对比、远端分支自动获取、统一表单 Sheet、自动提交标题、小组件状态面板（P2.36）、Issues/PR（P2.38）、头像显示（P2.39）、冲突清单与批量标记（P2.40–P2.41）、合并提交完整性（P2.43）、回滚并强推（P2.44）、仓库列表排序（P2.45）均已完成 |
+| 近期新增功能 | 分支/远端差异对比、远端分支自动获取、统一表单 Sheet、自动提交标题、小组件状态面板（P2.36）、Issues/PR（P2.38）、头像显示（P2.39、P2.51）、冲突清单与批量标记（P2.40–P2.41）、合并提交完整性（P2.43）、回滚并强推（P2.44）、仓库列表排序（P2.45、P2.48）、大仓库读取与状态调度优化（P2.46–P2.49）、Toast 与失败通知（P2.54）、GitHub Actions CI/CD 浏览闭环（P2.52–P2.62）均已完成 |
+| GitHub Actions | 已完成（P2.52–P2.63：运行列表、注解、Jobs、步骤分段日志、工件下载、手动触发、删除运行、重新运行） |
 | Widget | 已完成（P2.36 状态面板；不另做交互式写操作） |
-| 后阶段功能 | 富通知、多仓库批量同步、更完整 GitHub 仓库管理面等不纳入第三阶段 |
+| 后阶段功能 | 富通知（自定义 UI）、多仓库批量同步、更完整 GitHub 仓库管理面等不纳入第三阶段 |
 
 ## 九、详情页文件列表与历史详情（已完成）
 
@@ -399,7 +401,7 @@
 - `backup/gitgit/gitgit_展开历史行修复空白内容_20260718_222339`
 - `backup/gitgit/gitgit_复制按钮移到提交编号右侧_20260718_232218`
 
-## 十、P2.19–P2.46 后续修复与增强（已完成）
+## 十、P2.19–P2.62 后续修复与增强（已完成）
 
 ### 10.1 Git 正确性与可靠性
 
@@ -450,32 +452,58 @@
 - [x] `getLog()` 不再做 `findMergeBase`、父链遍历或全量可达提交差集，避免 fork 与 upstream 分叉的大仓库在历史已可读时仍被拓扑计算阻塞。
 - [x] `syncStatus` 改用当前页深度内的 `origin/<当前分支>` 日志集合恢复“待推送/远端”标签；空仓判定改由 `hasHeadCommit()` 单独解析 `HEAD`，历史分页失败或搜索无结果不再误报空仓库。
 
-### 10.7 最新验证（2026-08-07 补录）
+### 10.7 大仓库读取、缓存与状态调度（P2.47–P2.49，2026-08-07）
 
-- 全项目 TypeScript 诊断：0 个错误（2026-08-07 复测）。
-- 下列单项测试为 2026-08-05–08-06 各轮变更时的记录，并新增 `github`、`mergeCompletion`、`repoSort`。
-- `scripting-ts project "gitgit"`：运行成功。
-- `tests/reliability.test.ts`：通过。
-- `tests/history.test.ts`：通过。
-- `tests/compare.test.ts`：通过。
-- `tests/inlineDiff.test.ts`：通过。
-- `tests/status-perf-helpers.test.ts`：通过。
-- `tests/widget.test.ts`：通过；systemSmall/systemMedium/systemLarge 与三种 accessory 预览成功。
-- `tests/github.test.ts`：通过（remote URL 解析与头像推导）。
-- `tests/mergeCompletion.test.ts`：通过（真实 merge → completeMerge 链路）。
-- `tests/repoSort.test.ts`：通过（仓库名排序纯逻辑）。
+- [x] **P2.47 历史懒加载、缓存限额与性能诊断**：历史缓存改由 `utils/lru.ts::setLruEntry` 管理，最多保留最近 4 个仓库、每仓 5,000 条；达到条目上限返回 `HistoryPage.limited=true`，历史页明示“仅扫描最近 5,000 条提交”，不伪报精确匹配总数。详情首屏只用 `hasHeadCommit()` 判断提交存在性，历史与 Stash/文件同为首次切 Tab 才加载。`utils/performance.ts` 仅保留超过 2 秒的慢操作（环形上限 30 条），路径只留末级目录，不记录 Token、远端 URL 或文件内容；设置页「性能诊断」可复制 Markdown 报告或清除记录。测试：`tests/performance.test.ts`。
+- [x] **P2.48 仓库列表待处理优先与状态扫描去重**：`utils/repoSort.ts::sortReposForList()` 把未提交、ahead、behind、合并中、冲突、工作区失效或状态错误的仓库置顶，组内继续沿用 P2.45 的中英文与自然数字排序；列表行同步展示待拉取数量，behind 仓库不再误显示“无改动”。`RepoListPage.refreshAll()` 与 `getRepoListStatus()` 分别按整轮、同仓库 single-flight 合并并发请求，新增仓库只扫描新增项。测试：`tests/repoSort.test.ts`、`tests/singleFlight.test.ts`。
+- [x] **P2.49 仓库状态 30 秒新鲜期**：最近完成时间、仓库集合签名、整轮 Promise 与实时 `statusMap` 提升为模块级缓存，页面实例重建仍复用同一轮扫描。默认 `onAppear` 在最近成功扫描后 30 秒内只重读元数据与快照，不执行 `statusMatrix`；仓库集合变化、详情页写入更新快照、30 秒到期会自动失效，`List.refreshable` 下拉始终强制实时扫描。纯判断位于 `utils/statusFreshness.ts`，测试 `tests/statusFreshness.test.ts`。
 
-### 10.8 当前剩余项
+### 10.8 删除类冲突核验与真实头像（P2.50–P2.51，2026-08-07）
+
+- [x] **P2.50 删除类合并冲突误判修复**：isomorphic-git 1.38.1 在删除场景会把“未删除侧与 base 相同”也报成 `deleteByUs` 或 `deleteByTheirs`。`mergeService.filterUnmodifiedDeleteConflicts()` 读取 merge-base、ours、theirs 三棵树，未修改侧按普通删除收口工作区与 index，不持久化为冲突；`mergeConflictService.autoMarkResolvedConflictsInternal()` 对删除类冲突比较工作区与初始保留侧 blob，仍原样时回报 `unchangedDeleteFiles` 并保留冲突状态，避免「检测冲突状态」清空未处理项。`ConflictsPage` 状态行统一 SF Symbols（加载中、无冲突绿、待解决橙）。测试：`tests/mergeCompletion.test.ts`、`tests/reliability.test.ts`。
+- [x] **P2.51 普通邮箱作者优先显示 GitHub 真实头像**：`api/githubApi.ts::getCommitAvatarUrls()` 用一次 GraphQL 批量查询当前列表最多 100 个提交 OID 的 `Commit.author.user.avatarUrl`，提交详情复用同一查询与最多 500 条内存 LRU。真实头像仅在 GitHub 已关联提交账号时覆盖，未关联、未推送、无 Token、网络失败与非 GitHub 仓库继续走 noreply、Gravatar、占位回退，失败不阻塞页面；空结果不缓存。测试：`tests/github.test.ts`。
+
+### 10.9 GitHub Actions CI/CD 浏览闭环（P2.52–P2.62，2026-08-14–08-16）
+
+功能范围：运行列表 → 运行详情（注解 / Jobs / 工件）→ 步骤分段日志，另含手动触发、工作流筛选与删除运行。
+
+- [x] **P2.52 Actions 浏览基础**：`pages/ActionsPage.tsx` 展示工作流运行列表（`listWorkflowRuns`，`/repos/{o}/{r}/actions/runs`），行内含状态图标、displayTitle、工作流名、分支、事件、触发者头像、短 SHA 与相对时间，支持分页与请求竞态保护。`pages/ActionRunDetailPage.tsx`（受控 `navigationDestination` + `key={runId}`）展示运行概要与 Job 列表（`listWorkflowJobs`），Job 可展开查看步骤与日志（`getJobLog`，410 表示日志已过期）。类型位于 `types/github.ts`。
+- [x] **P2.53 入口菜单化 + 手动触发 + 筛选**：`GitHubWorkPage` 类型切换从 segmented Picker 改为 toolbar `Menu`（Issues / Pull Requests / Actions 各带图标）。新增 `listWorkflows`、`dispatchWorkflow`（workflow_dispatch，POST `ref` + `inputs`）；`listWorkflowRuns` 支持按工作流筛选。`ActionsPage` 增加工作流筛选 Picker 与手动触发 Menu（`Dialog.prompt` 输入分支，触发后延迟 2 秒刷新，非 active 工作流禁用）。
+- [x] **P2.54 Toast 顶部提示 + 失败通知**：`hooks/useToast.ts` 与 `components/Toast.tsx` 用内置 `List.toast` 替代阻塞 alert，九个页面接入；`List.alert` 仅保留确认对话框与关键警告，详情页加载失败保留 inline 重试。`notifyService.notifyError(kind, repoName, message)` 受设置页「失败通知」开关控制，默认关闭。
+- [x] **P2.55–P2.56 步骤分段日志**：`utils/actionsLog.ts::parseStepSegments()` 以 `##[group]Run xxx`（`RUN_GROUP_RE`）为唯一步骤锚点切分日志——首个锚点前整段归 Set up job，出现用户步骤后才用 `POST_ANCHOR_RE` 判定后置段（**绝不前缀匹配 `complete job`**，否则 Set up job 内的 `Complete job name:` 会提前切换 phase），相邻锚点间的块按顺序映射到 `conclusion !== "skipped"` 的用户步骤，块多于步骤时余块归最后一个已匹配步骤。`buildStepOptions` 与 `formatStepDuration` 提供行数、错误警告统计与耗时。`components/ActionLogViewer.tsx` 上方步骤筛选、下方日志内容；`ActionRunDetailPage` 的步骤行本身即日志入口，未加载时先自动加载再预选。测试：`tests/actionsLog.test.ts`。
+- [x] **P2.57–P2.60 日志呈现与级别判定**：日志行只渲染行号与内容两列，级别完全用颜色表达（error 红、warning 橙、success 绿、info 三级灰），空行过滤后重新连续编号。级别判定收归 `utils/actionsLog.ts::detectLogLevel(raw, content?)`，优先级为 Runner 标记 > ANSI 颜色（`stripAnsi` + `detectAnsiLevel`，不剥离时彩色输出会显示成 `[36;1m` 乱码）> 退出码 > 关键字 > info；关键字匹配前先 `stripNoiseTokens`（URL、`-Werror`、路径、文件名）与 `stripZeroCounts`（`0 errors`）并走词边界，避免 token、look、unsuccessful 等误判。回归：`tests/logLevel.test.ts`（38 例，含假阳性用例），改判定规则前先跑它。
+- [x] **P2.61 页面下拉刷新统一**：仓库详情移除右上角刷新按钮改用 `List.refreshable`；GitHub Issue/PR 列表与详情、Actions 列表与运行详情、远端管理、冲突状态、工作区 Diff、与远端差异、回滚历史均补齐下拉刷新。固定 OID 的提交详情与 Diff，以及设置、克隆、上传表单不增加。
+- [x] **P2.62 历史行 Checks 徽标**：`HistoryRow` 在 GitHub 仓库且 commit 为 40 hex 时，于短 OID 左侧显示合并后的 Actions / Checks 状态图标，数据来自 `getCommitCheckStatuses()`（GraphQL `object(oid)→Commit.statusCheckRollup{state}`，最多 100 个提交，LRU 500 条，无 rollup 不缓存）；无 Token 或网络失败返回空映射，不阻断页面。
+- [x] **注解（Annotations）展示**：`getJobAnnotations(fullName, checkRunId)`（`/repos/{o}/{r}/check-runs/{id}/annotations`）；`ActionJob.checkRunId` 由 `mapJob` 解析，运行详情页把全部 Job 的注解合并为独立「注解」Section 并置于 Jobs 之上，按 failure / warning / notice 三级着色并显示 `path:line`。注解在 `load()` 之后**后台获取，不阻塞首屏**，失败静默降级为空列表。
+- [x] **工件（Artifacts）下载**：`listArtifacts`（`/actions/runs/{id}/artifacts`）与 `getArtifactDownloadInfo`（`/actions/artifacts/{id}/zip` 的 URL 与认证头）。运行详情页「工件」Section 显示名称、大小、有效期与创建时间，过期项禁用下载。下载走 `BackgroundURLSession.startDownload` 到 `FileManager.temporaryDirectory`（文件名非法字符替换为 `_`），`onProgress` 驱动百分比与 `ProgressView`，完成后 `ShareSheet.present` 交由用户保存，`finally` 中无条件清理临时文件。
+- [x] **删除工作流运行**：`deleteWorkflowRun`（DELETE `/actions/runs/{id}`）；`ActionsPage` 行左滑删除，`Dialog.actionSheet`（`cancelButton: false`，索引 0 为取消、1 为删除，严格判 `result !== 1` 直接返回）确认后本地过滤该行并 toast。
+
+### 10.10 最新验证（2026-08-18 复核）
+
+- 全项目 TypeScript 诊断：通过，0 个错误（2026-08-18 复测）。
+- 源文件规模：110 个（不含 `vendor/`）；`pages` 20、`components` 20、`services/git` 14、`tests` 15。
+- 下列测试为对应变更轮次的记录，尚未在 2026-08-18 统一重跑：
+  - `tests/reliability.test.ts`、`history`、`compare`、`inlineDiff`、`status-perf-helpers`、`widget`、`github`、`mergeCompletion`、`repoSort`：通过。
+  - `tests/performance.test.ts`、`statusFreshness`、`singleFlight`、`commitTreeDiff`：通过（P2.46–P2.49 各轮）。
+  - `tests/actionsLog.test.ts`、`logLevel.test.ts`：通过（P2.55–P2.60 各轮）。
+- `scripting-ts project "gitgit"`：2026-08-05 运行成功，之后未重新执行入口冒烟。
+- 已知结构债：`pages/RepoDetailPage.tsx` 现为 1174 行（08-04 拆分后曾降至 971），已超过 800 行拆分阈值，建议下一轮把 Actions 与 GitHub 相关的导航与状态编排继续外移。`pages/ActionRunDetailPage.tsx` 550 行、`api/githubApi.ts` 711 行、`components/ActionLogViewer.tsx` 330 行，均在审查区间内。
+
+### 10.11 当前剩余项
 
 - [ ] Tag 创建、查看和删除。
 - [ ] 仓库健康检查：HEAD、index、objects、config 与工作区访问性。
+- [ ] 结构债：`pages/RepoDetailPage.tsx` 已回升至 1174 行，需再次拆分（详见 10.10）。
+- [x] Actions 重新运行：rerun workflow 与 rerun failed jobs（P2.63）。
 - [ ] （可选）回滚强推的服务层集成测试：当前仅有工作区干净校验与取消路径的人工验证，未覆盖 reset+force push 的自动化用例。
 - [ ] （可选）iCloud 协调失败与 index 一致性故障注入。
-- [ ] 第四阶段以后：富通知、多仓库批量同步、更完整 GitHub 仓库管理面。
+- [ ] 第四阶段以后：富通知（自定义 UI 通知，区别于 P2.54 已完成的失败通知）、多仓库批量同步、更完整 GitHub 仓库管理面。
 
 已从剩余项移出（已完成）：
 
 - [x] Widget 状态面板（P2.36）。
 - [x] GitHub Issues / Pull Requests（P2.38）。
 - [x] 回滚到指定提交并强制推送（P2.44）。
-- [x] 仓库列表按名称排序（P2.45）。
+- [x] 仓库列表排序（P2.45 按名称、P2.48 待处理优先）。
+- [x] GitHub Actions CI/CD 浏览：运行列表、Job 与步骤分段日志、注解、工件下载、手动触发与删除运行（P2.52–P2.62）。
+- [x] 失败通知与 Toast 轻量反馈（P2.54）。

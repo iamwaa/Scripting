@@ -1,4 +1,5 @@
 import type { ResourceItem } from "../types/resource"
+import { sanitizeFileName } from "../utils/fileName"
 import { WebURL } from "../utils/WebURL"
 
 export const DIRECT_RESOURCE_EXTS: Record<string, ResourceItem["type"]> = {
@@ -71,15 +72,15 @@ export function getResourceFileName(rawURL: string, baseURL?: string): string {
     const parsed = new WebURL(baseURL ? normalizeResourceURL(rawURL, baseURL) : rawURL)
     const segments = parsed.pathname.split("/").filter(Boolean)
     const last = segments[segments.length - 1]
-    return last && last.length < 50
-      ? decodeURIComponent(last)
-      : `resource_${parsed.hostname}_${Math.floor(Math.random() * 1000)}`
+    return last && last.length < 120
+      ? sanitizeFileName(last)
+      : sanitizeFileName(`resource_${parsed.hostname}_${Math.floor(Math.random() * 1000)}`)
   } catch {
     const clean = rawURL.split("?")[0].split("#")[0]
     const segments = clean.split("/")
     const last = segments[segments.length - 1]
-    return last && last.length < 50
-      ? decodeURIComponent(last)
+    return last && last.length < 120
+      ? sanitizeFileName(last)
       : `unknown_resource_${Math.floor(Math.random() * 1000)}`
   }
 }
@@ -153,28 +154,6 @@ function extractSrcsetUrls(srcsetText: string): string[] {
 }
 
 /**
- * 尝试将图片缩略图 URL 升级为更高清版本
- * 去除常见的尺寸/质量/缩略图后缀和路径段
- */
-function upgradeImageURL(url: string): string {
-  let u = url
-  // 去掉缩略图路径段
-  u = u.replace(/\/(thumb(nail)?|small|preview|缩略)\//gi, "/")
-  // 去掉尺寸后缀：_300x300, -300x300, !300x300
-  u = u.replace(/[!_\-]\d{2,4}[xX×]\d{2,4}/g, "")
-  // 去掉 CDN resize 参数
-  u = u.replace(/([?&])(w|h|width|height|size|resize|thumb)size?=[^&]*/gi, "$1")
-  u = u.replace(/\/resize,[^/]+/gi, "")
-  // 去掉质量参数：?quality=75, !q75
-  u = u.replace(/[!?&]q(?:uality)?=\d+/gi, "")
-  // 去掉 _thumb 后缀：photo_thumb.jpg → photo.jpg
-  u = u.replace(/[_-]thumb(nail)?\.(jpg|jpeg|png|webp)/gi, ".$2")
-  // 去掉 Blogger/Google 的 /s150/, /w150/ 路径段
-  u = u.replace(/\/[sw]\d{2,4}\//gi, "/")
-  return u
-}
-
-/**
  * 启发式判断图片 URL 是否疑似图标/缩略图
  */
 function isLikelyThumbnail(url: string): boolean {
@@ -203,19 +182,9 @@ export function parseHtmlResources(html: string, targetURL: string, onStatus?: (
       if (clean === targetClean) return
     }
 
-    // 对图片 URL 尝试升级为更高清版本
-    let finalUrl = normalized
-    if (type === "image") {
-      const upgraded = upgradeImageURL(normalized)
-      if (upgraded !== normalized) {
-        if (seen[upgraded]) return // 已有高清版本，跳过低清重复
-        finalUrl = upgraded
-      }
-    }
-
-    seen[finalUrl] = true
-    const likelyThumbnail = type === "image" ? isLikelyThumbnail(finalUrl) : false
-    results.push({ type, url: finalUrl, name: getResourceFileName(finalUrl, targetURL), likelyThumbnail })
+    seen[normalized] = true
+    const likelyThumbnail = type === "image" ? isLikelyThumbnail(normalized) : false
+    results.push({ type, url: normalized, name: getResourceFileName(normalized, targetURL), likelyThumbnail })
   }
 
   function scanMatches(regex: RegExp, type: ResourceItem["type"], source: string) {
@@ -240,7 +209,8 @@ export function parseHtmlResources(html: string, targetURL: string, onStatus?: (
   const cssExtRegex = /(?:href|src|data[^=]*)\s*=\s*["']([^"']+\.css(?:\?[^"']*)?)["']/gi
   const jsRegex = /<script[^>]+src\s*=\s*["']([^"']+)["']/gi
   const jsExtRegex = /(?:href|src|data[^=]*)\s*=\s*["']([^"']+\.js(?:\?[^"']*)?)["']/gi
-  const videoSrcRegex = /<video[^>]+(?:src|poster)\s*=\s*["']([^"']+)["']/gi
+  const videoSrcRegex = /<video[^>]+src\s*=\s*["']([^"']+)["']/gi
+  const videoPosterRegex = /<video[^>]+poster\s*=\s*["']([^"']+)["']/gi
   const videoBlockRegex = /<video[^>]*>([\s\S]*?)<\/video>/gi
   const videoExtRegex = /(?:href|src|data[^=]*)\s*=\s*["']([^"']+\.(?:mp4|webm|m3u8|mov|avi|mkv|flv)(?:\?[^"']*)?)["']/gi
   const audioSrcRegex = /<audio[^>]+src\s*=\s*["']([^"']+)["']/gi
@@ -285,6 +255,7 @@ export function parseHtmlResources(html: string, targetURL: string, onStatus?: (
 
   onStatus?.("正在提取视频资源...")
   scanMatches(videoSrcRegex, "video", html)
+  scanMatches(videoPosterRegex, "image", html)
   let videoBlock: RegExpExecArray | null
   while ((videoBlock = videoBlockRegex.exec(html)) !== null) {
     const sourceRegex = /<source[^>]+src\s*=\s*["']([^"']+)["']/gi
@@ -332,7 +303,7 @@ export function parseHtmlResources(html: string, targetURL: string, onStatus?: (
     else if (/\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|md|csv)$/.test(cleanPath)) addResource("document", foundUrl)
     else if (/\.(zip|rar|7z|tar|gz|bz2)$/.test(cleanPath)) addResource("archive", foundUrl)
     else if (/\.(woff2?|ttf|otf|eot)$/.test(cleanPath)) addResource("font", foundUrl)
-    else if (/\/video\/|\/stream\/|getvideo/i.test(cleanPath)) addResource("video", foundUrl)
+    else if (/\/(?:stream|media)\/|getvideo/i.test(cleanPath)) addResource("video", foundUrl)
     else if (/\/audio\/|\/music\//i.test(cleanPath)) addResource("audio", foundUrl)
   }
 

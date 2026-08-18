@@ -1,6 +1,9 @@
 import type { ResourceItem } from "../types/resource"
+import { startSeparateMediaDownload } from "../functions/separateMediaDownloader"
+import { startYouTubeMediaDownload } from "../functions/youtubeMediaDownloader"
+import { sanitizeFileName } from "../utils/fileName"
 
-export type DownloadTaskStatus = "downloading" | "completed" | "failed" | "cancelled" | "saving"
+export type DownloadTaskStatus = "downloading" | "paused" | "completed" | "failed" | "cancelled" | "saving"
 
 export type DownloadTaskItem = {
   id: string
@@ -16,7 +19,15 @@ export type DownloadTaskItem = {
   savedTo?: "photos" | "file" | "none"
   createdAt: number
   cancel?: () => void
+  pause?: () => void
+  resume?: () => void
 }
+
+export type EnqueueDownloadOptions = {
+  onUpdate?: (task: DownloadTaskItem) => void
+}
+
+const downloadTaskListeners = new Map<string, (task: DownloadTaskItem) => void>()
 
 const DOWNLOAD_STORE_DIR = `${FileManager.appGroupDocumentsDirectory}/WebResourceExtractor`
 const DOWNLOAD_FILES_DIR = `${DOWNLOAD_STORE_DIR}/downloads`
@@ -26,16 +37,22 @@ export const downloadTasks = new (Observable as any)(loadStoredTasks()) as Obser
 
 let lastPersistedJson = ""
 
-type PersistedDownloadTaskItem = Omit<DownloadTaskItem, "cancel">
+type PersistedDownloadTaskItem = Omit<DownloadTaskItem, "cancel" | "pause" | "resume">
 
 function normalizeRestoredTask(item: PersistedDownloadTaskItem): DownloadTaskItem {
   const restored: DownloadTaskItem = {
     ...item,
     speed: "",
     cancel: undefined,
+    pause: undefined,
+    resume: undefined,
   }
 
   if (restored.status === "downloading") {
+    restored.status = "cancelled"
+    restored.label = "上次退出时下载已中断"
+    restored.speed = ""
+  } else if (restored.status === "paused") {
     restored.status = "cancelled"
     restored.label = "上次退出时下载已中断"
     restored.speed = ""
@@ -58,13 +75,10 @@ function loadStoredTasks(): DownloadTaskItem[] {
   }
 }
 
-async function persistTasks(items: DownloadTaskItem[]) {
+function persistTasks(items: DownloadTaskItem[]) {
   try {
-    await FileManager.createDirectory(DOWNLOAD_FILES_DIR, true)
-    const persisted: PersistedDownloadTaskItem[] = []
-
-    for (const item of items) {
-      const { cancel, ...plainItem } = item
+    const persisted: PersistedDownloadTaskItem[] = items.map(item => {
+      const { cancel, pause, resume, ...plainItem } = item
       const nextItem: PersistedDownloadTaskItem = { ...plainItem, speed: "" }
 
       if (nextItem.status === "downloading") {
@@ -75,25 +89,8 @@ async function persistTasks(items: DownloadTaskItem[]) {
         nextItem.status = "completed"
         nextItem.label = "已下载，可在下载管理器导出"
       }
-
-      if (nextItem.status === "completed" && nextItem.tempPath && await FileManager.exists(nextItem.tempPath)) {
-        const fileName = `${nextItem.id}_${getFileName(nextItem.resource, nextItem.mimeType || "")}`
-        const stablePath = `${DOWNLOAD_FILES_DIR}/${fileName}`
-        if (nextItem.tempPath !== stablePath) {
-          if (!await FileManager.exists(stablePath)) {
-            await FileManager.copyFile(nextItem.tempPath, stablePath)
-          }
-          // 删除原始临时文件，防止清理任务后残留
-          try { await FileManager.remove(nextItem.tempPath) } catch {}
-          // 同步更新内存中的 tempPath，确保清理时能正确定位文件
-          item.tempPath = stablePath
-        }
-        nextItem.tempPath = stablePath
-        try { nextItem.fileSize = (await FileManager.stat(stablePath)).size } catch {}
-      }
-
-      persisted.push(nextItem)
-    }
+      return nextItem
+    })
 
     const json = JSON.stringify(persisted)
     if (json === lastPersistedJson) return
@@ -109,11 +106,17 @@ function getTasks(): DownloadTaskItem[] {
 function updateTasks(updater: (items: DownloadTaskItem[]) => DownloadTaskItem[]) {
   const nextItems = updater(getTasks())
   downloadTasks.setValue(nextItems)
-  persistTasks(nextItems).catch(() => {})
+  persistTasks(nextItems)
 }
 
 function updateTask(id: string, patch: Partial<DownloadTaskItem>) {
   updateTasks(items => items.map(item => item.id === id ? { ...item, ...patch } : item))
+  const task = getTasks().find(item => item.id === id)
+  if (!task) return
+  downloadTaskListeners.get(id)?.(task)
+  if (task.status !== "downloading" && task.status !== "paused" && task.status !== "saving") {
+    downloadTaskListeners.delete(id)
+  }
 }
 
 function formatDownloadSpeed(bytesPerSecond: number): string {
@@ -149,11 +152,6 @@ function createSpeedTracker(onSpeed: (speed: string) => void) {
   }
 }
 
-function sanitizeFileName(name: string): string {
-  const trimmed = name.trim() || "download"
-  return trimmed.replace(/[\\/:*?"<>|]/g, "_")
-}
-
 function getExtFromMime(mimeType: string): string {
   const map: Record<string, string> = {
     "image/jpeg": "jpg", "image/png": "png", "image/gif": "gif",
@@ -178,6 +176,44 @@ function getFileName(resource: ResourceItem, mimeType: string): string {
   if (hasValidExt) return name
 
   return mimeExt ? `${name}.${mimeExt}` : name
+}
+
+async function completeDownloadedTask(
+  id: string,
+  downloadedPath: string,
+  mimeType: string,
+  fileSize: number,
+  label: string
+) {
+  const task = getDownloadTask(id)
+  if (!task || task.status !== "downloading") {
+    FileManager.remove(downloadedPath).catch(() => {})
+    return
+  }
+
+  await FileManager.createDirectory(DOWNLOAD_FILES_DIR, true)
+  const stableFileName = `${id}_${getFileName(task.resource, mimeType)}`
+  const stablePath = `${DOWNLOAD_FILES_DIR}/${stableFileName}`
+  if (downloadedPath !== stablePath) {
+    try { await FileManager.remove(stablePath) } catch {}
+    await FileManager.copyFile(downloadedPath, stablePath)
+    try { await FileManager.remove(downloadedPath) } catch {}
+  }
+
+  const stableSize = fileSize || (await FileManager.stat(stablePath)).size
+  updateTask(id, {
+    status: "completed",
+    progress: 100,
+    label,
+    speed: "",
+    tempPath: stablePath,
+    mimeType,
+    fileSize: stableSize,
+    savedTo: "none",
+    cancel: undefined,
+    pause: undefined,
+    resume: undefined,
+  })
 }
 
 export function createDownloadTask(resource: ResourceItem, label = "等待下载..."): string {
@@ -207,6 +243,10 @@ export function getActiveDownloadCount(): number {
   return getTasks().filter(item => item.status === "downloading" || item.status === "saving").length
 }
 
+function isUnfinishedTask(item: DownloadTaskItem): boolean {
+  return item.status === "downloading" || item.status === "paused" || item.status === "saving"
+}
+
 export function hasDownloadManagerContent(): boolean {
   return getTasks().length > 0
 }
@@ -228,14 +268,26 @@ export function removeDownloadTask(id: string) {
   updateTasks(items => items.filter(item => item.id !== id))
 }
 
+export function pauseDownloadTask(id: string) {
+  const task = getDownloadTask(id)
+  if (task?.status !== "downloading") return
+  task.pause?.()
+}
+
+export function resumeDownloadTask(id: string) {
+  const task = getDownloadTask(id)
+  if (task?.status !== "paused") return
+  task.resume?.()
+}
+
 export function cancelDownloadTask(id: string) {
   const task = getTasks().find(item => item.id === id)
-  if (task?.status !== "downloading" && task?.status !== "saving") return
+  if (task?.status !== "downloading" && task?.status !== "paused" && task?.status !== "saving") return
   task?.cancel?.()
 }
 
 export function clearFinishedDownloadTasks() {
-  const removable = getTasks().filter(item => item.status !== "downloading" && item.status !== "saving")
+  const removable = getTasks().filter(item => !isUnfinishedTask(item))
   for (const task of removable) {
     if (task.tempPath) FileManager.remove(task.tempPath).catch(() => {})
     // 兜底：同时尝试清理稳定目录中可能残留的文件
@@ -245,7 +297,14 @@ export function clearFinishedDownloadTasks() {
       FileManager.remove(stablePath).catch(() => {})
     }
   }
-  updateTasks(items => items.filter(item => item.status === "downloading" || item.status === "saving"))
+  updateTasks(items => items.filter(item => isUnfinishedTask(item)))
+}
+
+export function retryDownloadTask(id: string): string | undefined {
+  const task = getDownloadTask(id)
+  if (!task || isUnfinishedTask(task)) return undefined
+  removeDownloadTask(id)
+  return enqueueResourceDownload(task.resource)
 }
 
 export async function exportDownloadTask(id: string) {
@@ -272,8 +331,97 @@ export async function exportDownloadTask(id: string) {
   }
 }
 
-export function enqueueResourceDownload(resource: ResourceItem): string {
+function enqueueSeparateMediaDownload(resource: ResourceItem, options: EnqueueDownloadOptions = {}): string {
+  const id = createDownloadTask(resource, "正在准备音视频下载...")
+  if (options.onUpdate) downloadTaskListeners.set(id, options.onUpdate)
+  const workPrefix = `${FileManager.temporaryDirectory}/${id}`
+  const speedTracker = createSpeedTracker(speed => updateTask(id, { speed }))
+  let cancelled = false
+
+  BackgroundKeeper.keepAlive().catch(() => false)
+  const isYouTube = resource.source === "youtube"
+    && !!resource.sourceUrl
+    && !!resource.videoFormatId
+  const handle = isYouTube
+    ? startYouTubeMediaDownload(
+      resource.sourceUrl!,
+      resource.videoFormatId!,
+      resource.audioFormatId,
+      workPrefix,
+      label => updateTask(id, { label, speed: "" }),
+    )
+    : startSeparateMediaDownload(resource.url, resource.audioUrl!, workPrefix, {
+      headers: resource.headers,
+      onStatus: label => updateTask(id, { label, speed: label.includes("合并") ? "" : getDownloadTask(id)?.speed || "" }),
+      onProgress: (progress, totalBytes) => {
+        speedTracker.update(totalBytes)
+        updateTask(id, { progress })
+      },
+    })
+
+  updateTask(id, {
+    cancel: () => {
+      if (cancelled) return
+      cancelled = true
+      handle.cancel()
+      updateTask(id, {
+        label: "正在取消下载...",
+        speed: "",
+      })
+    },
+    pause: handle.pause ? () => {
+      if (cancelled) return
+      handle.pause?.()
+      updateTask(id, { status: "paused", label: "下载已暂停", speed: "" })
+    } : undefined,
+    resume: handle.resume ? () => {
+      if (cancelled) return
+      handle.resume?.()
+      updateTask(id, { status: "downloading", label: "正在下载..." })
+    } : undefined,
+  })
+
+  handle.result.then(async result => {
+    if (cancelled) {
+      FileManager.remove(result.outputPath).catch(() => {})
+      updateTask(id, {
+        status: "cancelled",
+        label: "下载已取消",
+        speed: "",
+        cancel: undefined,
+      })
+      return
+    }
+
+    await completeDownloadedTask(
+      id,
+      result.outputPath,
+      result.mimeType,
+      result.fileSize,
+      "音视频已合并，等待导出"
+    )
+  }).catch((error: any) => {
+    updateTask(id, {
+      status: cancelled ? "cancelled" : "failed",
+      label: cancelled ? "下载已取消" : "音视频下载或合并失败",
+      error: cancelled ? undefined : error.message || "未知错误",
+      speed: "",
+      cancel: undefined,
+    })
+  }).finally(() => {
+    BackgroundKeeper.stopKeepAlive().catch(() => {})
+  })
+
+  return id
+}
+
+export function enqueueResourceDownload(resource: ResourceItem, options: EnqueueDownloadOptions = {}): string {
+  if (resource.audioUrl || (resource.source === "youtube" && resource.videoFormatId)) {
+    return enqueueSeparateMediaDownload(resource, options)
+  }
+
   const id = createDownloadTask(resource)
+  if (options.onUpdate) downloadTaskListeners.set(id, options.onUpdate)
   const tempPath = `${FileManager.temporaryDirectory}/${id}_${sanitizeFileName(resource.name)}`
 
   BackgroundKeeper.keepAlive().catch(() => false)
@@ -281,12 +429,17 @@ export function enqueueResourceDownload(resource: ResourceItem): string {
   const download = BackgroundURLSession.startDownload({
     url: resource.url,
     destination: tempPath,
+    headers: resource.headers,
   })
   const speedTracker = createSpeedTracker(speed => updateTask(id, { speed }))
 
+  let settled = false
+  let paused = false
   updateTask(id, {
     label: "正在下载...",
     cancel: () => {
+      if (settled) return
+      settled = true
       download.cancel()
       updateTask(id, {
         status: "cancelled",
@@ -295,6 +448,18 @@ export function enqueueResourceDownload(resource: ResourceItem): string {
         cancel: undefined,
       })
       BackgroundKeeper.stopKeepAlive().catch(() => {})
+    },
+    pause: () => {
+      if (settled || paused) return
+      paused = true
+      download.suspend()
+      updateTask(id, { status: "paused", label: "下载已暂停", speed: "" })
+    },
+    resume: () => {
+      if (settled || !paused) return
+      paused = false
+      download.resume()
+      updateTask(id, { status: "downloading", label: "正在下载..." })
     },
   })
 
@@ -305,6 +470,12 @@ export function enqueueResourceDownload(resource: ResourceItem): string {
   }
 
   download.onFinishDownload = async (error, details) => {
+    if (settled) {
+      const path = details.destination || details.temporary || tempPath
+      FileManager.remove(path).catch(() => {})
+      return
+    }
+    settled = true
     if (error) {
       updateTask(id, {
         status: "failed",
@@ -323,22 +494,23 @@ export function enqueueResourceDownload(resource: ResourceItem): string {
     try { mimeType = FileManager.mimeType(downloadedPath) } catch {}
     try { fileSize = (await FileManager.stat(downloadedPath)).size } catch {}
 
-    updateTask(id, {
-      status: "completed",
-      progress: 100,
-      label: "已下载，等待导出",
-      speed: "",
-      tempPath: downloadedPath,
-      mimeType,
-      fileSize,
-      savedTo: "none",
-      cancel: undefined,
-    })
+    try {
+      await completeDownloadedTask(id, downloadedPath, mimeType, fileSize, "已下载，等待导出")
+    } catch (error: any) {
+      updateTask(id, {
+        status: "failed",
+        label: "下载文件保存失败",
+        error: error.message || "未知错误",
+        speed: "",
+        cancel: undefined,
+      })
+    }
     BackgroundKeeper.stopKeepAlive().catch(() => {})
   }
 
   download.onComplete = (error) => {
-    if (!error) return
+    if (!error || settled) return
+    settled = true
     const current = getTasks().find(item => item.id === id)
     if (!current || current.status !== "downloading") return
     updateTask(id, {

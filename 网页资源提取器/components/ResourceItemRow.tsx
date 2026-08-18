@@ -14,6 +14,7 @@ export function ResourceItemRow({ item }: { item: ResourceItem }) {
   } catch (e) {
     host = ""
   }
+  const metadata = [item.source, item.quality, item.format, host].filter(Boolean).join(" · ")
 
   return (
     <Button
@@ -82,7 +83,7 @@ export function ResourceItemRow({ item }: { item: ResourceItem }) {
         <VStack alignment="leading" spacing={2}>
           <HStack spacing={6}>
             <Text
-              font="caption2"
+              font={12}
               fontWeight="medium"
               foregroundStyle="white"
               padding={{ horizontal: 6, vertical: 2 }}
@@ -91,12 +92,12 @@ export function ResourceItemRow({ item }: { item: ResourceItem }) {
             >
               {info.label}
             </Text>
-            <Text font="subheadline" lineLimit={1}>
+            <Text font={15} lineLimit={1}>
               {item.name}
             </Text>
           </HStack>
-          <Text font="caption2" foregroundStyle="secondaryLabel" lineLimit={1}>
-            {host ? `${host} · ` : ""}{item.url}
+          <Text font={12} foregroundStyle="secondaryLabel" lineLimit={1}>
+            {metadata || item.url}
           </Text>
         </VStack>
       </HStack>

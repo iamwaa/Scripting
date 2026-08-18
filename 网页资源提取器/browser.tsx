@@ -17,7 +17,6 @@ declare const GM: {
   setValue: (key: string, value: any) => Promise<void>
   openInTab: (url: string, options?: boolean | Record<string, any>) => Promise<any>
 }
-declare const URL: any
 declare const document: any
 declare const window: any
 declare const location: any

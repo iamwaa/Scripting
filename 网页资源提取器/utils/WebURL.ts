@@ -1,35 +1,68 @@
-// 简易 URL 解析器，替代浏览器原生的 URL 对象
+function splitSuffix(value: string): { path: string; suffix: string } {
+  const index = value.search(/[?#]/)
+  return index < 0
+    ? { path: value, suffix: "" }
+    : { path: value.slice(0, index), suffix: value.slice(index) }
+}
+
+function normalizePath(path: string): string {
+  const trailingSlash = path.endsWith("/")
+  const parts: string[] = []
+
+  for (const part of path.split("/")) {
+    if (!part || part === ".") continue
+    if (part === "..") parts.pop()
+    else parts.push(part)
+  }
+
+  const normalized = `/${parts.join("/")}`
+  return trailingSlash && normalized !== "/" ? `${normalized}/` : normalized
+}
+
+function getOrigin(value: string): string {
+  return value.match(/^(https?:\/\/[^/?#]+)/i)?.[1] || ""
+}
+
+function getPath(value: string): string {
+  const match = value.match(/^https?:\/\/[^/?#]+([^?#]*)/i)
+  return match?.[1] || "/"
+}
+
+function resolveURL(value: string, base?: string): string {
+  if (/^(https?:\/\/|data:)/i.test(value)) return value
+  if (!base) return value
+
+  const origin = getOrigin(base)
+  if (!origin) return value
+  if (value.startsWith("//")) {
+    const protocol = base.match(/^https?:/i)?.[0] || "https:"
+    return `${protocol}${value}`
+  }
+
+  const { path, suffix } = splitSuffix(value)
+  if (!path) return `${origin}${getPath(base)}${suffix}`
+  if (path.startsWith("/")) return `${origin}${normalizePath(path)}${suffix}`
+
+  const basePath = getPath(base)
+  const directory = basePath.endsWith("/") ? basePath : basePath.replace(/\/[^/]*$/, "/")
+  return `${origin}${normalizePath(`${directory}${path}`)}${suffix}`
+}
+
 export class WebURL {
-  href: string = ""
-  host: string = ""
-  hostname: string = ""
-  pathname: string = ""
+  href = ""
+  host = ""
+  hostname = ""
+  pathname = "/"
 
   constructor(url: string, base?: string) {
-    let finalUrl = url
-    // 如果存在 base 且当前 url 不是绝对路径，则进行相对路径拼接
-    if (base && !/^(https?:\/\/|data:)/i.test(url)) {
-      if (url.startsWith("//")) {
-        const proto = base.match(/^https?:/i)?.[0] || "https:"
-        finalUrl = proto + url
-      } else if (url.startsWith("/")) {
-        const origin = base.match(/^(https?:\/\/[^\/]+)/i)?.[1] || ""
-        finalUrl = origin + url
-      } else {
-        const basePath = base.split("?")[0].split("#")[0].replace(/\/[^\/]*$/, "")
-        finalUrl = basePath + "/" + url
-      }
-    }
-    
-    this.href = finalUrl
-    
-    const hostMatch = finalUrl.match(/^https?:\/\/([^\/]+)/i)
+    this.href = resolveURL(url, base)
+
+    const hostMatch = this.href.match(/^https?:\/\/([^/?#]+)/i)
     if (hostMatch) {
       this.host = hostMatch[1]
-      this.hostname = hostMatch[1].split(":")[0]
+      this.hostname = hostMatch[1].replace(/^\[[^\]]+\](?::\d+)?$/, match => match.split("]")[0] + "]").split(":")[0]
     }
-    
-    const pathMatch = finalUrl.match(/^https?:\/\/[^\/]+(\/[^?#]*)/i)
-    this.pathname = pathMatch ? pathMatch[1] : "/"
+
+    this.pathname = getPath(this.href)
   }
 }

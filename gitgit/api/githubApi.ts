@@ -488,7 +488,6 @@ function mapRun(data: any): ActionRun {
     updatedAt: String(data.updated_at || ""),
     htmlUrl: String(data.html_url || ""),
     headShaShort: sha.slice(0, 7),
-    rerunnable: data.run_number !== undefined && data.status !== "in_progress",
   }
 }
 
@@ -706,6 +705,36 @@ export async function deleteWorkflowRun(
   await ghFetch(
     `/repos/${encodeRepo(fullName)}/actions/runs/${Math.floor(runId)}`,
     { method: "DELETE" }
+  )
+  return true
+}
+
+/**
+ * 重新运行工作流的全部 Job。
+ * 仅对已结束的运行有效，进行中的运行 GitHub 会返回 403。
+ */
+export async function rerunWorkflowRun(
+  fullName: string,
+  runId: number
+): Promise<boolean> {
+  await ghFetch(
+    `/repos/${encodeRepo(fullName)}/actions/runs/${Math.floor(runId)}/rerun`,
+    { method: "POST" }
+  )
+  return true
+}
+
+/**
+ * 仅重新运行工作流中失败的 Job（含其依赖 Job）。
+ * 运行中没有失败 Job 时 GitHub 会返回 403。
+ */
+export async function rerunFailedJobs(
+  fullName: string,
+  runId: number
+): Promise<boolean> {
+  await ghFetch(
+    `/repos/${encodeRepo(fullName)}/actions/runs/${Math.floor(runId)}/rerun-failed-jobs`,
+    { method: "POST" }
   )
   return true
 }

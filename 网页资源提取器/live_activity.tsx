@@ -16,7 +16,6 @@ export type DownloadActivityState = {
   progress: number
   status: "downloading" | "waitingForSave" | "completed" | "cancelled" | "error"
   resourceType: ResourceType
-  revision: number
 }
 
 function truncateName(name: string, maxLen: number): string {

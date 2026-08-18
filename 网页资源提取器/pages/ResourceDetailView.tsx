@@ -15,9 +15,10 @@ import {
   useRef,
   useState,
   ZStack,
-LiveActivity,
+  LiveActivity,
 } from "scripting"
 import type { ResourceItem } from "../types/resource"
+import { sanitizeFileName } from "../utils/fileName"
 import { WebURL } from "../utils/WebURL"
 import { getTypeInfo } from "../functions/resourceInfo"
 import { toastMessage, toastVisible, showToast } from "../state/appState"
@@ -25,8 +26,14 @@ import { TextPreview } from "../components/TextPreview"
 import { FontPreview } from "../components/FontPreview"
 import { DownloadLiveActivity, type DownloadActivityState } from "../live_activity"
 import {
+  cancelDownloadTask,
+  pauseDownloadTask,
+  resumeDownloadTask,
   createDownloadTask,
+  enqueueResourceDownload,
+  exportDownloadTask,
   updateDownloadTask,
+  type DownloadTaskItem,
 } from "../state/downloadManager"
 import {
   parseM3u8Playlist,
@@ -112,20 +119,18 @@ function createDownloadLiveActivityController(resource: ResourceItem, options: L
   let pendingLiveState: DownloadActivityState | null = null
   let liveUpdateInFlight = false
   let liveUpdateTimer: any = null
-  let revision = 0
+  let liveOperation: Promise<void> = Promise.resolve()
   let closed = false
 
   const minUpdateIntervalMs = options.minUpdateIntervalMs ?? LIVE_ACTIVITY_MIN_UPDATE_INTERVAL_MS
   const minProgressStep = options.minProgressStep ?? LIVE_ACTIVITY_MIN_PROGRESS_STEP
 
   function makeActivityState(progress: number, status: DownloadActivityStatus): DownloadActivityState {
-    revision += 1
     return {
       fileName: resource.name,
       resourceType: resource.type,
       progress: clampProgress(progress),
       status,
-      revision,
     }
   }
 
@@ -206,10 +211,10 @@ function createDownloadLiveActivityController(resource: ResourceItem, options: L
   async function sendLiveUpdate(state: DownloadActivityState) {
     lastLiveProgress = state.progress
     lastLiveUpdateAt = Date.now()
-    await withTimeout(
-      liveAct.update(state, makeActivityOptions()),
-      LIVE_ACTIVITY_UPDATE_TIMEOUT_MS
-    ).catch(() => {})
+    liveOperation = liveAct.update(state, makeActivityOptions())
+      .then(() => {})
+      .catch(() => {})
+    await liveOperation
   }
 
   async function flush(canContinue: () => boolean = () => true) {
@@ -243,6 +248,7 @@ function createDownloadLiveActivityController(resource: ResourceItem, options: L
         return
       }
 
+      await liveOperation
       await withTimeout(
         liveAct.end(finalState, { ...makeActivityOptions(), dismissTimeInterval: 5 }),
         LIVE_ACTIVITY_UPDATE_TIMEOUT_MS
@@ -261,9 +267,6 @@ function createDownloadLiveActivityController(resource: ResourceItem, options: L
 
   return { start, update, end, dispose }
 }
-
-// 模块级下载取消函数
-let _downloadCancelFn: (() => void) | null = null
 
 export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
   const dismiss = Navigation.useDismiss()
@@ -286,6 +289,9 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
 
   const [player, setPlayer] = useState<any>(null)
   const isDetailActiveRef = useRef(true)
+  const downloadCancelRef = useRef<(() => void) | null>(null)
+  const downloadPauseRef = useRef<(() => void) | null>(null)
+  const downloadResumeRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     isDetailActiveRef.current = true
@@ -295,7 +301,9 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
   }, [])
 
   useEffect(() => {
+    // YouTube 签名 URL 有过期和 IP 绑定，AVPlayer 无法直接预览
     if (!isMedia) return
+    if (resource.source === "youtube") return
     const avPlayer = new AVPlayer()
     avPlayer.setSource(resource.url)
     setPlayer(avPlayer)
@@ -305,6 +313,7 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
   }, [resource.url])
 
   const [isDownloading, setIsDownloading] = useState(false)
+  const [isDownloadPaused, setIsDownloadPaused] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState(0)
   const [downloadLabel, setDownloadLabel] = useState("")
   const [downloadSpeed, setDownloadSpeed] = useState("")
@@ -317,6 +326,7 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
   // m3u8 合并下载
   async function downloadM3u8Stream(variant?: M3u8Variant) {
     setIsDownloading(true)
+    setIsDownloadPaused(false)
     setDownloadProgress(0)
     setDownloadSpeed("")
     setDownloadLabel("正在解析 m3u8 播放列表...")
@@ -333,10 +343,10 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
       minProgressStep: ENCRYPTED_M3U8_LIVE_ACTIVITY_PROGRESS_STEP,
     })
 
-    _downloadCancelFn = () => {
+    downloadCancelRef.current = () => {
       if (cancelled) return
       cancelled = true
-      _downloadCancelFn = null
+      downloadCancelRef.current = null
       setDownloadSpeed("")
       setIsDownloading(false)
       liveActivity.end("cancelled", lastProgress)
@@ -349,7 +359,7 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
       })
       showToast("下载已取消")
     }
-    updateDownloadTask(managerTaskId, { cancel: _downloadCancelFn })
+    updateDownloadTask(managerTaskId, { cancel: downloadCancelRef.current })
 
     try {
       let playlist
@@ -650,7 +660,7 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
       }
       setIsDownloading(false)
     } finally {
-      _downloadCancelFn = null
+      downloadCancelRef.current = null
     }
   }
   function getExtFromMime(mimeType: string): string {
@@ -665,16 +675,18 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
   }
 
   function getProperFileName(mimeType: string): string {
-    const ext = resource.name.split(".").pop()?.toLowerCase() || ""
+    const safeResourceName = sanitizeFileName(resource.name)
+    const ext = safeResourceName.split(".").pop()?.toLowerCase() || ""
     const hasValidExt = ext.length > 0 && ext.length <= 5 && !ext.includes("!") && !ext.includes("?")
-    if (hasValidExt) return resource.name
+    if (hasValidExt) return safeResourceName
     const mimeExt = getExtFromMime(mimeType)
-    return mimeExt ? resource.name + "." + mimeExt : resource.name
+    return mimeExt ? safeResourceName + "." + mimeExt : safeResourceName
   }
 
   // 确保文件有正确扩展名，返回最终路径（可能是新副本）
   async function ensureFileExt(filePath: string, mimeType: string): Promise<string> {
-    const ext = resource.name.split(".").pop()?.toLowerCase() || ""
+    const safeResourceName = sanitizeFileName(resource.name)
+    const ext = safeResourceName.split(".").pop()?.toLowerCase() || ""
     const hasValidExt = ext.length > 0 && ext.length <= 5 && !ext.includes("!") && !ext.includes("?")
     if (hasValidExt) return filePath
     const mimeExt = getExtFromMime(mimeType)
@@ -688,16 +700,18 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
 
   function startDownload(onDone: (tempPath: string, mimeType: string, markWaitingForSave: () => void) => Promise<"photos" | "file" | "none" | void>) {
     setIsDownloading(true)
+    setIsDownloadPaused(false)
     setDownloadProgress(0)
     setDownloadSpeed("")
     setDownloadLabel("正在下载...")
 
-    const tempPath = FileManager.temporaryDirectory + "/" + Date.now() + "_" + resource.name
+    const tempPath = FileManager.temporaryDirectory + "/" + Date.now() + "_" + sanitizeFileName(resource.name)
     const managerTaskId = createDownloadTask(resource, "正在下载...")
 
     const task = BackgroundURLSession.startDownload({
       url: resource.url,
       destination: tempPath,
+      headers: resource.headers,
     })
 
     let lastProgress = 0
@@ -712,13 +726,16 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
     function cleanup() {
       if (cleanedUp) return
       cleanedUp = true
-      _downloadCancelFn = null
+      downloadCancelRef.current = null
+      downloadPauseRef.current = null
+      downloadResumeRef.current = null
+      setIsDownloadPaused(false)
       setIsDownloading(false)
     }
 
     liveActivity.start(() => !cancelled && !cleanedUp)
 
-    _downloadCancelFn = () => {
+    downloadCancelRef.current = () => {
       if (cancelled || cleanedUp) return
       cancelled = true
       task.cancel()
@@ -733,7 +750,26 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
       cleanup()
       showToast("下载已取消")
     }
-    updateDownloadTask(managerTaskId, { cancel: _downloadCancelFn })
+    downloadPauseRef.current = () => {
+      if (cancelled || cleanedUp) return
+      task.suspend()
+      setIsDownloadPaused(true)
+      setDownloadSpeed("")
+      setDownloadLabel("下载已暂停")
+      updateDownloadTask(managerTaskId, { status: "paused", label: "下载已暂停", speed: "" })
+    }
+    downloadResumeRef.current = () => {
+      if (cancelled || cleanedUp) return
+      task.resume()
+      setIsDownloadPaused(false)
+      setDownloadLabel("正在下载...")
+      updateDownloadTask(managerTaskId, { status: "downloading", label: "正在下载..." })
+    }
+    updateDownloadTask(managerTaskId, {
+      cancel: downloadCancelRef.current,
+      pause: downloadPauseRef.current,
+      resume: downloadResumeRef.current,
+    })
 
     task.onProgress = (details) => {
       if (cancelled) return
@@ -853,26 +889,29 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
   async function fallbackSaveToFile(tempPath: string, mimeType: string, markWaitingForSave?: () => void): Promise<"file" | "none" | void> {
     setDownloadLabel("正在准备保存到文件...")
     const finalPath = await ensureFileExt(tempPath, mimeType)
-    if (!isDetailActiveRef.current) return
+    try {
+      if (!isDetailActiveRef.current) return
 
-    const data = await FileManager.readAsData(finalPath)
-    const fileName = getProperFileName(mimeType)
-    if (!isDetailActiveRef.current) return
+      const data = await FileManager.readAsData(finalPath)
+      const fileName = getProperFileName(mimeType)
+      if (!isDetailActiveRef.current) return
 
-    markWaitingForSave?.()
-    if (!isDetailActiveRef.current) return
+      markWaitingForSave?.()
+      if (!isDetailActiveRef.current) return
 
-    const result = await DocumentPicker.exportFiles({
-      files: [{ data, name: fileName }]
-    })
-    if (result.length > 0) {
-      showToast("已保存到选择的位置")
-      return "file"
+      const result = await DocumentPicker.exportFiles({
+        files: [{ data, name: fileName }]
+      })
+      if (result.length > 0) {
+        showToast("已保存到选择的位置")
+        return "file"
+      }
+      return "none"
+    } finally {
+      if (finalPath !== tempPath) {
+        try { await FileManager.remove(finalPath) } catch {}
+      }
     }
-    if (finalPath !== tempPath) {
-      try { await FileManager.remove(finalPath) } catch {}
-    }
-    return "none"
   }
 
   function saveToPhotos() {
@@ -895,7 +934,71 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
     })
   }
 
+  function saveSeparateMediaToFile() {
+    setIsDownloading(true)
+    setIsDownloadPaused(false)
+    setDownloadProgress(0)
+    setDownloadSpeed("")
+    setDownloadLabel("正在准备音视频下载...")
+
+    const liveActivity: any = resource.source === "youtube"
+      ? {
+          start: () => {},
+          update: () => {},
+          end: () => {},
+        }
+      : createDownloadLiveActivityController(resource)
+    let finished = false
+    liveActivity.start(() => !finished)
+
+    const taskId = enqueueResourceDownload(resource, {
+      onUpdate: (task: DownloadTaskItem) => {
+        setDownloadProgress(task.progress)
+        setDownloadLabel(task.label)
+        setDownloadSpeed(task.speed)
+        liveActivity.update(task.progress, false, "downloading", () => !finished)
+
+        if (task.status === "paused") {
+          setIsDownloadPaused(true)
+          return
+        }
+        if (task.status === "downloading" || task.status === "saving") {
+          setIsDownloadPaused(false)
+          return
+        }
+        finished = true
+        downloadCancelRef.current = null
+        downloadPauseRef.current = null
+        downloadResumeRef.current = null
+        setIsDownloadPaused(false)
+        setIsDownloading(false)
+
+        if (task.status === "completed") {
+          liveActivity.end("completed", 100)
+          if (isDetailActiveRef.current) {
+            exportDownloadTask(task.id).catch(error => showToast(`导出失败: ${error.message || "未知错误"}`))
+          }
+        } else if (task.status === "cancelled") {
+          liveActivity.end("cancelled", task.progress)
+          showToast("下载已取消")
+        } else {
+          liveActivity.end("error", task.progress)
+          showToast(task.error ? `下载失败: ${task.error}` : "下载失败")
+        }
+      },
+    })
+
+    downloadCancelRef.current = () => cancelDownloadTask(taskId)
+    downloadPauseRef.current = () => pauseDownloadTask(taskId)
+    downloadResumeRef.current = () => resumeDownloadTask(taskId)
+  }
+
   function saveToFile() {
+    if (resource.audioUrl || (resource.source === "youtube" && resource.videoFormatId)) {
+      saveSeparateMediaToFile()
+      return
+    }
+
     startDownload(async (tempPath, mimeType, markWaitingForSave) => {
       return await fallbackSaveToFile(tempPath, mimeType, markWaitingForSave)
     })
@@ -931,7 +1034,7 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
           <VStack alignment="leading" spacing={8}>
             <HStack spacing={6}>
               <Text
-                font="caption2"
+                font={12}
                 fontWeight="medium"
                 foregroundStyle="white"
                 padding={{ horizontal: 6, vertical: 2 }}
@@ -944,11 +1047,16 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
                 {resource.name}
               </Text>
             </HStack>
+            {(resource.source || resource.quality || resource.format) ? (
+              <Text font={12} foregroundStyle="secondaryLabel" lineLimit={2}>
+                {[resource.source, resource.quality, resource.format].filter(Boolean).join(" · ")}
+              </Text>
+            ) : null}
             <VStack alignment="leading" spacing={2}>
-              <Text font="caption" foregroundStyle="secondaryLabel">
+              <Text font={12} foregroundStyle="secondaryLabel">
                 资源链接
               </Text>
-              <Text font="caption" textSelection lineLimit={10}>
+              <Text font={12} textSelection lineLimit={10}>
                 {resource.url}
               </Text>
             </VStack>
@@ -984,6 +1092,16 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
           </Section>
         ) : null}
 
+        {isMedia && !player && resource.source === "youtube" ? (
+          <Section title="预览内容">
+            <VStack alignment="leading" spacing={6} padding={{ vertical: 8 }}>
+              <Text font={13} foregroundStyle="secondaryLabel">
+                YouTube 视频使用签名保护，无法直接预览。请点击下方「保存到文件」下载。
+              </Text>
+            </VStack>
+          </Section>
+        ) : null}
+
         {isTextType ? (
           <Section title="预览内容">
             <Button
@@ -1003,22 +1121,35 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
 
         {isDownloading ? (
           <Section title="下载进度">
-            <VStack alignment="leading" spacing={8}>
-              <HStack>
-                <Text font="caption">{downloadLabel}</Text>
+            <VStack alignment="leading" spacing={8} padding={{ vertical: 6 }}>
+              <HStack spacing={12}>
+                <Image systemName={info.icon} foregroundStyle={info.color} font={22} frame={{ width: 34 }} />
+                <VStack alignment="leading" spacing={3}>
+                  <Text font={15} lineLimit={1}>{resource.name}</Text>
+                  <Text font={11} foregroundStyle="secondaryLabel" lineLimit={1}>
+                    {isDownloadPaused ? "已暂停" : downloadLabel || "下载中"}
+                  </Text>
+                </VStack>
                 <Spacer />
-                <Text font="caption" foregroundStyle="secondaryLabel">{"  " + downloadProgress + "%"}</Text>
+                {!isDownloadPaused && downloadPauseRef.current ? (
+                  <Button action={() => downloadPauseRef.current?.()} buttonStyle="borderless">
+                    <Image systemName="pause.circle.fill" foregroundStyle="#FF9500" font={20} />
+                  </Button>
+                ) : null}
+                {isDownloadPaused && downloadResumeRef.current ? (
+                  <Button action={() => downloadResumeRef.current?.()} buttonStyle="borderless">
+                    <Image systemName="play.circle.fill" foregroundStyle="#34C759" font={20} />
+                  </Button>
+                ) : null}
+                <Button action={() => downloadCancelRef.current?.()} buttonStyle="borderless">
+                  <Image systemName="xmark.circle.fill" foregroundStyle="#FF3B30" font={20} />
+                </Button>
               </HStack>
               <ProgressView value={downloadProgress / 100} progressViewStyle="linear" />
               <HStack>
-                <Text font="caption" foregroundStyle="secondaryLabel">{downloadSpeed || " "}</Text>
+                <Text font={11} foregroundStyle="secondaryLabel">{downloadSpeed || downloadLabel || " "}</Text>
                 <Spacer />
-                <Button action={() => _downloadCancelFn?.()}>
-                  <HStack spacing={6}>
-                    <Image systemName="xmark.circle" foregroundStyle="#FF3B30" />
-                    <Text foregroundStyle="#FF3B30">取消下载</Text>
-                  </HStack>
-                </Button>
+                <Text font={11} foregroundStyle="secondaryLabel">{downloadProgress}%</Text>
               </HStack>
             </VStack>
           </Section>
@@ -1103,7 +1234,7 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
           </Section>
         ) : (
           <Section>
-            {canSaveToPhotos ? (
+            {canSaveToPhotos && !resource.audioUrl ? (
               <Button action={saveToPhotos} disabled={isDownloading}>
                 <HStack spacing={6}>
                   <Image systemName="photo.on.rectangle" />

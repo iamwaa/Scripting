@@ -10,6 +10,7 @@ import {
   HStack,
   Image,
   List,
+  Menu,
   ProgressView,
   Section,
   Text,
@@ -26,6 +27,8 @@ import {
   getJobAnnotations,
   listArtifacts,
   getArtifactDownloadInfo,
+  rerunWorkflowRun,
+  rerunFailedJobs,
 } from "../api/githubApi"
 import { AvatarView } from "../components/AvatarView"
 import { ActionLogViewer } from "../components/ActionLogViewer"
@@ -33,6 +36,7 @@ import { toastContent } from "../components/Toast"
 import { useToast } from "../hooks/useToast"
 import { relativeTime } from "../utils/format"
 import { formatStepDuration } from "../utils/actionsLog"
+import { rerunAvailability, rerunModeLabel, type RerunMode } from "../utils/actionsRerun"
 import {
   COLOR_GREEN,
   COLOR_LABEL,
@@ -112,10 +116,11 @@ export function ActionRunDetailPage({
   const [artifacts, setArtifacts] = useState<ActionArtifact[]>([])
   // 注解列表（所有 Job 的注解合并）
   const [annotations, setAnnotations] = useState<ActionAnnotation[]>([])
-  const [annotationsLoading, setAnnotationsLoading] = useState(false)
   // 工件下载
   const [downloadingId, setDownloadingId] = useState<number | null>(null)
   const [downloadProgress, setDownloadProgress] = useState<number>(0)
+  // 是否正在发起重跑（防重复提交）
+  const [rerunning, setRerunning] = useState(false)
 
   async function load() {
     setError(null)
@@ -141,7 +146,6 @@ export function ActionRunDetailPage({
       .map((j) => j.checkRunId)
       .filter((id): id is number => id != null)
     if (checkRunIds.length === 0) return
-    setAnnotationsLoading(true)
     try {
       const results = await Promise.all(
         checkRunIds.map((id) => getJobAnnotations(fullName, id))
@@ -151,14 +155,41 @@ export function ActionRunDetailPage({
     } catch {
       // 注解加载失败不阻塞页面
       setAnnotations([])
-    } finally {
-      setAnnotationsLoading(false)
     }
   }
 
   useEffect(() => {
     load()
   }, [fullName, runId])
+
+  /**
+   * 发起重新运行：先确认，成功后延迟重拉详情
+   * （GitHub 需几秒才会把新的 queued 状态反映到接口）。
+   */
+  async function handleRerun(mode: RerunMode) {
+    if (rerunning || !run) return
+    const label = rerunModeLabel(mode)
+    const confirmed = await Dialog.confirm({
+      title: label,
+      message:
+        mode === "all"
+          ? `确认重新运行 #${run.id} 的全部 Job？`
+          : `确认重新运行 #${run.id} 中失败的 Job（含依赖它们的 Job）？`,
+      confirmLabel: "重新运行",
+    })
+    if (confirmed !== true) return
+    setRerunning(true)
+    try {
+      if (mode === "all") await rerunWorkflowRun(fullName, run.id)
+      else await rerunFailedJobs(fullName, run.id)
+      showToast("已发起" + label, "success")
+      setTimeout(() => load(), 2000)
+    } catch (e: any) {
+      showToast("重新运行失败：" + String(e?.message || e), "error")
+    } finally {
+      setRerunning(false)
+    }
+  }
 
   async function toggleJobLog(job: ActionJob) {
     // 再次点击同一 Job 则折叠
@@ -277,6 +308,43 @@ export function ActionRunDetailPage({
     ? statusVisual(run.status, run.conclusion)
     : null
 
+  /** 右上角菜单：重新运行（未结束时置灰）+ 在 GitHub 打开 */
+  function renderMenu(current: ActionRun) {
+    const rerun = rerunAvailability(current)
+    return (
+      <Menu title="更多" systemImage={rerunning ? "hourglass" : "ellipsis.circle"}>
+        {rerun.canRerunAll ? (
+          <Button
+            title={rerunModeLabel("all")}
+            systemImage="arrow.clockwise"
+            action={() => handleRerun("all")}
+            disabled={rerunning}
+          />
+        ) : (
+          <Button
+            title={rerun.reason || "当前不可重新运行"}
+            systemImage="clock"
+            action={() => {}}
+            disabled
+          />
+        )}
+        {rerun.canRerunFailed ? (
+          <Button
+            title={rerunModeLabel("failed")}
+            systemImage="arrow.clockwise.circle"
+            action={() => handleRerun("failed")}
+            disabled={rerunning}
+          />
+        ) : null}
+        <Button
+          title="在 GitHub 打开"
+          systemImage="safari"
+          action={() => Safari.present(current.htmlUrl)}
+        />
+      </Menu>
+    )
+  }
+
   return (
     <List
       navigationTitle={run ? `#${run.id}` : "加载中…"}
@@ -301,13 +369,7 @@ export function ActionRunDetailPage({
         ),
       }}
       toolbar={{
-        topBarTrailing: run ? (
-          <Button
-            title="在 GitHub 打开"
-            systemImage="safari"
-            action={() => Safari.present(run.htmlUrl)}
-          />
-        ) : undefined,
+        topBarTrailing: run ? renderMenu(run) : undefined,
       }}
       toast={
         toastState
@@ -367,15 +429,8 @@ export function ActionRunDetailPage({
             ) : null}
           </Section>
 
-          {/* 注解（类似 GitHub 网页 Annotations） */}
-          {annotationsLoading ? (
-            <Section header={<Text>注解</Text>}>
-              <HStack alignment="center" spacing={6}>
-                <Image systemName="arrow.triangle.2.circlepath" font={12} foregroundStyle={COLOR_SECONDARY_LABEL} />
-                <Text font={13} foregroundStyle={COLOR_SECONDARY_LABEL}>加载注解中…</Text>
-              </HStack>
-            </Section>
-          ) : annotations.length > 0 ? (
+          {/* 注解（类似 GitHub 网页 Annotations）：加载中不占位，有内容才显示 */}
+          {annotations.length > 0 ? (
             <Section header={<Text>注解（{annotations.length}）</Text>}>
               {annotations.map((ann, idx) => {
                 const isFailure = ann.level === "failure"
