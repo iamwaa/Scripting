@@ -332,6 +332,7 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
     setDownloadLabel("正在解析 m3u8 播放列表...")
 
     let cancelled = false
+    let paused = false
     let lastProgress = 0
     const managerTaskId = createDownloadTask(resource, "正在解析 m3u8 播放列表...")
     const speedTracker = createDownloadSpeedTracker(speed => {
@@ -347,7 +348,10 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
       if (cancelled) return
       cancelled = true
       downloadCancelRef.current = null
+      downloadPauseRef.current = null
+      downloadResumeRef.current = null
       setDownloadSpeed("")
+      setIsDownloadPaused(false)
       setIsDownloading(false)
       liveActivity.end("cancelled", lastProgress)
       updateDownloadTask(managerTaskId, {
@@ -356,10 +360,33 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
         label: "下载已取消",
         speed: "",
         cancel: undefined,
+        pause: undefined,
+        resume: undefined,
       })
       showToast("下载已取消")
     }
-    updateDownloadTask(managerTaskId, { cancel: downloadCancelRef.current })
+    downloadPauseRef.current = () => {
+      if (cancelled || paused) return
+      paused = true
+      setIsDownloadPaused(true)
+      setDownloadSpeed("")
+      setDownloadLabel("下载已暂停")
+      updateDownloadTask(managerTaskId, { status: "paused", label: "下载已暂停", speed: "" })
+    }
+    downloadResumeRef.current = () => {
+      if (cancelled || !paused) return
+      paused = false
+      setIsDownloadPaused(false)
+      setDownloadLabel("正在下载...")
+      updateDownloadTask(managerTaskId, { status: "downloading", label: "正在下载..." })
+    }
+    updateDownloadTask(managerTaskId, {
+      cancel: downloadCancelRef.current,
+      pause: downloadPauseRef.current,
+      resume: downloadResumeRef.current,
+      retry: () => downloadM3u8Stream(variant),
+      m3u8Variant: variant,
+    })
 
     try {
       let playlist
@@ -538,6 +565,7 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
       await downloadM3u8SegmentsToFile(segments, {
         outputPath: outPath,
         isCancelled: () => cancelled,
+        isPaused: () => paused,
         onStatus: message => {
           setDownloadLabel(message)
           updateDownloadTask(managerTaskId, { label: message })
@@ -654,6 +682,8 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
         progress: lastProgress,
         speed: "",
         cancel: undefined,
+        pause: undefined,
+        resume: undefined,
       })
       if (!cancelled) {
         showToast(`${err.message}`)
@@ -661,6 +691,8 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
       setIsDownloading(false)
     } finally {
       downloadCancelRef.current = null
+      downloadPauseRef.current = null
+      downloadResumeRef.current = null
     }
   }
   function getExtFromMime(mimeType: string): string {
@@ -1156,7 +1188,7 @@ export function ResourceDetailView({ resource }: { resource: ResourceItem }) {
         ) : null}
 
         {isM3u8 ? (
-          <Section title="流媒体下载 (试验性)">
+          <Section title="流媒体下载">
             <VStack alignment="leading" spacing={6} padding={{ vertical: 8, horizontal: 4 }}>
               <Text font="caption" foregroundStyle="secondaryLabel">
                 该资源为 m3u8 视频流。点击下载按钮选择画质，合并分片并通过 ffmpeg 导出为 MP4 文件。

@@ -6,6 +6,7 @@ import {
   getBranchLastPulledAt,
 } from "../services/repoStore"
 import { compareCommitTrees } from "../services/gitService"
+import { resetToCommitAndPushInternal } from "../services/git/historyMutationService"
 import { normalizeRemoteBranches } from "../services/git/branchQueryService"
 import { lineDiff } from "../services/diffService"
 import {
@@ -2003,6 +2004,128 @@ async function testForceCheckoutCleansWorktree(): Promise<void> {
   }
 }
 
+async function testRollbackAndForcePushIntegration(): Promise<void> {
+  const root =
+    FileManager.appGroupDocumentsDirectory +
+    "/gitgit-tests/rollback-force-push-" +
+    Date.now()
+  const workdir = root + "/work"
+  const bookmarkName = "rollback-test-" + Date.now()
+  const gitdir =
+    FileManager.appGroupDocumentsDirectory + "/git-repos/" + bookmarkName
+  const previousRepos = readRepos()
+  await FileManager.createDirectory(workdir, true)
+  await FileManager.createDirectory(gitdir, true)
+  writeRepos([
+    ...previousRepos,
+    {
+      name: bookmarkName,
+      bookmarkName,
+      repoId: bookmarkName,
+      workdir,
+      source: "local",
+      createdAt: Date.now(),
+    },
+  ])
+
+  try {
+    const { git } = await loadGitEngine()
+    const fs = createFS(gitdir, workdir)
+    const author = { name: "gitgit", email: "gitgit@local" }
+    const baseOptions = { fs, dir: workdir, gitdir }
+
+    await git.init({ ...baseOptions, defaultBranch: "main" })
+    await fs.writeFile("state.txt", "base\n")
+    await git.add({ ...baseOptions, filepath: "state.txt" })
+    const targetOid = await git.commit({
+      ...baseOptions,
+      message: "target",
+      author,
+    })
+    await fs.writeFile("state.txt", "published later\n")
+    await fs.writeFile("later.txt", "later\n")
+    await git.add({ ...baseOptions, filepath: "." })
+    const laterOid = await git.commit({
+      ...baseOptions,
+      message: "later",
+      author,
+    })
+
+    const pushed: Array<{ branch: string; force: boolean }> = []
+    const branch = await resetToCommitAndPushInternal(
+      bookmarkName,
+      targetOid,
+      async (currentBranch, force) => {
+        pushed.push({ branch: currentBranch, force })
+      }
+    )
+    assert(branch === "main", "回滚应返回当前命名分支")
+    assert(
+      pushed.length === 1 && pushed[0].branch === "main" && pushed[0].force,
+      "本地回滚成功后应以当前分支执行强推"
+    )
+    assert(
+      (await git.resolveRef({ ...baseOptions, ref: "refs/heads/main" })) ===
+        targetOid,
+      "回滚应将本地分支 ref 移到目标提交"
+    )
+    assert(
+      (await git.resolveRef({ ...baseOptions, ref: "HEAD" })) === targetOid,
+      "回滚后 HEAD 应指向目标提交"
+    )
+    assert((await fs.readFile("state.txt", "utf8")) === "base\n", "回滚应恢复目标文件")
+    assert(!(await fs.exists("later.txt")), "回滚应删除目标提交之后新增的文件")
+    assert(
+      isStatusMatrixClean(
+        (await git.statusMatrix(baseOptions)) as [string, number, number, number][]
+      ),
+      "回滚并强推前后的工作区应保持干净"
+    )
+
+    // 强推失败不应回滚已经完成的本地 reset；上层需要据此提示远端仍是旧历史。
+    const remoteFailure = new Error("push failed")
+    await assertRejects(
+      () =>
+        resetToCommitAndPushInternal(bookmarkName, laterOid, async () => {
+          throw remoteFailure
+        }),
+      (error) => error === remoteFailure,
+      "强推失败应向上抛出原错误"
+    )
+    assert(
+      (await git.resolveRef({ ...baseOptions, ref: "refs/heads/main" })) ===
+        laterOid,
+      "强推失败不应伪造成功，但本地 reset 的实际结果应保留"
+    )
+
+    await fs.writeFile("state.txt", "dirty\n")
+    let dirtyPushCalled = false
+    await assertRejects(
+      () =>
+        resetToCommitAndPushInternal(bookmarkName, targetOid, async () => {
+          dirtyPushCalled = true
+        }),
+      (error) =>
+        String(error?.message || error).includes("工作区有未提交改动"),
+      "脏工作区应在 reset 和强推前被拒绝"
+    )
+    assert(!dirtyPushCalled, "脏工作区拒绝后不得调用强推")
+    assert(
+      (await git.resolveRef({ ...baseOptions, ref: "refs/heads/main" })) ===
+        laterOid,
+      "脏工作区拒绝后不得移动本地分支"
+    )
+  } finally {
+    writeRepos(previousRepos)
+    try {
+      await FileManager.remove(root)
+      await FileManager.remove(gitdir)
+    } catch (_e) {
+      /* 测试清理失败不阻断 */
+    }
+  }
+}
+
 function testRemoteBranchNormalization(): void {
   const branches = normalizeRemoteBranches(
     [
@@ -2180,6 +2303,7 @@ async function main(): Promise<void> {
   testBranchHelpers()
   await testRemoteProgressHelpers()
   await testForceCheckoutCleansWorktree()
+  await testRollbackAndForcePushIntegration()
   testCommitMessageParts()
   testSuggestedCommitTitle()
   console.log("✅ reliability tests passed")

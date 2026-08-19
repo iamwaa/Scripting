@@ -56,6 +56,7 @@ export function RepoDetailTabContent({
   stagingBusy,
   stashBusy,
   onStage,
+  onUnstage,
   onStageAll,
   onUnstageAll,
   onRestore,
@@ -89,6 +90,7 @@ export function RepoDetailTabContent({
   stagingBusy: boolean
   stashBusy: boolean
   onStage: (filepath: string) => void | Promise<void>
+  onUnstage: (filepath: string) => void | Promise<void>
   onStageAll: () => void | Promise<void>
   onUnstageAll: () => void | Promise<void>
   onRestore: (filepath: string) => void
@@ -133,6 +135,7 @@ export function RepoDetailTabContent({
           committing={committing}
           stagingBusy={stagingBusy}
           onStage={onStage}
+          onUnstage={onUnstage}
           onStageAll={onStageAll}
           onUnstageAll={onUnstageAll}
           onRestore={onRestore}

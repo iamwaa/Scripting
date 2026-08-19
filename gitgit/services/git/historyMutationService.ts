@@ -173,6 +173,16 @@ export async function resetToCommitInternal(
   return branch
 }
 
+export async function resetToCommitAndPushInternal(
+  bookmarkName: string,
+  oid: string,
+  push: (branch: string, force: boolean) => Promise<void>
+): Promise<string> {
+  const branch = await resetToCommitInternal(bookmarkName, oid)
+  await push(branch, true)
+  return branch
+}
+
 export async function softResetHeadInternal(
   bookmarkName: string
 ): Promise<{ parentOid: string }> {

@@ -10,7 +10,9 @@ import { truncatePath } from "../utils/format"
 import {
   COLOR_LABEL,
   COLOR_SECONDARY_LABEL,
+  COLOR_GREEN,
   COLOR_ORANGE,
+  COLOR_RED,
 } from "../constants/colors"
 
 /** 状态 → 单字母徽标 */
@@ -26,6 +28,13 @@ function statusBadge(status: FileChangeStatus): string {
     default:
       return "·"
   }
+}
+
+function statusColor(status: FileChangeStatus) {
+  if (status.startsWith("*")) return COLOR_SECONDARY_LABEL
+  if (status === "added") return COLOR_GREEN
+  if (status === "deleted") return COLOR_RED
+  return COLOR_ORANGE
 }
 
 /** 状态 → 简短中文描述 */
@@ -56,9 +65,7 @@ export function FileStatusRow({ change }: { change: { filepath: string; status: 
       {/* 徽标：用语义色，自动适配暗黑 */}
       <Text
         font="body"
-        foregroundStyle={
-          change.status.startsWith("*") ? COLOR_SECONDARY_LABEL : COLOR_ORANGE
-        }
+        foregroundStyle={statusColor(change.status)}
       >
         {badge}
       </Text>

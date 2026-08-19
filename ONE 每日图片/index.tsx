@@ -43,7 +43,7 @@ import {
   type WallpaperData,
   type WallpaperDisplayMode,
 } from './utils/one-service'
-import { ImageCacheManager } from './utils/image-cache'
+import { ImageCacheManager, retentionDaysOptions } from './utils/image-cache'
 
 const MONTH_LABELS: string[] = [
   'Jan.',
@@ -339,6 +339,12 @@ const OneWallpaperDetail = () => {
     oldestCache: 0,
     newestCache: 0,
   })
+  const [autoCleanEnabled, setAutoCleanEnabledState] = useState<boolean>(() =>
+    ImageCacheManager.getAutoCleanEnabled(),
+  )
+  const [retentionDays, setRetentionDaysState] = useState<number>(() =>
+    ImageCacheManager.getRetentionDays(),
+  )
   const [notifyEnabled, setNotifyEnabledState] = useState<boolean>(() => getNotifyEnabled())
   const [notifyTimeValue, setNotifyTimeValue] = useState<number>(() => buildNotifyTimeDateValue())
 
@@ -450,6 +456,36 @@ const OneWallpaperDetail = () => {
       await scheduleDailyRefreshNotification()
       refreshLogItems()
     }
+  }
+
+  const handleAutoCleanEnabledChange = (value: boolean): void => {
+    setAutoCleanEnabledState(value)
+    ImageCacheManager.setAutoCleanEnabled(value)
+  }
+
+  const handleRetentionDaysChange = async (value: string): Promise<void> => {
+    const days: number = Number(value)
+    setRetentionDaysState(days)
+    ImageCacheManager.setRetentionDays(days)
+
+    // 保留天数变短后立即按新规则清理一次，保留当前显示的图片
+    if (autoCleanEnabled) {
+      await ImageCacheManager.cleanupExpiredCache(days, wallpaperData?.imageUrl)
+      await refreshCacheStats()
+    }
+  }
+
+  const cleanExpiredCache = async (): Promise<void> => {
+    const removedCount: number = await ImageCacheManager.cleanupExpiredCache(
+      retentionDays,
+      wallpaperData?.imageUrl,
+    )
+    await refreshCacheStats()
+
+    Dialog.alert({
+      title: '清理过期缓存',
+      message: removedCount > 0 ? `已清理 ${removedCount} 个过期缓存` : '没有需要清理的过期缓存',
+    })
   }
 
   const clearImageCache = async (): Promise<void> => {
@@ -567,6 +603,8 @@ const OneWallpaperDetail = () => {
             showTitle={showTitle}
             showCopyright={showCopyright}
           />
+
+          <Button title="刷新每日内容" action={refreshData} />
         </Section>
 
         <Section header={<Text font="headline">详细信息</Text>}>
@@ -629,7 +667,46 @@ const OneWallpaperDetail = () => {
           </HStack>
         </Section>
 
-        <Section header={<Text font="headline">刷新日志</Text>}>
+        <Section
+          header={<Text font="headline">缓存管理</Text>}
+          footer={
+            <Text font="caption" foregroundStyle="tertiaryLabel">
+              开启后每天最多自动清理一次，删除超过保留天数的缓存图片，当前显示的图片始终保留。
+            </Text>
+          }
+        >
+          <Toggle
+            title="自动清理缓存"
+            value={autoCleanEnabled}
+            onChanged={handleAutoCleanEnabledChange}
+          />
+
+          {autoCleanEnabled ? (
+            <Picker
+              title="缓存保留天数"
+              value={String(retentionDays)}
+              onChanged={handleRetentionDaysChange}
+            >
+              {retentionDaysOptions.map((option: { label: string; value: number }) => (
+                <Text key={option.value} tag={String(option.value)} font="body">
+                  {option.label}
+                </Text>
+              ))}
+            </Picker>
+          ) : null}
+
+          <Button title="立即清理过期缓存" action={cleanExpiredCache} />
+          <Button title="清除图片缓存" action={clearImageCache} />
+        </Section>
+
+        <Section
+          header={<Text font="headline">刷新日志</Text>}
+          footer={
+            <Text font="caption" foregroundStyle="tertiaryLabel">
+              接口数据由 https://m.wufazhuce.com 提供
+            </Text>
+          }
+        >
           <NavigationLink destination={<RefreshLogPage />}>
             <HStack alignment="center">
               <Text font="body" foregroundStyle="label">
@@ -641,19 +718,6 @@ const OneWallpaperDetail = () => {
               </Text>
             </HStack>
           </NavigationLink>
-        </Section>
-
-        <Section
-          footer={
-            <VStack spacing={10} alignment="leading">
-              <Text font="caption" foregroundStyle="tertiaryLabel">
-                接口数据由 https://m.wufazhuce.com 提供
-              </Text>
-            </VStack>
-          }
-        >
-          <Button title="刷新每日内容" action={refreshData} />
-          <Button title="清除图片缓存" action={clearImageCache} />
         </Section>
       </List>
     </NavigationStack>

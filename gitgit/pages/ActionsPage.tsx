@@ -94,8 +94,9 @@ function ActionRunRow({
   if (rerunAvailability(run).canRerunAll) {
     swipeActions.push(
       <Button
-        title="重跑"
+        title="重新运行"
         systemImage="arrow.clockwise"
+        tint="systemBlue"
         action={onRerun}
       />
     )

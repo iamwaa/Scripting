@@ -20,6 +20,7 @@ export type M3u8PlaylistInfo = {
 
 export type DownloadM3u8Options = {
   isCancelled?: () => boolean
+  isPaused?: () => boolean
   onStatus?: (message: string) => void
   onSegmentProgress?: (index: number, fraction: number, phase: "download" | "decrypt") => void
 }
@@ -392,6 +393,11 @@ async function downloadM3u8Segment(
 
   while (retry > 0) {
     if (options.isCancelled?.()) throw new Error("用户已取消下载")
+    // 暂停时等待恢复，不启动新分片请求
+    while (options.isPaused?.()) {
+      if (options.isCancelled?.()) throw new Error("用户已取消下载")
+      await new Promise<void>(resolve => setTimeout(resolve, 200))
+    }
 
     try {
       const tsRes = await fetch(seg.url)
@@ -466,6 +472,11 @@ export async function downloadM3u8SegmentsToFile(
   async function downloadEncryptedSegmentsInOrder() {
     for (let index = 0; index < segments.length; index++) {
       if (options.isCancelled?.()) throw new Error("用户已取消下载")
+      // 暂停时等待恢复，加密分片为顺序下载，暂停会阻塞后续分片
+      while (options.isPaused?.()) {
+        if (options.isCancelled?.()) throw new Error("用户已取消下载")
+        await new Promise<void>(resolve => setTimeout(resolve, 200))
+      }
       const data = await downloadM3u8Segment(segments[index], index, keyCache, options)
       await appendSegmentData(data, index)
     }
@@ -475,6 +486,11 @@ export async function downloadM3u8SegmentsToFile(
     while (nextIndex < segments.length) {
       if (options.isCancelled?.()) throw new Error("用户已取消下载")
       if (writeError) throw writeError
+      // 暂停时等待恢复，不启动新分片下载
+      while (options.isPaused?.()) {
+        if (options.isCancelled?.()) throw new Error("用户已取消下载")
+        await new Promise<void>(resolve => setTimeout(resolve, 200))
+      }
       const segmentIndex = nextIndex
       nextIndex++
       chunks[segmentIndex] = await downloadM3u8Segment(segments[segmentIndex], segmentIndex, keyCache, options)

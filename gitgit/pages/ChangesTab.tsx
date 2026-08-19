@@ -32,6 +32,7 @@ export function ChangesTab({
   committing,
   stagingBusy,
   onStage,
+  onUnstage,
   onStageAll,
   onUnstageAll,
   onRestore,
@@ -43,6 +44,7 @@ export function ChangesTab({
   stagingBusy: boolean
   onOpenCommitForm: () => void
   onStage: (filepath: string) => void
+  onUnstage: (filepath: string) => void
   onStageAll: () => void
   onUnstageAll: () => void
   onRestore: (filepath: string) => void
@@ -122,11 +124,11 @@ export function ChangesTab({
                   allowsFullSwipe: false,
                   actions: [
                     <Button
-                      title="暂存"
-                      systemImage="plus.circle"
-                      tint="systemBlue"
-                      action={() => onStage(c.filepath)}
-                      disabled={!c.unstaged || worktreeBusy}
+                      title={c.unstaged ? "暂存" : "取消暂存"}
+                      systemImage={c.unstaged ? "plus.circle" : "minus.circle"}
+                      tint={c.unstaged ? "systemBlue" : "systemRed"}
+                      action={() => c.unstaged ? onStage(c.filepath) : onUnstage(c.filepath)}
+                      disabled={(!c.unstaged && !c.staged) || worktreeBusy}
                     />,
                     <Button
                       title="撤销"

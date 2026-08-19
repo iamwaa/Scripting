@@ -38,6 +38,7 @@ import {
   amendHeadCommitInternal,
   revertCommitInternal,
   resetToCommitInternal,
+  resetToCommitAndPushInternal,
   softResetHeadInternal,
 } from "./git/historyMutationService"
 import {
@@ -530,13 +531,17 @@ export async function resetToCommitAndForcePush(
   oid: string,
   options?: RemoteOpOptions
 ): Promise<{ branch: string }> {
-  return runWithBackgroundKeepAlive(() =>
-    runRepoMutation(bookmarkName, async () => {
-      const branch = await resetToCommitInternal(bookmarkName, oid)
-      await pushInternal(bookmarkName, "origin", branch, true, options)
-      return { branch }
-    })
-  )
+      return runWithBackgroundKeepAlive(() =>
+        runRepoMutation(bookmarkName, async () => {
+          const result = await resetToCommitAndPushInternal(
+            bookmarkName,
+            oid,
+            (branch, force) =>
+              pushInternal(bookmarkName, "origin", branch, force, options)
+          )
+          return { branch: result }
+        })
+      )
 }
 
 export async function softResetHead(

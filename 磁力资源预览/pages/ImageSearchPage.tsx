@@ -6,7 +6,6 @@ import {
   Navigation,
   NavigationLink,
   ProgressView,
-  RoundedRectangle,
   ScrollView,
   Spacer,
   Text,
@@ -14,7 +13,6 @@ import {
   ToolbarItem,
   VStack,
   ZStack,
-  useObservable,
   useState,
 } from "scripting";
 
@@ -26,78 +24,10 @@ import {
   WHOS_BASE,
   type WhosMatch,
 } from "../api/whosTv";
-
-const BLUE = "#0A84FF";
-const SEARCH_PAGE_SIZE = 20;
-const GLASS_TINT = "rgba(255,255,255,0.18)";
-const GLASS_STROKE = { light: "rgba(255,255,255,0.58)", dark: "rgba(255,255,255,0.16)" };
-const GLASS_FILL = { light: "rgba(255,255,255,0.36)", dark: "rgba(44,44,46,0.52)" };
-const INPUT_GLASS_FILL = { light: "rgba(255,255,255,0.28)", dark: "rgba(28,28,30,0.50)" };
-
-type GlassVariant = "card" | "input" | "control" | "prominent" | "icon";
-
-function glassFillFor(variant: GlassVariant = "card") {
-  if (variant === "input") return INPUT_GLASS_FILL;
-  if (variant === "prominent") return "rgba(10,132,255,0.68)";
-  if (variant === "icon") return { light: "rgba(10,132,255,0.10)", dark: "rgba(10,132,255,0.18)" };
-  return GLASS_FILL;
-}
-
-function glassTintFor(variant: GlassVariant = "card") {
-  if (variant === "prominent" || variant === "icon") return "rgba(110,198,255,0.32)";
-  return GLASS_TINT;
-}
-
-function glassShadowFor(variant: GlassVariant = "card") {
-  if (variant === "prominent") return { color: "rgba(10,132,255,0.24)", radius: 12, x: 0, y: 6 };
-  if (variant === "input") return { color: "rgba(30,88,160,0.08)", radius: 8, x: 0, y: 4 };
-  if (variant === "control") return { color: "rgba(30,88,160,0.10)", radius: 12, x: 0, y: 6 };
-  return { color: "rgba(30,88,160,0.10)", radius: 14, x: 0, y: 7 };
-}
-
-function glassEffectFor(cornerRadius: number, variant: GlassVariant = "card", interactive = true) {
-  const glass = interactive
-    ? UIGlass.clear().interactive().tint(glassTintFor(variant))
-    : UIGlass.clear().interactive(false).tint(glassTintFor(variant));
-  return { glass, shape: { type: "rect", cornerRadius } };
-}
-
-function glassSurface(cornerRadius = 28, variant: GlassVariant = "card", interactive = true, withShadow = true): any {
-  const props: any = {
-    background: <GlassShape cornerRadius={cornerRadius} fill={glassFillFor(variant)} />,
-    glassEffect: glassEffectFor(cornerRadius, variant, interactive),
-  };
-  if (withShadow) props.shadow = glassShadowFor(variant) as any;
-  return props;
-}
-
-function GlassShape({ cornerRadius = 28, fill = GLASS_FILL }: { cornerRadius?: number; fill?: any }) {
-  return <RoundedRectangle cornerRadius={cornerRadius} fill={fill as any} stroke={GLASS_STROKE as any} />;
-}
-
-function GlassButtonContent({
-  systemName,
-  title,
-  prominent = false,
-}: {
-  systemName: string;
-  title: string;
-  prominent?: boolean;
-}) {
-  return (
-    <HStack
-      spacing={8}
-      frame={{ maxWidth: "infinity" }}
-      padding={{ vertical: 13, horizontal: 14 }}
-      {...glassSurface(18, prominent ? "prominent" : "control")}
-    >
-      <Image systemName={systemName} frame={{ width: 20, height: 20 }} foregroundStyle={prominent ? "white" : BLUE} />
-      <Text font={16} fontWeight="semibold" foregroundStyle={prominent ? "white" : "label"}>
-        {title}
-      </Text>
-    </HStack>
-  );
-}
+import { SmallGlassButton } from "../components/common";
+import { GlassButtonContent, glassSurface } from "../components/glass";
+import { BLUE, SEARCH_PAGE_SIZE } from "../constants";
+import { useToast } from "../hooks/useToast";
 
 function MatchRow({
   item,
@@ -147,16 +77,8 @@ function MatchRow({
         </VStack>
       </HStack>
       <HStack spacing={8} frame={{ maxWidth: "infinity" }}>
-        <Button action={onCopyCode} buttonStyle="plain">
-          <Text font={13} fontWeight="semibold" padding={{ vertical: 7, horizontal: 10 }} {...glassSurface(14, "control", true, false)}>
-            复制番号
-          </Text>
-        </Button>
-        <Button action={onOpenWeb} buttonStyle="plain">
-          <Text font={13} fontWeight="semibold" padding={{ vertical: 7, horizontal: 10 }} {...glassSurface(14, "control", true, false)}>
-            打开网页
-          </Text>
-        </Button>
+        <SmallGlassButton title="复制番号" action={onCopyCode} />
+        <SmallGlassButton title="打开网页" action={onOpenWeb} />
         <Spacer />
         <NavigationLink destination={magnetDestination}>
           <Text font={13} fontWeight="semibold" padding={{ vertical: 7, horizontal: 10 }} {...glassSurface(14, "prominent", true, false)} foregroundStyle="white">
@@ -175,6 +97,7 @@ export function ImageSearchPage({
   renderMagnetSearch: (keyword: string, closeImageSearch: () => void) => any;
 }) {
   const dismiss = Navigation.useDismiss();
+  const { notify, toastProps } = useToast();
   const [image, setImage] = useState<UIImage | null>(null);
   const [cookie, setCookie] = useState(() => loadWhosCookie());
   const [showLogin, setShowLogin] = useState(false);
@@ -183,19 +106,11 @@ export function ImageSearchPage({
   const [matches, setMatches] = useState<WhosMatch[]>([]);
   const [visibleCount, setVisibleCount] = useState(SEARCH_PAGE_SIZE);
   const [resultUrl, setResultUrl] = useState("");
-  const [toastMessage, setToastMessage] = useState("");
-  const toastPresented = useObservable(false);
   const hasCookie = Boolean(cookie.trim());
   const visibleMatches = matches.slice(0, visibleCount);
   const hasMoreMatches = visibleCount < matches.length;
   const loadMoreMatches = () => {
     setVisibleCount((count) => Math.min(matches.length, count + SEARCH_PAGE_SIZE));
-  };
-
-  const notify = async (message: string, title = "提示") => {
-    setToastMessage(title === "提示" ? message : `${title}：${message}`);
-    toastPresented.setValue(false);
-    setTimeout(() => toastPresented.setValue(true), 10);
   };
 
   const handlePick = async () => {
@@ -294,14 +209,7 @@ export function ImageSearchPage({
           </ToolbarItem>
         </Toolbar>
       }
-      toast={{
-        message: toastMessage,
-        isPresented: toastPresented,
-        position: "top",
-        duration: 2,
-        cornerRadius: 16,
-        shadowRadius: 8,
-      }}
+      toast={toastProps}
     >
       <VStack alignment="leading" spacing={16} padding={18} frame={{ maxWidth: "infinity" }}>
         <VStack alignment="leading" spacing={14} padding={18} frame={{ maxWidth: "infinity" }} {...glassSurface(28, "card")}>

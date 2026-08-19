@@ -4,6 +4,9 @@ import { createStorageManager } from './storage'
 const CACHE_STORAGE_NAME = 'ScriptPie.ImageCache'
 const CACHE_STORAGE_KEYS = {
   IMAGE_METADATA: 'imageMetadata',
+  AUTO_CLEAN_ENABLED: 'autoCleanEnabled',
+  RETENTION_DAYS: 'retentionDays',
+  LAST_AUTO_CLEAN_AT: 'lastAutoCleanAt',
 }
 
 // 桌面小组件内存上限约 30MB，v2 缓存会把落盘图片缩到小组件可承受的尺寸。
@@ -16,6 +19,22 @@ const CACHE_CONFIG = {
   maxImageEdge: 1600,
   jpegQuality: 0.85,
 }
+
+// 自动清理默认配置：默认开启，保留 7 天，最多每天执行一次
+const AUTO_CLEAN_DEFAULTS = {
+  enabled: true,
+  retentionDays: 7,
+  minIntervalMs: 24 * 60 * 60 * 1000,
+}
+
+const RETENTION_DAYS_RANGE = { min: 1, max: 90 }
+
+export const retentionDaysOptions: { label: string; value: number }[] = [
+  { label: '3 天', value: 3 },
+  { label: '7 天', value: 7 },
+  { label: '14 天', value: 14 },
+  { label: '30 天', value: 30 },
+]
 
 const cacheStorageManager = createStorageManager(CACHE_STORAGE_NAME)
 
@@ -47,6 +66,98 @@ export class ImageCacheManager {
 
   private static saveImageMetadata(metadata: Record<string, ImageCacheMetadata>): void {
     cacheStorageManager.storage.set(CACHE_STORAGE_KEYS.IMAGE_METADATA, metadata)
+  }
+
+  // 自动清理开关，默认开启
+  static getAutoCleanEnabled(): boolean {
+    return (
+      cacheStorageManager.storage.get<boolean>(CACHE_STORAGE_KEYS.AUTO_CLEAN_ENABLED) ??
+      AUTO_CLEAN_DEFAULTS.enabled
+    )
+  }
+
+  static setAutoCleanEnabled(enabled: boolean): void {
+    cacheStorageManager.storage.set(CACHE_STORAGE_KEYS.AUTO_CLEAN_ENABLED, enabled)
+  }
+
+  // 缓存保留天数，超出范围时收敛到合法区间
+  static getRetentionDays(): number {
+    const saved = cacheStorageManager.storage.get<number>(CACHE_STORAGE_KEYS.RETENTION_DAYS)
+    if (saved == null || !Number.isFinite(saved)) {
+      return AUTO_CLEAN_DEFAULTS.retentionDays
+    }
+
+    return Math.min(RETENTION_DAYS_RANGE.max, Math.max(RETENTION_DAYS_RANGE.min, Math.floor(saved)))
+  }
+
+  static setRetentionDays(days: number): void {
+    const normalized = Math.min(
+      RETENTION_DAYS_RANGE.max,
+      Math.max(RETENTION_DAYS_RANGE.min, Math.floor(Number(days) || AUTO_CLEAN_DEFAULTS.retentionDays)),
+    )
+    cacheStorageManager.storage.set(CACHE_STORAGE_KEYS.RETENTION_DAYS, normalized)
+  }
+
+  static getLastAutoCleanAt(): number {
+    return cacheStorageManager.storage.get<number>(CACHE_STORAGE_KEYS.LAST_AUTO_CLEAN_AT) || 0
+  }
+
+  private static setLastAutoCleanAt(timestamp: number): void {
+    cacheStorageManager.storage.set(CACHE_STORAGE_KEYS.LAST_AUTO_CLEAN_AT, timestamp)
+  }
+
+  // 按保留天数删除过期缓存，keepUrl 用于保护当前正在显示的图片
+  static async cleanupExpiredCache(retentionDays?: number, keepUrl?: string): Promise<number> {
+    try {
+      const days: number = retentionDays ?? this.getRetentionDays()
+      const expireBefore: number = Date.now() - days * 24 * 60 * 60 * 1000
+      const metadata = this.getImageMetadata()
+      const updatedMetadata = { ...metadata }
+      let removedCount = 0
+
+      for (const [key, item] of Object.entries(metadata)) {
+        if (keepUrl && item.url === keepUrl) {
+          continue
+        }
+
+        if (item.cachedAt >= expireBefore) {
+          continue
+        }
+
+        try {
+          await FileManager.remove(item.localPath)
+        } catch {
+        }
+
+        delete updatedMetadata[key]
+        removedCount += 1
+      }
+
+      if (removedCount > 0) {
+        this.saveImageMetadata(updatedMetadata)
+      }
+
+      return removedCount
+    } catch {
+      return 0
+    }
+  }
+
+  // 自动清理入口：开关开启且距上次清理超过最小间隔时才执行
+  static async runAutoCleanIfNeeded(keepUrl?: string): Promise<number> {
+    if (!this.getAutoCleanEnabled()) {
+      return 0
+    }
+
+    const now: number = Date.now()
+    const lastCleanAt: number = this.getLastAutoCleanAt()
+    if (lastCleanAt && now - lastCleanAt < AUTO_CLEAN_DEFAULTS.minIntervalMs) {
+      return 0
+    }
+
+    const removedCount: number = await this.cleanupExpiredCache(undefined, keepUrl)
+    this.setLastAutoCleanAt(now)
+    return removedCount
   }
 
   private static generateCacheFileName(url: string): string {
@@ -204,6 +315,7 @@ export class ImageCacheManager {
     try {
       this.initCacheDirectory()
       await this.cleanupInvalidCache()
+      await this.runAutoCleanIfNeeded(url)
 
       const metadata = this.getImageMetadata()
       const cachedItem = metadata[url]

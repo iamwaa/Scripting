@@ -1,4 +1,5 @@
 import type { ResourceItem } from "../types/resource"
+import type { M3u8Variant } from "../functions/m3u8Downloader"
 import { startSeparateMediaDownload } from "../functions/separateMediaDownloader"
 import { startYouTubeMediaDownload } from "../functions/youtubeMediaDownloader"
 import { sanitizeFileName } from "../utils/fileName"
@@ -21,6 +22,8 @@ export type DownloadTaskItem = {
   cancel?: () => void
   pause?: () => void
   resume?: () => void
+  retry?: () => void
+  m3u8Variant?: M3u8Variant
 }
 
 export type EnqueueDownloadOptions = {
@@ -37,7 +40,7 @@ export const downloadTasks = new (Observable as any)(loadStoredTasks()) as Obser
 
 let lastPersistedJson = ""
 
-type PersistedDownloadTaskItem = Omit<DownloadTaskItem, "cancel" | "pause" | "resume">
+type PersistedDownloadTaskItem = Omit<DownloadTaskItem, "cancel" | "pause" | "resume" | "retry">
 
 function normalizeRestoredTask(item: PersistedDownloadTaskItem): DownloadTaskItem {
   const restored: DownloadTaskItem = {
@@ -46,6 +49,7 @@ function normalizeRestoredTask(item: PersistedDownloadTaskItem): DownloadTaskIte
     cancel: undefined,
     pause: undefined,
     resume: undefined,
+    retry: undefined,
   }
 
   if (restored.status === "downloading") {
@@ -78,7 +82,7 @@ function loadStoredTasks(): DownloadTaskItem[] {
 function persistTasks(items: DownloadTaskItem[]) {
   try {
     const persisted: PersistedDownloadTaskItem[] = items.map(item => {
-      const { cancel, pause, resume, ...plainItem } = item
+      const { cancel, pause, resume, retry, ...plainItem } = item
       const nextItem: PersistedDownloadTaskItem = { ...plainItem, speed: "" }
 
       if (nextItem.status === "downloading") {
@@ -303,6 +307,11 @@ export function clearFinishedDownloadTasks() {
 export function retryDownloadTask(id: string): string | undefined {
   const task = getDownloadTask(id)
   if (!task || isUnfinishedTask(task)) return undefined
+  // m3u8 任务使用专用重试回调，避免走普通下载只下载播放列表
+  if (task.retry) {
+    task.retry()
+    return undefined
+  }
   removeDownloadTask(id)
   return enqueueResourceDownload(task.resource)
 }
