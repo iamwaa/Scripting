@@ -327,7 +327,7 @@ function SmallView({ place, weather }: { place: Place; weather: WeatherResult })
   return (
     <VStack
       alignment="leading"
-      spacing={7}
+      spacing={6}
       padding={15}
       frame={{ maxWidth: "infinity", maxHeight: "infinity", alignment: "leading" }}
       widgetBackground={gradientFor(realtime.skycon)}
@@ -366,11 +366,21 @@ function SmallView({ place, weather }: { place: Place; weather: WeatherResult })
           湿度 {formatPercent(realtime.humidity)}
         </Text>
       </HStack>
-      <Text font={10} fontWeight="semibold" foregroundStyle="white" lineLimit={2}>
+      <Text
+        font={10}
+        fontWeight="semibold"
+        foregroundStyle="white"
+        lineLimit={{ max: 2, reservesSpace: true }}
+        multilineTextAlignment="leading"
+        frame={{ maxWidth: "infinity", alignment: "leading" }}
+      >
         {summary}
       </Text>
-      <Spacer />
-      <Text font={9} foregroundStyle="rgba(255,255,255,0.5)">
+      <Text
+        font={9}
+        foregroundStyle="rgba(255,255,255,0.5)"
+        frame={{ maxWidth: "infinity", alignment: "center" }}
+      >
         更新 {formatUpdateTime()}
       </Text>
     </VStack>
@@ -429,26 +439,33 @@ function CompactDailyRows({ weather }: { weather: WeatherResult }) {
   const temps = weather.daily?.temperature ?? []
   const skycons = weather.daily?.skycon ?? []
   return (
-    <VStack spacing={7} frame={{ maxWidth: "infinity" }}>
-      {temps.slice(0, 4).map((day, i) => (
-        <HStack key={day.date} alignment="center" spacing={4} frame={{ maxWidth: "infinity" }}>
-          <Text font={11} fontWeight="semibold" foregroundStyle="white" frame={{ width: 26, alignment: "leading" }}>
-            {formatWeekday(day.date, i)}
-          </Text>
-          <Image
-            systemName={skyconSymbol(skycons[i]?.value)}
-            font={17}
-            symbolRenderingMode="multicolor"
-            frame={{ width: 20 }}
-          />
-          <Spacer />
-          <Text font={11} fontWeight="semibold" foregroundStyle="white" frame={{ width: 28, alignment: "trailing" }}>
-            {formatTemp(day.max)}
-          </Text>
-          <Text font={11} foregroundStyle="rgba(255,255,255,0.62)" frame={{ width: 28, alignment: "trailing" }}>
-            {formatTemp(day.min)}
-          </Text>
-        </HStack>
+    <VStack
+      spacing={0}
+      frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
+      layoutPriority={1}
+    >
+      {temps.slice(0, 5).map((day, i) => (
+        <VStack key={day.date} spacing={0} frame={{ maxWidth: "infinity" }} layoutPriority={1}>
+          <HStack alignment="center" spacing={4} frame={{ maxWidth: "infinity" }}>
+            <Text font={11} fontWeight="semibold" foregroundStyle="white" frame={{ width: 26, alignment: "leading" }}>
+              {formatWeekday(day.date, i)}
+            </Text>
+            <Image
+              systemName={skyconSymbol(skycons[i]?.value)}
+              font={17}
+              symbolRenderingMode="multicolor"
+              frame={{ width: 20 }}
+            />
+            <Spacer />
+            <Text font={11} fontWeight="semibold" foregroundStyle="white" frame={{ width: 28, alignment: "trailing" }}>
+              {formatTemp(day.max)}
+            </Text>
+            <Text font={11} foregroundStyle="rgba(255,255,255,0.62)" frame={{ width: 28, alignment: "trailing" }}>
+              {formatTemp(day.min)}
+            </Text>
+          </HStack>
+          {i < 4 ? <Spacer /> : null}
+        </VStack>
       ))}
     </VStack>
   )
@@ -462,19 +479,20 @@ function MediumView({ place, weather }: { place: Place; weather: WeatherResult }
     <VStack
       alignment="leading"
       spacing={4}
-      padding={{ horizontal: 20, vertical: 14 }}
+      padding={{ horizontal: 20, vertical: 24 }}
       frame={{ maxWidth: "infinity", maxHeight: "infinity", alignment: "leading" }}
       widgetBackground={gradientFor(realtime.skycon)}
       {...glassPanelProps(20)}
     >
       <HStack
-        alignment="center"
+        alignment="top"
         spacing={12}
         frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
+        layoutPriority={1}
       >
         <VStack
           alignment="leading"
-          spacing={6}
+          spacing={3}
           frame={{ width: 162, maxHeight: "infinity", alignment: "leading" }}
         >
           <HStack spacing={7} frame={{ maxWidth: "infinity" }}>
@@ -513,15 +531,20 @@ function MediumView({ place, weather }: { place: Place; weather: WeatherResult }
             font={11}
             fontWeight="semibold"
             foregroundStyle="white"
-            lineLimit={2}
-            multilineTextAlignment="leading"
+            lineLimit={1}
+            padding={{ top: 6 }}
+            frame={{ maxWidth: "infinity", alignment: "leading" }}
           >
             {summary}
           </Text>
         </VStack>
         <CompactDailyRows weather={weather} />
       </HStack>
-      <Text font={9} foregroundStyle="rgba(255,255,255,0.5)">
+      <Text
+        font={9}
+        foregroundStyle="rgba(255,255,255,0.5)"
+        frame={{ maxWidth: "infinity", alignment: "center" }}
+      >
         更新 {formatUpdateTime()}
       </Text>
     </VStack>
@@ -580,7 +603,11 @@ function LargeView({ place, weather }: { place: Place; weather: WeatherResult })
         未来天气
       </Text>
       <DailyRows weather={weather} count={4} />
-      <Text font={9} foregroundStyle="rgba(255,255,255,0.5)">
+      <Text
+        font={9}
+        foregroundStyle="rgba(255,255,255,0.5)"
+        frame={{ maxWidth: "infinity", alignment: "center" }}
+      >
         更新 {formatUpdateTime()}
       </Text>
     </VStack>
