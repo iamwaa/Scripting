@@ -73,6 +73,10 @@ export type Account = {
   lastSiteStatus?: SiteStatus
   authSource?: "password" | "web" | "cookie" | "accessToken"
   excludeFromBatchCheckin?: boolean
+  // 已归档：不计入总览，也不参与首页的任何批量或自动操作，只在“已归档”分区展示
+  archived?: boolean
+  // 仅记录账号：脚本不兼容的平台只保存站点与账号信息，不参与余额查询与接口签到，无需填写登录信息
+  recordOnly?: boolean
 }
 
 export type AccountDraft = {
@@ -88,6 +92,7 @@ export type AccountDraft = {
   checkinTime: string
   lastSelf?: SelfInfo
   authSource?: Account["authSource"]
+  recordOnly?: boolean
 }
 
 export type AccountSortKey = "name" | "platform" | "quota" | "checkin"

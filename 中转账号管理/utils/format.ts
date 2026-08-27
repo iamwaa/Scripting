@@ -13,6 +13,16 @@ export function getPlatformText(account: Pick<Account, "platform">) {
   return isSub2ApiAccount(account) ? "Sub2API" : "NewAPI"
 }
 
+// 仅记录账号：不参与余额查询与接口签到
+export function isRecordOnlyAccount(account: Pick<Account, "recordOnly">) {
+  return account.recordOnly === true
+}
+
+// 列表/详情展示的账号类型文本：仅记录账号不显示平台名
+export function getAccountTypeText(account: Pick<Account, "platform" | "recordOnly">) {
+  return isRecordOnlyAccount(account) ? "仅记录" : getPlatformText(account)
+}
+
 export function quotaFromUsd(value: any) {
   const n = Number(value)
   return Number.isFinite(n) ? n * QUOTA_PER_USD : undefined

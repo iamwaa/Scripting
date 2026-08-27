@@ -109,7 +109,9 @@ export function recycleNewApiWebSession(account: Account, cookieHeader: string, 
   if (cookieHeader.trim()) setSecret(account.cookieKey, cookieHeader)
 
   const patch: Partial<Account> = {}
-  if (cookieHeader.trim() || storageSelf) patch.authSource = "web"
+  if (cookieHeader.trim() || storageSelf) {
+    patch.authSource = getSecret(account.accessTokenKey) ? "accessToken" : "web"
+  }
   if (storageSelf?.id) {
     patch.lastSelf = { ...(account.lastSelf ?? {}), ...storageSelf }
     patch.lastError = ""

@@ -1,6 +1,6 @@
-import { useState, useEffect, Navigation, NavigationStack, List, Section, Text, Button, HStack, Image, ProgressView, Toolbar, ToolbarItem } from "scripting"
+import { useState, useEffect, useRef, Navigation, NavigationStack, List, Section, Text, Button, HStack, Image, ProgressView, Toolbar, ToolbarItem } from "scripting"
 import type { Account, CheckinStatus } from "../types"
-import { isSub2ApiAccount, fmtQuota, fmtRawQuotaForAccount, localMonthString, getSelfQuotaValue, getSelfUsedQuotaValue, getSelfDisplayName, localDateString, fmtTime, getPlatformText, fmtCheckinAward, isCheckinTimeReached } from "../utils/format"
+import { isSub2ApiAccount, fmtQuota, fmtRawQuotaForAccount, localMonthString, getSelfQuotaValue, getSelfUsedQuotaValue, getSelfDisplayName, fmtTime, getAccountTypeText, isRecordOnlyAccount, fmtCheckinAward, isCheckinTimeReached } from "../utils/format"
 import { getErrorMessage, showConfirm } from "../utils/error"
 import { loadAccounts, getSecret } from "../services/storage"
 import { fetchSelf, fetchCheckinStatus, checkSiteStatus, loginAccount, loginByWebView } from "../services/auth"
@@ -20,18 +20,40 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
   const [checkinMonth, setCheckinMonth] = useState(localMonthString())
   const [toastMessage, setToastMessage] = useState("")
   const [showToast, setShowToast] = useState(false)
+  // 本页数据变更一律延后通知列表：归档/删除会让账号在列表中移动或消失，
+  // 行被移除会连带销毁本页的 NavigationLink，导致返回按钮失效
+  const pendingNotifyRef = useRef(false)
 
   function notify(message: string) {
     setToastMessage(message)
     setShowToast(true)
   }
 
+  function markChanged() {
+    pendingNotifyRef.current = true
+  }
+
+  function flushChanged() {
+    if (!pendingNotifyRef.current) return
+    pendingNotifyRef.current = false
+    onChanged()
+  }
+
+  function goBack() {
+    dismiss()
+    setTimeout(flushChanged, 400)
+  }
+
+  // 手势返回等未走返回按钮的情况下兜底通知列表
+  useEffect(() => flushChanged, [])
+
   useEffect(() => {
     const next = loadAccounts().find(a => a.id === accountId)
     setAccount(next)
     setCheckinMonth(localMonthString())
     setBusy(false)
-    if (next) {
+    // 归档与仅记录账号不自动请求接口
+    if (next && !next.archived && !isRecordOnlyAccount(next)) {
       refreshDetailSilently(localMonthString(), next)
     }
   }, [accountId, refreshKey])
@@ -40,7 +62,7 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     const next = loadAccounts().find(a => a.id === accountId)
     if (next) setAccount(next)
     setRefreshKey(prev => prev + 1)
-    onChanged()
+    markChanged()
   }
 
   async function refreshDetailSilently(month = localMonthString(), target?: Account) {
@@ -75,7 +97,7 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     patchAccount(latest.id, patch)
     const next = loadAccounts().find(a => a.id === accountId)
     if (next) setAccount(next)
-    onChanged()
+    markChanged()
     setBusy(false)
   }
 
@@ -88,13 +110,13 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
       patchAccount(latest.id, { lastCheckin: data, lastError: "", ...getTodayCheckinPatch(data) })
       const next = loadAccounts().find(a => a.id === accountId)
       if (next) setAccount(next)
-      onChanged()
+      markChanged()
     } catch (e: any) {
       const message = getErrorMessage(e)
       patchAccount(latest.id, { lastError: message, ...getCheckinDisabledPatch(message) })
       const next = loadAccounts().find(a => a.id === accountId)
       if (next) setAccount(next)
-      onChanged()
+      markChanged()
     } finally {
       setBusy(false)
     }
@@ -145,12 +167,12 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
       const data = await fetchCheckinStatus(latest, nextMonth)
       patchAccount(latest.id, { lastCheckin: data, lastError: "", ...getTodayCheckinPatch(data) })
       setAccount(loadAccounts().find(a => a.id === accountId))
-      onChanged()
+      markChanged()
     } catch (e: any) {
       const message = getErrorMessage(e)
       if (account) patchAccount(account.id, { lastError: message, ...getCheckinDisabledPatch(message) })
       notify(`签到状态失败：${message}`)
-      onChanged()
+      markChanged()
     } finally {
       setBusy(false)
     }
@@ -195,16 +217,29 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     setBusyLabel("删除账号...")
     try {
       deleteAccount(account.id)
-      onChanged()
+      markChanged()
       notify(`“${deletedName}”已删除`)
-      setTimeout(() => dismiss(), 700)
+      setTimeout(goBack, 700)
     } finally {
       setBusy(false)
     }
   }
 
+  // 归档 / 取消归档：归档后不再参与首页统计与批量操作
+  function toggleArchive() {
+    if (!account) {
+      notify("操作失败：账号不存在或已被删除")
+      return
+    }
+    const nextArchived = !account.archived
+    patchAccount(account.id, { archived: nextArchived })
+    setAccount(loadAccounts().find(a => a.id === accountId))
+    markChanged()
+    notify(nextArchived ? "已归档，不再参与首页操作" : "已取消归档")
+  }
+
   if (!account) {
-    return <List navigationTitle="账号不存在" navigationBarTitleDisplayMode="inline">
+    return <List navigationTitle="账号不存在" navigationBarTitleDisplayMode="inline" tabBarVisibility="hidden">
       <Section>
         <Text foregroundStyle="systemRed">账号不存在或已被删除，请返回刷新列表。</Text>
       </Section>
@@ -212,6 +247,7 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
   }
 
   const todayCheckin = getTodayCheckinInfo(account)
+  const recordOnly = isRecordOnlyAccount(account)
   // 奖励范围：min/max 不同才显示区间（新版 sub2api 连签奖励递增；单一奖励站点只显示单值）
   const minCheckinQuota = account.lastCheckin?.min_quota
   const maxCheckinQuota = account.lastCheckin?.max_quota
@@ -223,9 +259,10 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     navigationTitle={account.name}
     navigationBarTitleDisplayMode="inline"
     navigationBarBackButtonHidden
+    tabBarVisibility="hidden"
     toolbar={<Toolbar>
       <ToolbarItem placement="topBarLeading">
-        <Button action={dismiss}>
+        <Button action={goBack}>
           <Image systemName="chevron.left" foregroundStyle="tintColor" fontWeight="semibold" />
         </Button>
       </ToolbarItem>
@@ -239,7 +276,9 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
   >
     <Section title="状态">
       {busy ? <HStack spacing={8}><ProgressView /><Text>{busyLabel || "处理中..."}</Text></HStack> : null}
-      <Text>平台：{getPlatformText(account)}</Text>
+      {account.archived ? <Text foregroundStyle="systemOrange">已归档：不计入总览，也不参与首页批量操作</Text> : null}
+      {recordOnly ? <Text foregroundStyle="secondaryLabel">仅记录账号：不参与余额查询与接口签到</Text> : null}
+      <Text>类型：{getAccountTypeText(account)}</Text>
       <Text>站点：{account.baseUrl}</Text>
       <Text>站点状态：{getSiteStatusDetail(account.lastSiteStatus)}</Text>
       <Text>认证：{getAuthSourceText(account)}</Text>
@@ -248,16 +287,22 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     </Section>
     
     <Section title="账号操作">
-      <Button action={login} disabled={busy || !(account?.username && getSecret(account?.passwordKey)) && !(getSecret(account?.accessTokenKey) && account?.lastSelf?.id)}>
+      {recordOnly ? null : <Button action={login} disabled={busy || !(account?.username && getSecret(account?.passwordKey)) && !(getSecret(account?.accessTokenKey) && account?.lastSelf?.id)}>
         <HStack spacing={8} alignment="center">
           <Image systemName="person.crop.circle.badge.checkmark" foregroundStyle={busy || !(account?.username && getSecret(account?.passwordKey)) && !(getSecret(account?.accessTokenKey) && account?.lastSelf?.id) ? "systemGray4" : "tintColor"} font="body" frame={{ width: 24, alignment: "center" }} />
           <Text foregroundStyle={busy || !(account?.username && getSecret(account?.passwordKey)) && !(getSecret(account?.accessTokenKey) && account?.lastSelf?.id) ? "systemGray4" : "tintColor"}>登录账号</Text>
         </HStack>
-      </Button>
-      <Button action={webLogin} disabled={busy}>
+      </Button>}
+      {recordOnly ? null : <Button action={webLogin} disabled={busy}>
         <HStack spacing={8} alignment="center">
           <Image systemName="globe" foregroundStyle={busy ? "systemGray4" : "tintColor"} font="body" frame={{ width: 24, alignment: "center" }} />
           <Text foregroundStyle={busy ? "systemGray4" : "tintColor"}>网页登录获取 Cookie/令牌</Text>
+        </HStack>
+      </Button>}
+      <Button action={toggleArchive} disabled={busy}>
+        <HStack spacing={8} alignment="center">
+          <Image systemName={account.archived ? "tray.and.arrow.up" : "archivebox"} foregroundStyle={busy ? "systemGray4" : "tintColor"} font="body" frame={{ width: 24, alignment: "center" }} />
+          <Text foregroundStyle={busy ? "systemGray4" : "tintColor"}>{account.archived ? "取消归档" : "归档账号"}</Text>
         </HStack>
       </Button>
       <Button action={remove} disabled={busy}>
@@ -268,7 +313,10 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
       </Button>
     </Section>
     
-    <Section title="余额">
+    {recordOnly ? <Section title="账号信息">
+      <Text>账号：{account.username || "未填写"}</Text>
+      <Text>密码：{getSecret(account.passwordKey) ? "已保存" : "未保存"}</Text>
+    </Section> : <Section title="余额">
       <Text>用户 ID：{account.lastSelf?.id ?? "-"}</Text>
       <Text>用户名：{getSelfDisplayName(account.lastSelf) ?? account.username ?? "-"}</Text>
       <Text>分组：{account.lastSelf?.group ?? "-"}</Text>
@@ -276,24 +324,25 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
       <Text>已用额度：{fmtQuota(getSelfUsedQuotaValue(account.lastSelf))} ({fmtRawQuotaForAccount(account, getSelfUsedQuotaValue(account.lastSelf))})</Text>
       {isSub2ApiAccount(account) ? <Text>并发：{account.lastSelf?.concurrency ?? "-"}</Text> : null}
       <Text>请求次数：{account.lastSelf?.request_count ?? "-"}</Text>
-    </Section>
+    </Section>}
 
     <Section title="签到">
-      {account.excludeFromBatchCheckin ? <Text foregroundStyle="systemOrange">⚠️ 已排除批量签到（仅网页签到）</Text> : null}
+      {account.excludeFromBatchCheckin && !recordOnly ? <Text foregroundStyle="systemOrange">⚠️ 已排除批量签到（仅网页签到）</Text> : null}
+      {recordOnly ? <Text foregroundStyle="secondaryLabel">仅记录账号只支持在列表长按手动标注签到状态</Text> : null}
       <Text>今日状态：{todayCheckin.checked ? `已签到${todayCheckin.record?.quota_awarded !== undefined ? `，奖励 ${fmtCheckinAward(todayCheckin.record.quota_awarded)}` : ""}` : (() => {
         const checkinTime = account.checkinTime
         const checkinTimeReached = checkinTime ? isCheckinTimeReached(checkinTime) : true
         return checkinTime && !checkinTimeReached ? `未签到（签到时间 ${checkinTime}）` : "未签到"
       })()}</Text>
-      <Text>功能启用：{account.lastCheckin?.enabled === undefined ? "未知" : account.lastCheckin.enabled ? "是" : "否"}</Text>
-      <Text>奖励范围：{checkinRewardRangeText}</Text>
-      <CheckinCalendar
+      {recordOnly ? null : <Text>功能启用：{account.lastCheckin?.enabled === undefined ? "未知" : account.lastCheckin.enabled ? "是" : "否"}</Text>}
+      {recordOnly ? null : <Text>奖励范围：{checkinRewardRangeText}</Text>}
+      {recordOnly ? null : <CheckinCalendar
         month={checkinMonth}
         status={account.lastCheckin}
         busy={busy}
         onChangeMonth={changeCheckinMonth}
         onRefresh={() => syncStatus(checkinMonth)}
-      />
+      />}
     </Section>
   </List>
 }

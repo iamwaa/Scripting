@@ -1,12 +1,30 @@
 import type { Account, AccountDraft, SelfInfo, SiteStatus, CheckinRecord, CheckinStatus, AccountSortKey, SortDirection, AccountSortPreference } from "../types"
-import { isSub2ApiAccount, getPlatformText, localDateString, getSelfQuotaValue, getCheckinRecordMap, sumCheckinAwards, uid, now, normalizeBaseUrl } from "../utils/format"
+import { isSub2ApiAccount, getAccountTypeText, isRecordOnlyAccount, localDateString, getSelfQuotaValue, getCheckinRecordMap, sumCheckinAwards, uid, now, normalizeBaseUrl } from "../utils/format"
 import { getErrorMessage, CHECKIN_DISABLED_PATTERN, isAlreadyCheckedInError } from "../utils/error"
 import { loadAccounts, saveAccounts, setSecret, removeSecret, secretKey, getSecret, patchAccount } from "./storage"
 import { removeAccountSecrets } from "./api"
 import { checkSiteStatus, fetchSelf, fetchCheckinStatus, doCheckin } from "./auth"
 
+// 参与首页操作的账号：归档账号不计入总览，也不参与批量与自动操作
+export function getActiveAccounts(accounts: Account[]) {
+  return accounts.filter(account => !account.archived)
+}
+
+// 参与接口操作（余额查询 / 接口签到）的账号：排除归档与仅记录账号
+export function getApiOperableAccounts(accounts: Account[]) {
+  return accounts.filter(account => !account.archived && !isRecordOnlyAccount(account))
+}
+
+// 查找站点地址重复的账号：按规范化后的地址忽略大小写比较，排除自身
+export function findDuplicateSiteAccounts(accounts: Account[], baseUrl: string, excludeId?: string) {
+  const target = normalizeBaseUrl(baseUrl).toLowerCase()
+  if (!target) return []
+  return accounts.filter(account => account.id !== excludeId && normalizeBaseUrl(account.baseUrl).toLowerCase() === target)
+}
+
 // 认证来源文本
 export function getAuthSourceText(account: Account) {
+  if (isRecordOnlyAccount(account)) return "无需登录"
   if (account.authSource === "password") return "账号"
   if (account.authSource === "web") return "网页"
   if (account.authSource === "cookie") return "Cookie"
@@ -99,6 +117,7 @@ export function upsertAccount(draft: AccountDraft) {
     accessTokenKey,
     refreshTokenKey,
     checkinTime: draft.checkinTime.trim() || undefined,
+    recordOnly: draft.recordOnly ? true : undefined,
     updatedAt: now(),
   }
 
@@ -185,7 +204,7 @@ export function compareAccounts(a: Account, b: Account, key: AccountSortKey, dir
     return direction === "asc" ? result : -result
   }
   if (key === "platform") {
-    const result = getPlatformText(a).localeCompare(getPlatformText(b), "zh-Hans", { numeric: true, sensitivity: "base" })
+    const result = getAccountTypeText(a).localeCompare(getAccountTypeText(b), "zh-Hans", { numeric: true, sensitivity: "base" })
     return direction === "asc" ? result : -result
   }
   if (key === "quota") {

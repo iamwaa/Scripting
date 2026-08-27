@@ -128,15 +128,17 @@ export function getErrorMessage(e: any) {
   return msg
 }
 
-export async function showConfirm(options: string | { title?: string, message: string, confirmLabel?: string, cancelLabel?: string }) {
+export async function showConfirm(options: string | { title?: string, message: string, confirmLabel?: string, cancelLabel?: string, destructive?: boolean }) {
   const dialogOptions = typeof options === "string" ? { message: options } : options
+  // 确认按钮默认保持危险样式，非危险确认可传 destructive: false
+  const destructive = typeof options === "string" ? true : options.destructive ?? true
   const selectedIndex = await Dialog.actionSheet({
     title: dialogOptions.title ?? "请确认",
     message: dialogOptions.message,
     cancelButton: false,
     actions: [
       { label: dialogOptions.cancelLabel ?? "取消" },
-      { label: dialogOptions.confirmLabel ?? "确认", destructive: true },
+      { label: dialogOptions.confirmLabel ?? "确认", destructive },
     ],
   })
   return selectedIndex === 1

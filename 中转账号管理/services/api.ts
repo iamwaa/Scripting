@@ -4,7 +4,7 @@ import { normalizeBaseUrl, quotaFromUsd, localDateString, localMonthString } fro
 import { translateErrorMessage } from "../utils/error"
 import { mergeCookies } from "../utils/cookie"
 import { getSecret, setSecret, removeSecret, getRefreshTokenKey } from "./storage"
-import { isWebChallengeResponse, refreshWebChallengeCookies } from "./antiBot"
+import { isWebChallengeResponse, refreshWebChallengeCookies, requestApiThroughVerifiedWebView } from "./antiBot"
 
 // 服务端消息中出现这些关键词才认为是登录失效；
 // 单纯的 "forbidden"/"access denied"/"permission denied" 不算，因为 403 常被用作额度/IP/权限等业务错误
@@ -327,6 +327,22 @@ export async function doSub2ApiCheckin(account: Account) {
   }
 }
 
+async function requestThroughVerifiedWebView<T>(account: Account, method: string, path: string, body: any, headers: Record<string, string>): Promise<ApiResult<T>> {
+  const webResult = await requestApiThroughVerifiedWebView(account, method, path, body, headers)
+  let webJson: ApiJson<T>
+  try {
+    webJson = webResult.raw ? JSON.parse(webResult.raw) : {}
+  } catch {
+    throw makeApiError("网页环境请求返回非 JSON，请完成验证后重试", { status: webResult.status, authExpired: false })
+  }
+  if (webJson.success !== true) {
+    const rawMessage = webJson.message || (webResult.status ? `HTTP ${webResult.status}` : "未知错误")
+    const authExpired = webResult.status === 401 || AUTH_EXPIRED_MESSAGE_RE.test(rawMessage)
+    throw makeApiError(rawMessage, { status: webResult.status, authExpired })
+  }
+  return { data: webJson.data as T, cookie: "" }
+}
+
 export async function apiRequestWithMeta<T = any>(account: Account, method: string, path: string, body?: any, extraHeaders?: Record<string, string>, challengeRetried = false): Promise<ApiResult<T>> {
   const baseUrl = normalizeBaseUrl(account.baseUrl)
   if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
@@ -352,8 +368,9 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
   // 认证凭据优先级：访问令牌 > 账号密码（现场登录换新会话） > 网页获取的 Cookie
   let userId = account.lastSelf?.id
   if (accessToken) {
-    // 1) 访问令牌
+    // 1) 访问令牌；防护 Cookie 与业务认证相互独立，需要同时发送
     headers["Authorization"] = accessToken.startsWith("Bearer ") ? accessToken : `Bearer ${accessToken}`
+    if (cookie) headers.Cookie = cookie
   } else if (account.username && password && path !== "/api/user/login") {
     // 2) 账号密码：现场登录换取新会话 Cookie（登录端点自身跳过，避免递归）
     try {
@@ -382,13 +399,25 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
   else if (path !== "/api/user/login" && !accessToken) throw new Error("缺少用户 ID，请先登录")
   if (body !== undefined) headers["Content-Type"] = "application/json"
 
-  const response = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    allowInsecureRequest: baseUrl.startsWith("http://"),
-    timeout: 25,
-  } as any)
+  let response: any
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      allowInsecureRequest: baseUrl.startsWith("http://"),
+      timeout: 25,
+    } as any)
+  } catch (error: any) {
+    if (!challengeRetried) {
+      try {
+        return await requestThroughVerifiedWebView<T>(account, method, path, body, headers)
+      } catch (webError: any) {
+        throw makeApiError(`网络请求失败：${webError?.message || error?.message || "Load failed"}`, { authExpired: false })
+      }
+    }
+    throw makeApiError(`网络请求失败：${error?.message || "Load failed"}`, { authExpired: false })
+  }
 
   const raw = await response.text()
   let json: ApiJson<T>
@@ -397,8 +426,7 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
   } catch {
     if (isWebChallengeResponse(response, raw)) {
       if (!challengeRetried) {
-        await refreshWebChallengeCookies(account)
-        return await apiRequestWithMeta<T>(account, method, path, body, extraHeaders, true)
+        return await requestThroughVerifiedWebView<T>(account, method, path, body, headers)
       }
       throw makeApiError("站点防护验证未通过，请先用网页登录刷新 Cookie 后再试", { authExpired: false })
     }

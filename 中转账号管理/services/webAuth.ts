@@ -4,7 +4,7 @@ declare const fetch: any
 import type { Account, SelfInfo, WebLoginCookieResult } from "../types"
 import { isSub2ApiAccount, normalizeBaseUrl, shortUrl } from "../utils/format"
 import { getErrorMessage } from "../utils/error"
-import { cookiesToHeader, getUrlHostname, isHttpUrl, resolveWebUrl, escapeHTML } from "../utils/cookie"
+import { cookiesToHeader, getUrlHostname, isHttpUrl, resolveWebUrl, escapeHTML, mergeCookies } from "../utils/cookie"
 import { getSecret, patchAccount } from "./storage"
 import { fetchSub2ApiSelf, apiRequest } from "./api"
 import { presentWebViewWithToolbar } from "../components/WebViewPage"
@@ -394,6 +394,34 @@ function resolveManualCheckinOpenUrl(account: Account) {
   return baseUrl
 }
 
+// 只回收主站可发送的 Cookie，避免签到站点的同名 Cookie 覆盖主站登录态。
+async function collectMainSiteCookies(webView: WebViewController, accountBaseUrl: string, oldCookie: string) {
+  try {
+    const cookies = await webView.getCookies(accountBaseUrl)
+    return mergeCookies(oldCookie, undefined, cookies.map(cookie => ({ name: cookie.name, value: cookie.value })))
+  } catch {
+    return oldCookie
+  }
+}
+
+async function withWebViewTimeout<T>(task: Promise<T>, seconds: number, message: string): Promise<T> {
+  return await Promise.race([
+    task,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(message)), seconds * 1000)),
+  ])
+}
+
+// 网页签到可能打开独立域名；关闭后只回收主站 Cookie，并让主站重新生成自己的 CF Cookie。
+async function recycleNewApiCookiesAfterWebCheckin(webView: WebViewController, accountBaseUrl: string, openUrl: string) {
+  if (openUrl !== accountBaseUrl) {
+    try {
+      await withWebViewTimeout(webView.loadURL(accountBaseUrl), 15, "主站页面加载超时")
+      await new Promise<void>(resolve => setTimeout(resolve, 1200))
+    } catch {}
+  }
+  return await collectMainSiteCookies(webView, accountBaseUrl, "")
+}
+
 // 打开网页签到 WebView
 export async function openManualCheckinWebView(account: Account) {
   // 账号主站：用于登录态注入/回收 cookie 与 localStorage
@@ -494,15 +522,14 @@ export async function openManualCheckinWebView(account: Account) {
 
     // 关闭后：新 cookie 直接替换旧值；同时回收 localStorage.user 中的用户信息
     try {
-      const cookies = await webView.getCookies(accountBaseUrl)
-      const nextCookieHeader = cookiesToHeader(cookies)
+      const cookieHeader = await recycleNewApiCookiesAfterWebCheckin(webView, accountBaseUrl, openUrl)
       const storage = await readWebLoginStorage(webView)
       const storageItems = {
         ...(storage.localStorage ?? {}),
         ...(storage.sessionStorage ?? {}),
       }
       const storageSelf = extractSelfInfoFromStorage(storageItems)
-      recycleNewApiWebSession(account, nextCookieHeader, storageSelf)
+      recycleNewApiWebSession(account, cookieHeader, storageSelf)
     } catch {}
   } finally {
     webView.dispose()
@@ -522,18 +549,18 @@ export async function loginByWebView(account: Account) {
     patchAccount(account.id, { lastSelf: self, lastError: "", authSource: "web" })
     return self
   }
-  // 网页登录拿到的新 cookie 直接覆盖旧值，并回写用户信息
+  // 网页登录拿到的新 cookie 保存为 Cloudflare / 会话辅助凭据，不覆盖长期访问令牌
   recycleNewApiWebSession(account, cookieHeader, storageSelf)
 
   const id = storageSelf?.id ?? account.lastSelf?.id
   if (!id) {
-    patchAccount(account.id, { lastError: "Cookie 已保存，但未识别到用户 ID", authSource: "web" })
+    patchAccount(account.id, { lastError: "Cookie 已保存，但未识别到用户 ID" })
     throw new Error("Cookie 已保存，但未识别到用户 ID")
   }
 
   const tempAccount: Account = { ...account, lastSelf: { ...(account.lastSelf ?? {}), ...(storageSelf ?? {}), id } }
   const self = await apiRequest<SelfInfo>(tempAccount, "GET", "/api/user/self")
-  patchAccount(account.id, { lastSelf: self, lastError: "", authSource: "web" })
+  patchAccount(account.id, { lastSelf: self, lastError: "", authSource: getSecret(account.accessTokenKey) ? "accessToken" : "web" })
   return self
 }
 

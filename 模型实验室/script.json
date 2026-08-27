@@ -1,0 +1,10 @@
+{
+  "name": "模型实验室",
+  "icon": "testtube.2",
+  "color": "rgba(10, 132, 255, 1)",
+  "version": "1.0.0",
+  "runInApp": true,
+  "description": "模型测活、多模态与生图测试工具",
+  "localizedNames": { "zh": "模型实验室" },
+  "localizedDescriptions": { "zh": "模型测活、多模态与生图测试工具" }
+}
