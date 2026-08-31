@@ -29,6 +29,10 @@
 
 只读、仅修改记忆、用户明确不编辑，以及仅处理生成物/vendor/锁文件时，可跳过上述流程。
 
+## 实测探针
+
+需要用项目真实 Storage 配置或项目模块做实测时，按 [项目内探针](memories/project-storage-probe.md) 用临时 `intent.tsx` + `run_intent`，不要用独立文件 `scripting-ts run`（读不到项目 Storage 域）。
+
 ## 文件落盘
 
 项目目录只存项目所需源码与资产。以下内容默认放当前 agent 工作区，不得写入 `scripts/<项目名>/`：

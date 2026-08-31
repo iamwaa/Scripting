@@ -78,6 +78,8 @@ export const ERROR_TRANSLATIONS: Array<[RegExp, string]> = [
   [/method\s+not\s+allowed|405/i, "请求方法不支持"],
 
   // ========== 网络错误 ==========
+  // WebKit 页内 fetch 与原生请求失败的原始文案（如 TypeError: Load failed），避免把英文异常直接抛给用户
+  [/load\s+failed|network\s+connection\s+was\s+lost|internet\s+connection\s+appears\s+to\s+be\s+offline/i, "网络请求失败，请检查网络后重试"],
   [/network\s+request\s+failed|failed\s+to\s+fetch|fetch\s+failed/i, "网络请求失败"],
   [/timed?\s*out|timeout|请求超时/i, "请求超时"],
   [/connection\s+(refused|reset)|ECONNREFUSED|ECONNRESET/i, "无法连接到站点"],

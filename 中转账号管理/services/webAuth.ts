@@ -2,11 +2,12 @@
 declare const fetch: any
 
 import type { Account, SelfInfo, WebLoginCookieResult } from "../types"
-import { isSub2ApiAccount, normalizeBaseUrl, shortUrl } from "../utils/format"
+import { isSub2ApiAccount, isRecordOnlyAccount, normalizeBaseUrl, shortUrl } from "../utils/format"
 import { getErrorMessage } from "../utils/error"
 import { cookiesToHeader, getUrlHostname, isHttpUrl, resolveWebUrl, escapeHTML, mergeCookies } from "../utils/cookie"
-import { getSecret, patchAccount } from "./storage"
+import { getSecret, patchAccount, loadAccounts } from "./storage"
 import { fetchSub2ApiSelf, apiRequest } from "./api"
+import { refreshNewApiDataInWebView, type ManualCheckinRefresh } from "./webApi"
 import { presentWebViewWithToolbar } from "../components/WebViewPage"
 import {
   buildNewApiLocalUser,
@@ -23,7 +24,7 @@ export function getWebViewLoadingHTML(url: string, title: string) {
   const safeTitle = escapeHTML(title)
   const safeUrl = escapeHTML(shortUrl(url))
   return `<!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-newapi-placeholder="1">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -422,8 +423,24 @@ async function recycleNewApiCookiesAfterWebCheckin(webView: WebViewController, a
   return await collectMainSiteCookies(webView, accountBaseUrl, "")
 }
 
-// 打开网页签到 WebView
-export async function openManualCheckinWebView(account: Account) {
+// 打开网页签到 WebView 前补齐用户 ID：
+// 前端注入 localStorage.user 需要 id，缺失时先用原生接口取一次并回写缓存
+async function ensureNewApiUserId(account: Account): Promise<Account> {
+  if (account.lastSelf?.id || isRecordOnlyAccount(account)) return account
+  const hasCredential = !!(getSecret(account.cookieKey) || getSecret(account.accessTokenKey) || (account.username && getSecret(account.passwordKey)))
+  if (!hasCredential) return account
+  try {
+    const self = await apiRequest<SelfInfo>(account, "GET", "/api/user/self")
+    if (!self?.id) return account
+    patchAccount(account.id, { lastSelf: self })
+    return { ...account, lastSelf: self }
+  } catch {
+    return account
+  }
+}
+
+// 打开网页签到 WebView；new-api 账号在关页且 WebView 未销毁前于页内预查余额与签到状态
+export async function openManualCheckinWebView(account: Account): Promise<ManualCheckinRefresh | undefined> {
   // 账号主站：用于登录态注入/回收 cookie 与 localStorage
   const accountBaseUrl = normalizeBaseUrl(account.baseUrl)
   if (!accountBaseUrl) throw new Error("请先填写站点地址")
@@ -489,14 +506,16 @@ export async function openManualCheckinWebView(account: Account) {
     } finally {
       webView.dispose()
     }
-    return
+    return undefined
   }
 
   // new-api：同时注入 cookie + localStorage.user，关闭后用最新会话覆盖旧凭据
-  const cookieHeader = credential
+  const target = await ensureNewApiUserId(account)
+  // 补齐用户 ID 时可能现场登录换了新会话，注入前重新读取最新 Cookie
+  const cookieHeader = getSecret(account.cookieKey)
   const hostname = getUrlHostname(accountBaseUrl)
   const secure = accountBaseUrl.startsWith("https://")
-  const localUser = buildNewApiLocalUser(account)
+  const localUser = buildNewApiLocalUser(target)
   const webView = new WebViewController()
   try {
     await installWebNavigationBridge(webView, accountBaseUrl)
@@ -531,6 +550,15 @@ export async function openManualCheckinWebView(account: Account) {
       const storageSelf = extractSelfInfoFromStorage(storageItems)
       recycleNewApiWebSession(account, cookieHeader, storageSelf)
     } catch {}
+
+    // 部分站点关页后导出的 Cookie 立即失效，趁 WebView 未销毁在页内取数（仅记录账号不调接口）
+    if (isRecordOnlyAccount(account)) return undefined
+    try {
+      const latest = loadAccounts().find(item => item.id === account.id) ?? target
+      return await refreshNewApiDataInWebView(webView, latest, accountBaseUrl)
+    } catch {
+      return undefined
+    }
   } finally {
     webView.dispose()
   }

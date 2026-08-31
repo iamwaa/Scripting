@@ -4,6 +4,7 @@ import { isRecordOnlyAccount } from "../utils/format"
 import { getErrorMessage, showConfirm } from "../utils/error"
 import { loadAccounts, loadAccountSortPreference, saveAccountSortPreference, patchAccount } from "../services/storage"
 import { checkSiteStatus, fetchSelf, fetchCheckinStatus, openManualCheckinWebView } from "../services/auth"
+import type { ManualCheckinRefresh } from "../services/webApi"
 import { sortAccounts, getTodayCheckinPatch, getManualTodayCheckinPatch, getTodayCheckinInfo, getOfflineSiteStatus, getCheckinDisabledPatch, deleteAccount, runQuickAccountAction, quickSyncAccount, quickCheckinAccount, getActiveAccounts } from "../services/account"
 import { AccountSummary, AccountRowContent, AccountRowMenu, AccountListHeader, BatchActionButton, buildAccountSwipeActions } from "../components/AccountRow"
 import { useBatchAccountActions } from "../hooks/useBatchAccountActions"
@@ -108,17 +109,18 @@ export function AccountListView({ scope, dataVersion, onDataChanged, onClose }: 
     setBusyAccountId(account.id)
     toast(isRecordOnlyAccount(account) ? `正在打开“${account.name}”的站点…` : `正在打开“${account.name}”的签到页面…`)
     try {
-      await openManualCheckinWebView(account)
+      // 部分站点关页后 Cookie 立即失效，网页签到会在 WebView 存活时先页内预查一份结果
+      const refresh: ManualCheckinRefresh | undefined = await openManualCheckinWebView(account)
       // 仅记录账号不调接口，关页后不刷新余额与签到状态
       if (isRecordOnlyAccount(account)) {
         setToastMessage(`“${account.name}”站点已关闭`)
         return
       }
       const latest = loadAccounts().find(item => item.id === account.id) ?? account
-      // 网页签到关闭后同时刷新余额和签到状态
+      // 页内预查缺失的部分才降级到原生请求
       const [selfResult, statusResult] = await Promise.allSettled([
-        fetchSelf(latest),
-        fetchCheckinStatus(latest),
+        refresh?.self ? Promise.resolve(refresh.self) : fetchSelf(latest),
+        refresh?.checkin ? Promise.resolve(refresh.checkin) : fetchCheckinStatus(latest),
       ])
       const patch: Partial<Account> = {}
       if (selfResult.status === "fulfilled") {

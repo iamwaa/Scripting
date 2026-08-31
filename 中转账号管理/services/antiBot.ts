@@ -1,5 +1,6 @@
 import type { Account } from "../types"
 import { normalizeBaseUrl } from "../utils/format"
+import { translateErrorMessage } from "../utils/error"
 import { cookiesToHeader, getUrlHostname, parseCookieHeader } from "../utils/cookie"
 import { getSecret, setSecret } from "./storage"
 import { injectWebCookies } from "./webSession"
@@ -69,6 +70,10 @@ export type WebViewApiResult = {
   status: number
   ok: boolean
   raw: string
+  // 页面当前是否与接口同源；不同源时页内 fetch 必失败
+  sameOrigin?: boolean
+  // 页内 fetch 异常的原始文案，仅用于判断失败原因
+  error?: string
 }
 
 function withTimeout<T>(task: Promise<T>, seconds: number, message: string): Promise<T> {
@@ -76,6 +81,31 @@ function withTimeout<T>(task: Promise<T>, seconds: number, message: string): Pro
     task,
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error(message)), seconds * 1000)),
   ])
+}
+
+// 页内请求脚本：先校验同源，再用页面上下文 fetch。
+// 异常不向外抛而改用 error 字段回传，否则 evaluateJavaScript 会把 WebKit 原文（如 TypeError: Load failed）当成错误消息抛到界面
+function buildPageRequestScript(url: string, method: string, headers: Record<string, string>, body: any) {
+  return `
+    return (async function () {
+      const target = ${JSON.stringify(url)};
+      let sameOrigin = false;
+      try { sameOrigin = location.origin === new URL(target).origin; } catch (e) {}
+      if (!sameOrigin) return { status: 0, ok: false, raw: '', sameOrigin: false };
+      try {
+        const response = await fetch(target, {
+          method: ${JSON.stringify(method)},
+          headers: ${JSON.stringify(headers)},
+          body: ${body === undefined ? "undefined" : JSON.stringify(JSON.stringify(body))},
+          credentials: 'include'
+        });
+        const raw = await response.text();
+        return { status: response.status, ok: response.ok, raw: raw, sameOrigin: true };
+      } catch (e) {
+        return { status: 0, ok: false, raw: '', sameOrigin: true, error: String((e && e.message) || e) };
+      }
+    })();
+  `
 }
 
 export async function requestApiThroughVerifiedWebViewImpl(
@@ -113,18 +143,16 @@ export async function requestApiThroughVerifiedWebViewImpl(
     const browserHeaders = Object.fromEntries(
       Object.entries(headers).filter(([name]) => !/^(cookie|origin|referer|sec-fetch-|accept-encoding$)/i.test(name)),
     )
-    const result = await withTimeout(webView.evaluateJavaScript<WebViewApiResult>(`
-      return fetch(${JSON.stringify(`${baseUrl}${path}`)}, {
-        method: ${JSON.stringify(method)},
-        headers: ${JSON.stringify(browserHeaders)},
-        body: ${body === undefined ? "undefined" : JSON.stringify(JSON.stringify(body))},
-        credentials: 'include'
-      }).then(function(response) {
-        return response.text().then(function(raw) {
-          return { status: response.status, ok: response.ok, raw: raw }
-        })
-      });
-    `), 25, "主站数据请求超时")
+    const script = buildPageRequestScript(`${baseUrl}${path}`, method, browserHeaders, body)
+    let result = await withTimeout(webView.evaluateJavaScript<WebViewApiResult>(script), 25, "主站数据请求超时")
+    // 页面不在主站域（加载失败、停在验证页或已跳转到其他域）时重新加载主站后重试一次
+    if (result?.sameOrigin === false) {
+      await withTimeout(webView.loadURL(baseUrl), 20, "主站页面加载超时")
+      result = await withTimeout(webView.evaluateJavaScript<WebViewApiResult>(script), 25, "主站数据请求超时")
+    }
+    if (!result) throw new Error("站点页面未返回数据，请稍后重试")
+    if (result.sameOrigin === false) throw new Error("主站页面加载失败，请先用网页登录确认站点可访问")
+    if (result.error) throw new Error(translateErrorMessage(result.error))
     const merged = await collectWebViewCookieHeader(webView, baseUrl, cookie)
     if (merged && account.cookieKey) setSecret(account.cookieKey, merged)
     return result
