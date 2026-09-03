@@ -14,6 +14,7 @@ import { loadGitEngine, createFS } from "./gitCore"
 import { resolveWorkdir, findRepo, getGitdirPath } from "./repoStore"
 import { attachInlineHighlights } from "../utils/inlineDiff"
 import type { InlineSegment } from "../utils/inlineDiff"
+import { imageMimeFromPath } from "../utils/imageDiff"
 
 export type { InlineSegment }
 
@@ -35,6 +36,20 @@ export interface DiffLine {
   hiddenLines?: DiffLine[]
 }
 
+/** 单个图片版本的预览数据 */
+export interface ImagePreviewVersion {
+  mime: string
+  base64: string
+  /** 原始字节数（展示用） */
+  bytes: number
+}
+
+/** 二进制图片文件的旧/新版本预览 */
+export interface BinaryPreview {
+  old: ImagePreviewVersion | null
+  new: ImagePreviewVersion | null
+}
+
 /** 一个文件的完整 diff */
 export interface FileDiff {
   filepath: string
@@ -44,6 +59,8 @@ export interface FileDiff {
   deleted: boolean
   /** 二进制文件不产生行级 diff */
   binary: boolean
+  /** 二进制且可识别为图片时的预览数据 */
+  binaryPreview?: BinaryPreview
   lines: DiffLine[]
 }
 
@@ -401,9 +418,45 @@ function textLines(text: string): string[] {
   return lines
 }
 
+/** 超过该字节数的图片不生成预览（base64 + 解码双份内存） */
+const MAX_IMAGE_PREVIEW_BYTES = 12 * 1024 * 1024
+
+/** 二进制图片字节转预览版本；非图片/超限/编码失败返回 null */
+function toImagePreviewVersion(
+  filepath: string,
+  bytes: Uint8Array
+): ImagePreviewVersion | null {
+  const mime = imageMimeFromPath(filepath)
+  if (!mime || bytes.length === 0 || bytes.length > MAX_IMAGE_PREVIEW_BYTES) {
+    return null
+  }
+  const data = Data.fromUint8Array(bytes)
+  if (!data) return null
+  return { mime, base64: data.toBase64String(), bytes: bytes.length }
+}
+
+/** 构建二进制图片预览；无任何可预览版本时返回 undefined */
+function buildBinaryPreview(
+  filepath: string,
+  oldBytes: Uint8Array | null,
+  newBytes: Uint8Array | null
+): BinaryPreview | undefined {
+  const old = oldBytes ? toImagePreviewVersion(filepath, oldBytes) : null
+  const next = newBytes ? toImagePreviewVersion(filepath, newBytes) : null
+  if (!old && !next) return undefined
+  return { old, new: next }
+}
+
 function buildAdded(filepath: string, bytes: Uint8Array): FileDiff {
   if (isBinary(bytes)) {
-    return { filepath, added: true, deleted: false, binary: true, lines: [] }
+    return {
+      filepath,
+      added: true,
+      deleted: false,
+      binary: true,
+      lines: [],
+      binaryPreview: buildBinaryPreview(filepath, null, bytes),
+    }
   }
   const text = decodeUtf8(bytes)
   const lines = textLines(text)
@@ -423,7 +476,14 @@ function buildAdded(filepath: string, bytes: Uint8Array): FileDiff {
 /** 构建删除文件 diff */
 function buildDeleted(filepath: string, bytes: Uint8Array): FileDiff {
   if (isBinary(bytes)) {
-    return { filepath, added: false, deleted: true, binary: true, lines: [] }
+    return {
+      filepath,
+      added: false,
+      deleted: true,
+      binary: true,
+      lines: [],
+      binaryPreview: buildBinaryPreview(filepath, bytes, null),
+    }
   }
   const text = decodeUtf8(bytes)
   const lines = textLines(text)
@@ -449,7 +509,18 @@ function buildModified(
   const oldBin = isBinary(oldBytes)
   const newBin = isBinary(newBytes)
   if (oldBin || newBin) {
-    return { filepath, added: false, deleted: false, binary: true, lines: [] }
+    return {
+      filepath,
+      added: false,
+      deleted: false,
+      binary: true,
+      lines: [],
+      // 仅两侧都是图片时才可并排预览（一侧二进制非图片无意义）
+      binaryPreview:
+        oldBin && newBin
+          ? buildBinaryPreview(filepath, oldBytes, newBytes)
+          : undefined,
+    }
   }
   const oldLines = textLines(decodeUtf8(oldBytes))
   const newLines = textLines(decodeUtf8(newBytes))

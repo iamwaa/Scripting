@@ -15,6 +15,7 @@ import {
 } from "scripting"
 import { DiffViewer } from "../components/DiffViewer"
 import { DiffStatsBar } from "../components/DiffStatsBar"
+import { ImageViewer } from "../components/ImageViewer"
 import { getFileDiff } from "../services/diffService"
 import type { FileDiff } from "../services/diffService"
 import { truncatePath } from "../utils/format"
@@ -41,6 +42,8 @@ export function DiffPage({
   const [diff, setDiff] = useState<FileDiff | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // 图片预览全屏查看（data URL）
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
 
   useEffect(() => {
     loadDiff()
@@ -69,6 +72,19 @@ export function DiffPage({
       tabBarVisibility="hidden"
       listStyle="plain"
       refreshable={loadDiff}
+      fullScreenCover={{
+        isPresented: previewUrl != null,
+        onChanged: (isPresented) => {
+          if (!isPresented) setPreviewUrl(null)
+        },
+        content: previewUrl ? (
+          <ImageViewer
+            key={previewUrl}
+            url={previewUrl}
+            onClose={() => setPreviewUrl(null)}
+          />
+        ) : <></>,
+      }}
       safeAreaInset={
         diff && stats
           ? {
@@ -105,7 +121,7 @@ export function DiffPage({
         </Section>
       ) : diff ? (
         <Section>
-          <DiffViewer diff={diff} />
+          <DiffViewer diff={diff} onOpenImage={setPreviewUrl} />
         </Section>
       ) : null}
     </List>

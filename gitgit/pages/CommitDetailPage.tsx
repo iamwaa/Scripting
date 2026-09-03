@@ -120,10 +120,8 @@ export function CommitDetailPage({
               </Text>
             </HStack>
             <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
-              时间：{new Date(detail.date).toLocaleString()}
-            </Text>
-            <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
-              父提交：{detail.parentOid ? shortOid(detail.parentOid) : "根提交"}
+              时间：{new Date(detail.date).toLocaleString()} · 父提交：
+              {detail.parentOid ? shortOid(detail.parentOid) : "根提交"}
             </Text>
           </Section>
           <Section header={<Text>文件变更（{detail.files.length}）</Text>}>

@@ -43,8 +43,12 @@ export function AccountListView({ scope, dataVersion, onDataChanged, onClose }: 
 
   useEffect(() => {
     reload()
-    // 归档账号不参与连通性检测，归档页不做自动检测
-    if (!archivedScope) void checkSiteStatuses()
+    // 账号页与归档页均自动检测连通性（各自只检测对应范围的账号）
+    if (archivedScope) {
+      void checkSiteStatuses(false, "archived")
+    } else {
+      void checkSiteStatuses()
+    }
   }, [])
 
   // 另一个标签归档或删除账号后同步刷新

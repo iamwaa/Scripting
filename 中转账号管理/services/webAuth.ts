@@ -74,6 +74,7 @@ export async function presentWebViewAndLoadURL(
   options: {
     fullscreen?: boolean
     navigationTitle?: string
+    homeURL?: string
     afterLoad?: (webView: WebViewController) => Promise<void>
   } = {},
 ) {
@@ -89,8 +90,8 @@ export async function presentWebViewAndLoadURL(
     }
   }
   setTimeout(() => { void openPage() }, 80)
-  // 以原生工具栏模式呈现（右上角刷新按钮）
-  await presentWebViewWithToolbar(webView, options.navigationTitle || "网页")
+  // 以原生工具栏模式呈现（底部导航栏 + 右上角更多菜单）
+  await presentWebViewWithToolbar(webView, options.navigationTitle || "网页", options.homeURL ?? url)
 }
 
 // 递归从 JSON 中查找 SelfInfo
@@ -357,7 +358,7 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
     }
     setTimeout(() => { void openPage() }, 80)
     // 以原生工具栏模式呈现（右上角刷新按钮）
-    await presentWebViewWithToolbar(webView, "登录完成后关闭页面")
+    await presentWebViewWithToolbar(webView, "登录完成后关闭页面", normalizedBaseUrl)
 
     const cookies = await webView.getCookies(normalizedBaseUrl)
     const cookieHeader = cookiesToHeader(cookies)
@@ -486,8 +487,8 @@ export async function openManualCheckinWebView(account: Account): Promise<Manual
         }
       }
       setTimeout(() => { void openPage() }, 80)
-      // 以原生工具栏模式呈现（右上角刷新按钮）
-      await presentWebViewWithToolbar(webView, "网页签到后关闭页面")
+      // 以原生工具栏模式呈现（底部导航栏 + 右上角更多菜单）
+      await presentWebViewWithToolbar(webView, "网页签到后关闭页面", accountBaseUrl)
       // 关闭后回收最新 auth_token，并在有 auth_user 时回写 lastSelf
       try {
         const storage = await readWebLoginStorage(webView)
@@ -533,6 +534,7 @@ export async function openManualCheckinWebView(account: Account): Promise<Manual
     await presentWebViewAndLoadURL(webView, openUrl, {
       fullscreen: true,
       navigationTitle: "网页签到后关闭页面",
+      homeURL: accountBaseUrl,
       afterLoad: async controller => {
         // 页面同域加载后再写 localStorage.user，否则前端仍判未登录
         if (localUser) await injectNewApiLocalUser(controller, localUser)

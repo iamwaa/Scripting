@@ -18,6 +18,7 @@ import {
 } from "scripting"
 import type { DiffLine, FileDiff, InlineSegment } from "../services/diffService"
 import { wrapSegments } from "../utils/inlineDiff"
+import { ImageDiffPreview } from "./ImageDiffPreview"
 
 /** 新增/删除/折叠/行内高亮颜色（按明暗模式区分） */
 interface DiffColors {
@@ -246,12 +247,35 @@ function DiffLineView({
 }
 
 /** 渲染整个文件的 diff，支持展开折叠区 */
-export function DiffViewer({ diff }: { diff: FileDiff }) {
+export function DiffViewer({
+  diff,
+  onOpenImage,
+}: {
+  diff: FileDiff
+  /** 点击图片时上抛 data URL，由页面全屏展示 */
+  onOpenImage?: (dataUrl: string) => void
+}) {
   const colors = useDiffColors()
   // 用 lines state 实现展开：点击 skip 时将其 hiddenLines 插入并移除 skip
   const [lines, setLines] = useState(diff.lines)
 
   if (diff.binary) {
+    const preview = diff.binaryPreview
+    if (preview && (preview.old || preview.new)) {
+      return (
+        <>
+          <Text font="callout" foregroundStyle={colors.lineNoFg}>
+            二进制图片文件，点击图片可全屏查看
+          </Text>
+          <ImageDiffPreview
+            filepath={diff.filepath}
+            oldVersion={preview.old}
+            newVersion={preview.new}
+            onOpen={onOpenImage ?? (() => {})}
+          />
+        </>
+      )
+    }
     return (
       <Text font="callout" foregroundStyle={colors.lineNoFg}>
         二进制文件，无法显示行级差异

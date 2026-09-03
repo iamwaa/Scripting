@@ -136,51 +136,63 @@ function HistoryRow({
           : undefined
       }
     >
-      <VStack alignment="leading" spacing={2}>
-        <HStack alignment="center" spacing={6}>
-          {checkState ? (
-            <Image
-              systemName={checkVisual!.icon}
-              font="caption2"
-              foregroundStyle={checkVisual!.color}
-            />
-          ) : null}
-          <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
-            {shortOid(oid)}
-          </Text>
-          <Button buttonStyle="plain" action={() => onCopy(entry)}>
-            <Image
-              systemName="doc.on.doc"
-              font="caption2"
-              foregroundStyle={COLOR_ACCENT}
-            />
-          </Button>
-          {entry.isHead ? (
-            <Text font="caption2" foregroundStyle={COLOR_ACCENT}>
-              HEAD
-            </Text>
-          ) : null}
-          <Spacer />
-          {badge ? (
-            <Text font="caption2" foregroundStyle={badge.color as any}>
-              {badge.text}
-            </Text>
-          ) : null}
-        </HStack>
+      <VStack alignment="leading" spacing={4}>
         <Button buttonStyle="plain" action={() => onSelectOid(oid)}>
-          <VStack alignment="leading" spacing={2}>
-            <Text font="body" foregroundStyle={COLOR_LABEL} lineLimit={2}>
-              {commitTitle(entry.message) || "(无提交信息)"}
-            </Text>
+          <VStack alignment="leading" spacing={6}>
+            {/* 标题行：工作流状态 · 标题 · HEAD，右侧同步徽标 */}
+            {/* 外层 top 对齐让徽标贴标题顶部（标题可折两行，center 会把徽标拉到行中）；内层基线对齐让状态图标与标题首行齐平 */}
+            <HStack alignment="top" spacing={6}>
+              <HStack alignment="firstTextBaseline" spacing={6}>
+                {checkState ? (
+                  <Image
+                    systemName={checkVisual!.icon}
+                    font={17}
+                    imageScale="small"
+                    foregroundStyle={checkVisual!.color}
+                    fixedSize
+                  />
+                ) : null}
+                <Text font={17} foregroundStyle={COLOR_LABEL} lineLimit={2}>
+                  {commitTitle(entry.message) || "(无提交信息)"}
+                </Text>
+                {entry.isHead ? (
+                  <Text
+                    font={11}
+                    foregroundStyle={COLOR_ACCENT}
+                    lineLimit={1}
+                    fixedSize
+                  >
+                    HEAD
+                  </Text>
+                ) : null}
+              </HStack>
+              <Spacer minLength={0} />
+              {badge ? (
+                <Text
+                  font={11}
+                  foregroundStyle={badge.color as any}
+                  lineLimit={1}
+                  fixedSize
+                  padding={{ trailing: 6 }}
+                >
+                  {badge.text}
+                </Text>
+              ) : null}
+            </HStack>
             {body ? (
               <Text
-                font="caption"
+                font={12}
                 foregroundStyle={COLOR_SECONDARY_LABEL}
                 lineLimit={2}
               >
                 {body}
               </Text>
             ) : null}
+          </VStack>
+        </Button>
+        {/* 元信息行：作者 · 时间 · 提交 ID；复制与打开详情并列，避免嵌套 Button 点击失效 */}
+        <HStack alignment="center" spacing={4}>
+          <Button buttonStyle="plain" action={() => onSelectOid(oid)}>
             <HStack alignment="center" spacing={4}>
               <AvatarView
                 url={resolvedGitAuthorAvatarUrl(
@@ -189,16 +201,27 @@ function HistoryRow({
                 )}
                 size={14}
               />
-              <Text font="caption2" foregroundStyle={COLOR_SECONDARY_LABEL}>
-                {entry.author.name || "unknown"} · {relativeTime(entry.date)}
+              <Text font={11} foregroundStyle={COLOR_SECONDARY_LABEL}>
+                {entry.author.name || "unknown"} · {relativeTime(entry.date)} ·{" "}
+                {shortOid(oid)}
               </Text>
             </HStack>
-          </VStack>
-        </Button>
+          </Button>
+          <Button buttonStyle="plain" action={() => onCopy(entry)}>
+            <Image
+              systemName="doc.on.doc"
+              font={11}
+              imageScale="small"
+              foregroundStyle={COLOR_ACCENT}
+            />
+          </Button>
+          {/* 常驻 Spacer 撑满行宽，使右侧箭头仍贴行尾 */}
+          <Spacer />
+        </HStack>
       </VStack>
       <Image
         systemName="chevron.right"
-        font="caption"
+        font={12}
         foregroundStyle={COLOR_SECONDARY_LABEL}
       />
     </HStack>

@@ -2,7 +2,7 @@ import { useState, useEffect, Navigation, Form, Section, Text, Button, Picker, T
 import type { Account, AccountDraft, AccountPlatform, SelfInfo } from "../types"
 import { normalizeBaseUrl, shortUrl, timeStringToTimestamp } from "../utils/format"
 import { getErrorMessage, showConfirm } from "../utils/error"
-import { loadAccounts, patchAccount } from "../services/storage"
+import { loadAccounts, patchAccount, getSecret } from "../services/storage"
 import { getWebLoginCookie, fetchSelf } from "../services/auth"
 import { upsertAccount, findDuplicateSiteAccounts } from "../services/account"
 import { LabeledTextField } from "../components/FormFields"
@@ -15,9 +15,9 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
   const [checkinSite, setCheckinSite] = useState(initial?.checkinSite ?? "")
   const [platform, setPlatform] = useState<AccountPlatform>(initial?.platform ?? "newapi")
   const [username, setUsername] = useState(initial?.username ?? "")
-  const [password, setPassword] = useState("")
-  const [cookie, setCookie] = useState("")
-  const [accessToken, setAccessToken] = useState("")
+  const [password, setPassword] = useState(initial ? getSecret(initial.passwordKey) : "")
+  const [cookie, setCookie] = useState(initial ? getSecret(initial.cookieKey) : "")
+  const [accessToken, setAccessToken] = useState(initial ? getSecret(initial.accessTokenKey) : "")
   const [checkinTime, setCheckinTime] = useState(initial?.checkinTime ?? "")
   // 仅记录账号：不兼容平台只保存站点与账号信息，无需填写登录信息
   const [recordOnly, setRecordOnly] = useState(initial?.recordOnly === true)
@@ -178,11 +178,11 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
     </Section>
     {recordOnly ? <Section header={<Text>账号信息（可选）</Text>} footer={<Text>仅作本机备忘，不用于自动登录。</Text>}>
       <LabeledTextField title="账号" value={username} onChanged={setUsername} prompt="可选" />
-      <LabeledTextField title="密码" value={password} onChanged={setPassword} prompt={initial ? "留空则不修改" : "可选"} />
+      <LabeledTextField title="密码" value={password} onChanged={setPassword} prompt="可选" />
     </Section> : null}
     {recordOnly ? null : <Section header={<Text>账号密码登录</Text>} footer={<Text>{platform === "sub2api" ? "Sub2API 使用邮箱和密码登录；站点启用 Turnstile 或 2FA 时改用网页登录。" : "站点启用 Turnstile 或 2FA 时改用网页登录获取 Cookie。"}</Text>}>
       <LabeledTextField title={platform === "sub2api" ? "邮箱" : "用户名"} value={username} onChanged={setUsername} prompt="可选" />
-      <LabeledTextField title="密码" value={password} onChanged={setPassword} prompt={initial ? "留空则不修改" : "可选"} />
+      <LabeledTextField title="密码" value={password} onChanged={setPassword} prompt="可选" />
     </Section>}
     {!recordOnly && platform !== "sub2api" ? <Section header={<Text>访问令牌登录（NewAPI）</Text>} footer={<Text>在 NewAPI 个人设置中生成，保存后自动解析用户 ID。</Text>}>
       <LabeledTextField title="访问令牌" value={accessToken} onChanged={setAccessToken} prompt="32位 Access Token" />
@@ -193,7 +193,7 @@ export function AddEditView({ initial, onSaved }: { initial?: Account, onSaved: 
         ? "Sub2API 使用 localStorage.auth_token，建议用下方网页登录，也可手动粘贴。"
         : "适用于 GitHub / OIDC / LinuxDO / Discord / Telegram / 微信等第三方登录，粘贴浏览器请求头中的 Cookie。"}</Text>}
     >
-      <LabeledTextField title={platform === "sub2api" ? "令牌" : "Cookie"} value={cookie} onChanged={value => { setCookie(value); setCookieAuthSource("cookie") }} axis="vertical" prompt={initial ? "留空则不修改" : platform === "sub2api" ? "auth_token" : "session=...; other=..."} />
+      <LabeledTextField title={platform === "sub2api" ? "令牌" : "Cookie"} value={cookie} onChanged={value => { setCookie(value); setCookieAuthSource("cookie") }} axis="vertical" prompt={platform === "sub2api" ? "auth_token" : "session=...; other=..."} />
       <Button action={webLoginCookie} disabled={webBusy}>
         {webBusy ? <HStack spacing={8} alignment="center">
           <ProgressView />

@@ -3,7 +3,7 @@ import { isSub2ApiAccount, getAccountTypeText, isRecordOnlyAccount, localDateStr
 import { getErrorMessage, CHECKIN_DISABLED_PATTERN, isAlreadyCheckedInError } from "../utils/error"
 import { loadAccounts, saveAccounts, setSecret, removeSecret, secretKey, getSecret, patchAccount } from "./storage"
 import { removeAccountSecrets } from "./api"
-import { checkSiteStatus, fetchSelf, fetchCheckinStatus, doCheckin } from "./auth"
+import { fetchSelf, fetchCheckinStatus, doCheckin } from "./auth"
 
 // 参与首页操作的账号：归档账号不计入总览，也不参与批量与自动操作
 export function getActiveAccounts(accounts: Account[]) {
@@ -136,9 +136,12 @@ export function upsertAccount(draft: AccountDraft) {
     account.authSource = draft.authSource ?? "accessToken"
   }
 
-  setSecret(passwordKey, draft.password)
-  setSecret(cookieKey, draft.cookie)
-  setSecret(accessTokenKey, draft.accessToken)
+  if (draft.password.trim()) setSecret(passwordKey, draft.password)
+  else if (prev?.passwordKey) removeSecret(passwordKey)
+  if (draft.cookie.trim()) setSecret(cookieKey, draft.cookie)
+  else if (prev?.cookieKey) removeSecret(cookieKey)
+  if (draft.accessToken.trim()) setSecret(accessTokenKey, draft.accessToken)
+  else if (prev?.accessTokenKey) removeSecret(accessTokenKey)
 
   if (idx >= 0) accounts[idx] = account
   else accounts.unshift(account)
@@ -315,28 +318,17 @@ export async function runQuickAccountAction(account: Account, label: string, tas
   }
 }
 
-// 快速同步账户余额
+// 快速同步账户余额：不更新站点状态，连通性由专门的检测负责
 export async function quickSyncAccount(account: Account) {
-  const siteStatus = await checkSiteStatus(account)
-  patchAccount(account.id, { lastSiteStatus: siteStatus })
   const latest = loadAccounts().find(item => item.id === account.id) ?? account
   const data = await fetchSelf(latest)
   patchAccount(account.id, { lastSelf: data, lastError: "" })
   return data
 }
 
-// 快速签到并同步状态
+// 快速签到并同步状态：不更新站点状态，连通性由专门的检测负责
 export async function quickCheckinAccount(account: Account) {
-  let siteStatus: SiteStatus | undefined
-  // 连通性检测仅用于更新状态，探测异常不影响后续签到。
-  try {
-    siteStatus = await checkSiteStatus(account)
-    patchAccount(account.id, { lastSiteStatus: siteStatus })
-  } catch (e: any) {
-    siteStatus = getOfflineSiteStatus(e)
-    patchAccount(account.id, { lastSiteStatus: siteStatus })
-  }
-  // 服务端提示今日已签时按成功处理：继续刷新状态并本地标记，避免每次签到都重复尝试并报失败
+  // 服务端提示今日已签时按已签处理：继续刷新状态并本地标记，避免每次签到都重复尝试并报失败
   const data = await doCheckin(account).catch((e: any) => {
     if (!isAlreadyCheckedInError(e)) throw e
     return { already_checked: true }
@@ -346,14 +338,12 @@ export async function quickCheckinAccount(account: Account) {
   let status: CheckinStatus | undefined
   try { self = await fetchSelf(account) } catch {}
   try { status = await fetchCheckinStatus(account) } catch {}
-  try { siteStatus = await checkSiteStatus(account) } catch {}
   // 本地记录本次签到奖励金额（仅旧版 sub2api 无签到历史时用于补充月历金额）
   const checkinRewardsPatch = getCheckinRewardPatch(account, data)
   // 仅写入成功获取的字段，避免刷新失败时用 undefined 覆盖已有缓存
   const patch: Partial<Account> = { lastError: "", ...getTodayCheckinPatch(status), ...checkinRewardsPatch }
   if (self) patch.lastSelf = self
   if (status) patch.lastCheckin = status
-  if (siteStatus) patch.lastSiteStatus = siteStatus
   // 已签但状态刷新失败时用本地记录兜底，保证下次批量签到跳过该账号
   if (alreadyChecked && !patch.lastTodayCheckinDate) {
     patch.lastTodayCheckinDate = localDateString()

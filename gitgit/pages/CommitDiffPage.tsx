@@ -9,6 +9,7 @@ import {
 } from "scripting"
 import { DiffViewer } from "../components/DiffViewer"
 import { DiffStatsBar } from "../components/DiffStatsBar"
+import { ImageViewer } from "../components/ImageViewer"
 import { getCommitFileDiff } from "../services/diffService"
 import type { FileDiff } from "../services/diffService"
 import { truncatePath } from "../utils/format"
@@ -28,6 +29,8 @@ export function CommitDiffPage({
   const [diff, setDiff] = useState<FileDiff | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // 图片预览全屏查看（data URL）
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
 
   // 随提交/路径变化重载，避免导航复用时仍显示上一次 diff
   useEffect(() => {
@@ -63,6 +66,19 @@ export function CommitDiffPage({
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
       listStyle="plain"
+      fullScreenCover={{
+        isPresented: previewUrl != null,
+        onChanged: (isPresented) => {
+          if (!isPresented) setPreviewUrl(null)
+        },
+        content: previewUrl ? (
+          <ImageViewer
+            key={previewUrl}
+            url={previewUrl}
+            onClose={() => setPreviewUrl(null)}
+          />
+        ) : <></>,
+      }}
       safeAreaInset={
         diff
           ? {
@@ -93,7 +109,7 @@ export function CommitDiffPage({
         </Section>
       ) : diff ? (
         <Section>
-          <DiffViewer diff={diff} />
+          <DiffViewer diff={diff} onOpenImage={setPreviewUrl} />
         </Section>
       ) : null}
     </List>

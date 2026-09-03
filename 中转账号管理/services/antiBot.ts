@@ -136,7 +136,7 @@ export async function requestApiThroughVerifiedWebViewImpl(
       needsVerification = true
     }
     if (needsVerification) {
-      await presentWebViewWithToolbar(webView, "完成安全验证后关闭页面")
+      await presentWebViewWithToolbar(webView, "完成安全验证后关闭页面", baseUrl)
     }
 
     // Cookie、Origin 等受保护请求头由 WebView 自行生成，只传业务所需头。

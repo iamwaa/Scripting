@@ -1,45 +1,45 @@
 {
-  "runInApp" : false,
-  "localizedDescriptions" : {
-    "pt" : "",
-    "de" : "",
-    "en" : "",
-    "zh" : "",
+  "version" : "1.0.0",
+  "description" : "",
+  "localizedNames" : {
     "ja" : "",
+    "de" : "",
+    "fr" : "",
+    "es" : "",
+    "pt" : "",
+    "it" : "",
     "ru" : "",
+    "zh" : "",
+    "en" : ""
+  },
+  "localizedDescriptions" : {
+    "ru" : "",
+    "pt" : "",
     "es" : "",
     "it" : "",
-    "fr" : ""
+    "fr" : "",
+    "zh" : "",
+    "ja" : "",
+    "de" : "",
+    "en" : ""
   },
-  "entry" : "index.tsx",
-  "intentInputTypes" : [
-
-  ],
-  "version" : "1.0.0",
-  "name" : "中转账号管理",
   "iconImage" : "",
   "remoteResource" : null,
   "icon" : "checklist",
+  "name" : "中转账号管理",
+  "color" : "rgba(124, 76, 179,1)",
+  "intentInputTypes" : [
+
+  ],
+  "author" : {
+    "homepage" : "https:\/\/github.com\/iamwaa",
+    "email" : null,
+    "name" : "Waa"
+  },
   "contributors" : [
 
   ],
-  "color" : "rgba(124, 76, 179,1)",
-  "author" : {
-    "email" : null,
-    "homepage" : "https:\/\/github.com\/iamwaa",
-    "name" : "Waa"
-  },
-  "description" : "",
   "permissions" : null,
-  "localizedNames" : {
-    "pt" : "",
-    "zh" : "",
-    "de" : "",
-    "ja" : "",
-    "it" : "",
-    "fr" : "",
-    "es" : "",
-    "en" : "",
-    "ru" : ""
-  }
+  "runInApp" : false,
+  "entry" : "index.tsx"
 }

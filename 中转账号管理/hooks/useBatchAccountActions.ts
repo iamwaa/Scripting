@@ -41,15 +41,17 @@ export function useBatchAccountActions({ reload, toast }: { reload: () => void, 
     setBusyAccountId(undefined)
   }
 
-  async function checkSiteStatuses(showResult = false) {
+  async function checkSiteStatuses(showResult = false, scope: "active" | "archived" = "active") {
     const currentAccounts = loadAccounts()
     // 清除已过期的延迟缓存数据
     if (clearExpiredSiteStatuses(currentAccounts)) reload()
-    // 归档账号不参与首页操作（仅记录账号仍可检测站点连通性）
-    const candidates = getActiveAccounts(currentAccounts)
+    // 归档页检测归档账号，账号页检测未归档账号（仅记录账号仍可检测站点连通性）
+    const candidates = scope === "archived"
+      ? currentAccounts.filter(a => a.archived)
+      : getActiveAccounts(currentAccounts)
     const targetAccounts = showResult ? candidates : candidates.filter(shouldAutoCheckSiteStatus)
     if (candidates.length === 0) {
-      if (showResult) toast(currentAccounts.length > 0 ? "账号已全部归档，不参与连通性检测" : "请先添加账号后再检测连通性")
+      if (showResult) toast(currentAccounts.length > 0 ? "账号已全部归档，可在归档页检测连通性" : "请先添加账号后再检测连通性")
       return
     }
     if (targetAccounts.length === 0) return
@@ -124,8 +126,6 @@ export function useBatchAccountActions({ reload, toast }: { reload: () => void, 
         setBusyProgress({ current: i + 1, total })
         setBusyAccountId(account.id)
         try {
-          const siteStatus = await checkSiteStatus(account)
-          patchAccount(account.id, { lastSiteStatus: siteStatus })
           const latest = loadAccounts().find(item => item.id === account.id) ?? account
           const data = await fetchSelf(latest)
           patchAccount(account.id, { lastSelf: data, lastError: "" })
@@ -199,13 +199,6 @@ export function useBatchAccountActions({ reload, toast }: { reload: () => void, 
           continue
         }
         try {
-          // 连通性检测只更新状态，不因探测异常阻断签到。
-          try {
-            const siteStatus = await checkSiteStatus(account)
-            patchAccount(account.id, { lastSiteStatus: siteStatus })
-          } catch (e: any) {
-            patchAccount(account.id, { lastSiteStatus: getOfflineSiteStatus(e) })
-          }
           // 服务端提示今日已签时按已签处理：继续刷新状态并本地标记，避免每次批量签到重复尝试并报失败
           const checkinResult = await doCheckin(account).catch((e: any) => {
             if (!isAlreadyCheckedInError(e)) throw e
@@ -218,6 +211,7 @@ export function useBatchAccountActions({ reload, toast }: { reload: () => void, 
           try { status = await fetchCheckinStatus(account) } catch {}
           // 仅写入成功获取的字段，避免刷新失败时用 undefined 覆盖已有缓存；
           // checkinRewards 记录本次真实奖励金额（旧版 sub2api 无历史接口时用于补充月历金额）
+          // 不更新站点状态，连通性由专门的检测负责
           const patch: Partial<Account> = { lastError: "", ...getTodayCheckinPatch(status), ...getCheckinRewardPatch(account, checkinResult) }
           if (self) patch.lastSelf = self
           if (status) patch.lastCheckin = status
@@ -235,6 +229,7 @@ export function useBatchAccountActions({ reload, toast }: { reload: () => void, 
           }
         } catch (e: any) {
           const message = getErrorMessage(e)
+          // 签到失败可能是业务错误（功能未开启等）而非站点离线，不改动 lastSiteStatus
           patchAccount(account.id, { lastError: message, ...getCheckinDisabledPatch(message) })
           fail++
         }
