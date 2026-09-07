@@ -4,7 +4,7 @@ import { isSub2ApiAccount, fmtQuota, fmtRawQuotaForAccount, localMonthString, ge
 import { getErrorMessage, showConfirm } from "../utils/error"
 import { loadAccounts, getSecret } from "../services/storage"
 import { fetchSelf, fetchCheckinStatus, checkSiteStatus, loginAccount, loginByWebView } from "../services/auth"
-import { patchAccount, deleteAccount, getAuthSourceText, getSiteStatusView, getSiteStatusDetail, getTodayCheckinInfo, getTodayCheckinPatch, getCheckinDisabledPatch } from "../services/account"
+import { patchAccount, deleteAccount, getAuthSourceText, getSiteStatusView, getSiteStatusDetail, getTodayCheckinInfo, getTodayCheckinPatch, getCheckinDisabledPatch, canQueryAccountBalance } from "../services/account"
 import { CheckinCalendar } from "../components/CheckinCalendar"
 import { AddEditView } from "./AddEditView"
 
@@ -52,9 +52,9 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     setAccount(next)
     setCheckinMonth(localMonthString())
     setBusy(false)
-    // 归档与仅记录账号不自动请求接口
-    if (next && !next.archived && !isRecordOnlyAccount(next)) {
-      refreshDetailSilently(localMonthString(), next)
+    // 归档账号不自动请求接口；仅记录账号只在填了 API Key 时刷新余额
+    if (next && !next.archived && canQueryAccountBalance(next)) {
+      refreshDetailSilently(localMonthString(), next, isRecordOnlyAccount(next))
     }
   }, [accountId, refreshKey])
 
@@ -65,7 +65,8 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     markChanged()
   }
 
-  async function refreshDetailSilently(month = localMonthString(), target?: Account) {
+  // balanceOnly：仅记录账号只刷余额与站点状态，不碰签到接口
+  async function refreshDetailSilently(month = localMonthString(), target?: Account, balanceOnly = false) {
     const latest = target ?? loadAccounts().find(item => item.id === accountId) ?? account
     if (!latest) return
     setBusy(true)
@@ -74,7 +75,7 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     // 并行刷新余额、签到状态、站点状态
     const [selfResult, statusResult, siteResult] = await Promise.allSettled([
       fetchSelf(latest),
-      fetchCheckinStatus(latest, month),
+      balanceOnly ? Promise.resolve(undefined) : fetchCheckinStatus(latest, month),
       checkSiteStatus(latest),
     ])
     if (selfResult.status === "fulfilled") {
@@ -83,13 +84,15 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     } else {
       patch.lastError = getErrorMessage(selfResult.reason)
     }
-    if (statusResult.status === "fulfilled") {
-      patch.lastCheckin = statusResult.value
-      Object.assign(patch, getTodayCheckinPatch(statusResult.value))
-    } else {
-      // fetchSelf 成功即表示登录有效，签到接口失败不应覆盖成登录错误，避免误报“登录失效”
-      if (selfResult.status !== "fulfilled") patch.lastError = getErrorMessage(statusResult.reason)
-      Object.assign(patch, getCheckinDisabledPatch((statusResult.reason as any)?.message ?? statusResult.reason))
+    if (!balanceOnly) {
+      if (statusResult.status === "fulfilled") {
+        patch.lastCheckin = statusResult.value as CheckinStatus
+        Object.assign(patch, getTodayCheckinPatch(statusResult.value as CheckinStatus))
+      } else {
+        // fetchSelf 成功即表示登录有效，签到接口失败不应覆盖成登录错误，避免误报“登录失效”
+        if (selfResult.status !== "fulfilled") patch.lastError = getErrorMessage(statusResult.reason)
+        Object.assign(patch, getCheckinDisabledPatch((statusResult.reason as any)?.message ?? statusResult.reason))
+      }
     }
     if (siteResult.status === "fulfilled") {
       patch.lastSiteStatus = siteResult.value
@@ -248,6 +251,7 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
 
   const todayCheckin = getTodayCheckinInfo(account)
   const recordOnly = isRecordOnlyAccount(account)
+  const balanceEnabled = canQueryAccountBalance(account)
   // 奖励范围：min/max 不同才显示区间（新版 sub2api 连签奖励递增；单一奖励站点只显示单值）
   const minCheckinQuota = account.lastCheckin?.min_quota
   const maxCheckinQuota = account.lastCheckin?.max_quota
@@ -277,7 +281,7 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     <Section title="状态">
       {busy ? <HStack spacing={8}><ProgressView /><Text>{busyLabel || "处理中..."}</Text></HStack> : null}
       {account.archived ? <Text foregroundStyle="systemOrange">已归档：不计入总览，也不参与首页批量操作</Text> : null}
-      {recordOnly ? <Text foregroundStyle="secondaryLabel">仅记录账号：不参与余额查询与接口签到</Text> : null}
+      {recordOnly ? <Text foregroundStyle="secondaryLabel">{balanceEnabled ? "仅记录账号：只用 API Key 查余额，不参与接口签到" : "仅记录账号：不参与余额查询与接口签到"}</Text> : null}
       <Text>类型：{getAccountTypeText(account)}</Text>
       <Text>站点：{account.baseUrl}</Text>
       <Text>站点状态：{getSiteStatusDetail(account.lastSiteStatus)}</Text>
@@ -316,15 +320,18 @@ export function AccountDetailView({ accountId, onChanged }: { accountId: string,
     {recordOnly ? <Section title="账号信息">
       <Text>账号：{account.username || "未填写"}</Text>
       <Text>密码：{getSecret(account.passwordKey) ? "已保存" : "未保存"}</Text>
-    </Section> : <Section title="余额">
-      <Text>用户 ID：{account.lastSelf?.id ?? "-"}</Text>
-      <Text>用户名：{getSelfDisplayName(account.lastSelf) ?? account.username ?? "-"}</Text>
-      <Text>分组：{account.lastSelf?.group ?? "-"}</Text>
+    </Section> : null}
+
+    {/* 仅记录账号走计费接口，只能拿到额度，用户 ID、分组等字段不展示 */}
+    {balanceEnabled ? <Section title="余额">
+      {recordOnly ? null : <Text>用户 ID：{account.lastSelf?.id ?? "-"}</Text>}
+      {recordOnly ? null : <Text>用户名：{getSelfDisplayName(account.lastSelf) ?? account.username ?? "-"}</Text>}
+      {recordOnly ? null : <Text>分组：{account.lastSelf?.group ?? "-"}</Text>}
       <Text>剩余额度：{fmtQuota(getSelfQuotaValue(account.lastSelf))} ({fmtRawQuotaForAccount(account, getSelfQuotaValue(account.lastSelf))})</Text>
       <Text>已用额度：{fmtQuota(getSelfUsedQuotaValue(account.lastSelf))} ({fmtRawQuotaForAccount(account, getSelfUsedQuotaValue(account.lastSelf))})</Text>
       {isSub2ApiAccount(account) ? <Text>并发：{account.lastSelf?.concurrency ?? "-"}</Text> : null}
-      <Text>请求次数：{account.lastSelf?.request_count ?? "-"}</Text>
-    </Section>}
+      {recordOnly ? null : <Text>请求次数：{account.lastSelf?.request_count ?? "-"}</Text>}
+    </Section> : null}
 
     <Section title="签到">
       {account.excludeFromBatchCheckin && !recordOnly ? <Text foregroundStyle="systemOrange">⚠️ 已排除批量签到（仅网页签到）</Text> : null}

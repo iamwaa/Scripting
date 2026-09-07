@@ -10,6 +10,15 @@ import { fetchSub2ApiSelf, apiRequest } from "./api"
 import { refreshNewApiDataInWebView, type ManualCheckinRefresh } from "./webApi"
 import { presentWebViewWithToolbar } from "../components/WebViewPage"
 import {
+  installLoginAutofill,
+  getAccountLoginCredential,
+  saveAccountLoginCredential,
+  maybeSaveCapturedLogin,
+  type LoginAutofillHandle,
+  type WebLoginCredential,
+  type CapturedWebLogin,
+} from "./webAutofill"
+import {
   buildNewApiLocalUser,
   buildSub2ApiAuthUser,
   injectWebCookies,
@@ -75,6 +84,7 @@ export async function presentWebViewAndLoadURL(
     fullscreen?: boolean
     navigationTitle?: string
     homeURL?: string
+    autofill?: LoginAutofillHandle
     afterLoad?: (webView: WebViewController) => Promise<void>
   } = {},
 ) {
@@ -85,13 +95,14 @@ export async function presentWebViewAndLoadURL(
       if (!loaded) throw new Error("页面加载失败")
       if (options.afterLoad) await options.afterLoad(webView)
       await prepareWebLoginPage(webView, url)
+      if (options.autofill) await options.autofill.inject()
     } catch (e: any) {
       await webView.loadHTML(getWebViewLoadingHTML(url, `网页打开失败：${getErrorMessage(e)}`), url)
     }
   }
   setTimeout(() => { void openPage() }, 80)
   // 以原生工具栏模式呈现（底部导航栏 + 右上角更多菜单）
-  await presentWebViewWithToolbar(webView, options.navigationTitle || "网页", options.homeURL ?? url)
+  await presentWebViewWithToolbar(webView, options.navigationTitle || "网页", options.homeURL ?? url, options.autofill)
 }
 
 // 递归从 JSON 中查找 SelfInfo
@@ -312,8 +323,12 @@ export async function readWebLoginStorage(webView: WebViewController) {
   }
 }
 
-// 网页登录核心函数
-export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookieResult> {
+// 网页登录核心函数；credential 用于自动填写，onCaptured 在关页后交出网页里输入的账号密码
+export async function getWebLoginCookie(baseUrl: string, options: {
+  credential?: WebLoginCredential
+  onSaveCredential?: (credential: WebLoginCredential) => Promise<string> | string
+  onCaptured?: (captured?: CapturedWebLogin) => Promise<unknown> | void
+} = {}): Promise<WebLoginCookieResult> {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
   if (!normalizedBaseUrl) throw new Error("请先填写站点地址")
   if (!normalizedBaseUrl.startsWith("http://") && !normalizedBaseUrl.startsWith("https://")) {
@@ -322,8 +337,12 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
 
   const webView = new WebViewController()
   let capturedTitle: string | undefined
-  
+
   try {
+    const autofill = await installLoginAutofill(webView, {
+      credential: options.credential,
+      onSave: options.onSaveCredential,
+    })
     await installWebNavigationBridge(webView, normalizedBaseUrl)
     webView.shouldAllowRequest = async request => {
       const url = request.url || normalizedBaseUrl
@@ -331,6 +350,7 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
       if (isHttpUrl(url)) {
         setTimeout(() => prepareWebLoginPage(webView, normalizedBaseUrl), 300)
         setTimeout(() => prepareWebLoginPage(webView, normalizedBaseUrl), 1200)
+        autofill.scheduleInject()
         return true
       }
       // 对于非 HTTP scheme（如 about:, data:, blob:），允许通过以支持 CF 验证
@@ -344,6 +364,7 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
         const loaded = await loadWebUrlWithFallback(webView, normalizedBaseUrl, normalizedBaseUrl)
         if (!loaded) throw new Error("页面加载失败")
         await prepareWebLoginPage(webView, normalizedBaseUrl)
+        await autofill.inject()
         // 页面加载完成，等待 JavaScript 执行后获取标题
         await new Promise<void>(resolve => setTimeout(resolve, 1500))
         try {
@@ -358,7 +379,7 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
     }
     setTimeout(() => { void openPage() }, 80)
     // 以原生工具栏模式呈现（右上角刷新按钮）
-    await presentWebViewWithToolbar(webView, "登录完成后关闭页面", normalizedBaseUrl)
+    await presentWebViewWithToolbar(webView, "登录完成后关闭页面", normalizedBaseUrl, autofill)
 
     const cookies = await webView.getCookies(normalizedBaseUrl)
     const cookieHeader = cookiesToHeader(cookies)
@@ -371,7 +392,10 @@ export async function getWebLoginCookie(baseUrl: string): Promise<WebLoginCookie
     const storageSelf = extractSelfInfoFromStorage(storageItems)
     const authToken = extractSub2ApiToken(storageItems)
     const refreshToken = extractSub2ApiRefreshToken(storageItems)
-    
+
+    // 先交出捕获到的账号密码：放在取完 Cookie 之后、抛错之前，弹窗既不拖慢会话回收，也不会跟着失败丢掉
+    try { await options.onCaptured?.(autofill.getCaptured()) } catch {}
+
     if (!cookieHeader && !authToken) throw new Error("未获取到 Cookie 或登录令牌")
     return { cookieHeader, authToken, refreshToken, storageSelf, pageTitle: capturedTitle }
   } finally {
@@ -460,11 +484,16 @@ export async function openManualCheckinWebView(account: Account): Promise<Manual
     const authUser = buildSub2ApiAuthUser(account)
     const webView = new WebViewController()
     try {
+      const autofill = await installLoginAutofill(webView, {
+        credential: getAccountLoginCredential(account),
+        onSave: credential => saveAccountLoginCredential(account, credential),
+      })
       await installWebNavigationBridge(webView, accountBaseUrl)
       webView.shouldAllowRequest = async request => {
         const url = request.url || openUrl
         if (isHttpUrl(url)) {
           setTimeout(() => prepareWebLoginPage(webView, accountBaseUrl), 300)
+          autofill.scheduleInject()
           return true
         }
         return /^(about|data|blob):/i.test(url)
@@ -482,13 +511,14 @@ export async function openManualCheckinWebView(account: Account): Promise<Manual
             await loadWebUrlWithFallback(webView, nextUrl, accountBaseUrl)
           }
           await prepareWebLoginPage(webView, accountBaseUrl)
+          await autofill.inject()
         } catch (e: any) {
           await webView.loadHTML(getWebViewLoadingHTML(openUrl, `网页打开失败：${getErrorMessage(e)}`), openUrl)
         }
       }
       setTimeout(() => { void openPage() }, 80)
       // 以原生工具栏模式呈现（底部导航栏 + 右上角更多菜单）
-      await presentWebViewWithToolbar(webView, "网页签到后关闭页面", accountBaseUrl)
+      await presentWebViewWithToolbar(webView, "网页签到后关闭页面", accountBaseUrl, autofill)
       // 关闭后回收最新 auth_token，并在有 auth_user 时回写 lastSelf
       try {
         const storage = await readWebLoginStorage(webView)
@@ -504,6 +534,7 @@ export async function openManualCheckinWebView(account: Account): Promise<Manual
           extractSub2ApiRefreshToken(storageItems),
         )
       } catch {}
+      await maybeSaveCapturedLogin(account, autofill.getCaptured())
     } finally {
       webView.dispose()
     }
@@ -519,12 +550,17 @@ export async function openManualCheckinWebView(account: Account): Promise<Manual
   const localUser = buildNewApiLocalUser(target)
   const webView = new WebViewController()
   try {
+    const autofill = await installLoginAutofill(webView, {
+      credential: getAccountLoginCredential(account),
+      onSave: credential => saveAccountLoginCredential(account, credential),
+    })
     await installWebNavigationBridge(webView, accountBaseUrl)
     webView.shouldAllowRequest = async request => {
       const url = request.url || openUrl
       if (isHttpUrl(url)) {
         setTimeout(() => prepareWebLoginPage(webView, accountBaseUrl), 300)
         setTimeout(() => prepareWebLoginPage(webView, accountBaseUrl), 1200)
+        autofill.scheduleInject()
         return true
       }
       return /^(about|data|blob):/i.test(url)
@@ -535,6 +571,7 @@ export async function openManualCheckinWebView(account: Account): Promise<Manual
       fullscreen: true,
       navigationTitle: "网页签到后关闭页面",
       homeURL: accountBaseUrl,
+      autofill,
       afterLoad: async controller => {
         // 页面同域加载后再写 localStorage.user，否则前端仍判未登录
         if (localUser) await injectNewApiLocalUser(controller, localUser)
@@ -554,13 +591,16 @@ export async function openManualCheckinWebView(account: Account): Promise<Manual
     } catch {}
 
     // 部分站点关页后导出的 Cookie 立即失效，趁 WebView 未销毁在页内取数（仅记录账号不调接口）
-    if (isRecordOnlyAccount(account)) return undefined
-    try {
-      const latest = loadAccounts().find(item => item.id === account.id) ?? target
-      return await refreshNewApiDataInWebView(webView, latest, accountBaseUrl)
-    } catch {
-      return undefined
+    let refresh: ManualCheckinRefresh | undefined
+    if (!isRecordOnlyAccount(account)) {
+      try {
+        const latest = loadAccounts().find(item => item.id === account.id) ?? target
+        refresh = await refreshNewApiDataInWebView(webView, latest, accountBaseUrl)
+      } catch {}
     }
+    // 页内取数完成后再询问保存网页里登录的账号密码，避开弹窗期间会话失效
+    await maybeSaveCapturedLogin(account, autofill.getCaptured())
+    return refresh
   } finally {
     webView.dispose()
   }
@@ -569,7 +609,11 @@ export async function openManualCheckinWebView(account: Account): Promise<Manual
 // 网页登录完整流程
 export async function loginByWebView(account: Account) {
   if (!account.cookieKey) throw new Error("Cookie 存储键缺失，请重新保存账号")
-  const { cookieHeader, authToken, refreshToken, storageSelf } = await getWebLoginCookie(account.baseUrl)
+  const { cookieHeader, authToken, refreshToken, storageSelf } = await getWebLoginCookie(account.baseUrl, {
+    credential: getAccountLoginCredential(account),
+    onSaveCredential: credential => saveAccountLoginCredential(account, credential),
+    onCaptured: captured => maybeSaveCapturedLogin(account, captured),
+  })
   if (isSub2ApiAccount(account)) {
     if (!authToken) throw new Error("未获取到 Sub2API auth_token")
     // 网页登录拿到的新令牌覆盖旧凭据；storage 有用户信息时先回写 lastSelf

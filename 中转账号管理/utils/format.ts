@@ -1,16 +1,26 @@
 import type { Account, AccountPlatform, CheckinRecord, SelfInfo } from "../types"
-import { QUOTA_PER_USD } from "../constants"
+import { PLATFORMS, PLATFORM_KEYS, QUOTA_PER_USD } from "../constants"
+
+// 归一化平台标识：未知或旧版本遗留的值都按 NewAPI 处理
+export function normalizePlatform(value: any): AccountPlatform {
+  return PLATFORM_KEYS.includes(value) ? value as AccountPlatform : "newapi"
+}
 
 export function getAccountPlatform(account: Pick<Account, "platform">): AccountPlatform {
-  return account.platform ?? "newapi"
+  return normalizePlatform(account.platform)
+}
+
+// 读取账号所属平台的接口能力（请求头、签到端点等差异）
+export function getPlatformCapability(account: Pick<Account, "platform">) {
+  return PLATFORMS[getAccountPlatform(account)]
 }
 
 export function isSub2ApiAccount(account: Pick<Account, "platform">) {
-  return getAccountPlatform(account) === "sub2api"
+  return getPlatformCapability(account).family === "sub2api"
 }
 
 export function getPlatformText(account: Pick<Account, "platform">) {
-  return isSub2ApiAccount(account) ? "Sub2API" : "NewAPI"
+  return getPlatformCapability(account).label
 }
 
 // 仅记录账号：不参与余额查询与接口签到

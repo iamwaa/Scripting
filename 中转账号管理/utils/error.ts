@@ -93,7 +93,8 @@ export const ERROR_TRANSLATIONS: Array<[RegExp, string]> = [
   [/gateway\s+timeout|504/i, "网关超时"],
 
   // ========== 功能和配置 ==========
-  [CHECKIN_DISABLED_PATTERN, "该站点未启用签到功能"],
+  // 译文自身也要能被 CHECKIN_DISABLED_PATTERN 命中，否则翻译后的消息无法再被识别为“签到未启用”
+  [CHECKIN_DISABLED_PATTERN, "该站点签到功能未启用"],
   [/功能.*关闭|feature.*disabled/i, "该功能已关闭"],
   [/maintenance|维护中/i, "站点正在维护中"],
 

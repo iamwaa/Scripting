@@ -1,6 +1,8 @@
 // WebView 宿主页面：左上角关闭、右上角「更多」菜单、底部悬浮居中工具栏
-// 悬浮栏放 后退 / 前进 / 刷新 / 回首页，更多菜单收纳 Safari 打开、复制链接、分享
+// 悬浮栏放 后退 / 前进 / 刷新 / 回首页，更多菜单收纳 保存账号密码、Safari 打开、复制链接
 import { useState, useEffect, Navigation, NavigationStack, Toolbar, ToolbarItem, Button, HStack, VStack, Image, Menu, WebView } from "scripting"
+import type { WebViewAutofill } from "../types"
+import { getErrorMessage } from "../utils/error"
 
 // 关闭页面：优先让 WebView 控制器 dismiss（呈现模式下无效则跳过），再弹出当前导航栈
 function closeWebViewPage(controller: WebViewController, dismiss: () => void) {
@@ -22,10 +24,11 @@ async function getCurrentURL(controller: WebViewController, homeURL?: string) {
   return homeURL ?? ""
 }
 
-export function WebViewPage({ controller, title, homeURL }: {
+export function WebViewPage({ controller, title, homeURL, autofill }: {
   controller: WebViewController
   title: string
   homeURL?: string
+  autofill?: WebViewAutofill
 }) {
   const dismiss = Navigation.useDismiss()
   // WebView 没有加载完成回调，只能轮询前进/后退可用状态
@@ -67,10 +70,13 @@ export function WebViewPage({ controller, title, homeURL }: {
     toast("网页地址已复制")
   }
 
-  async function shareCurrentURL() {
-    const url = await getCurrentURL(controller, homeURL)
-    if (!url) return toast("未获取到当前网页地址")
-    await ShareSheet.present([url])
+  // 账号密码保存：结果文案由 services/webAutofill 给出，直接 Toast
+  async function runAutofill(action: () => Promise<string>) {
+    try {
+      toast(await action())
+    } catch (e: any) {
+      toast(getErrorMessage(e))
+    }
   }
 
   // 回到账号主站首页，避免连点后退
@@ -123,9 +129,9 @@ export function WebViewPage({ controller, title, homeURL }: {
           </ToolbarItem>
           <ToolbarItem placement="topBarTrailing">
             <Menu label={<Image systemName="ellipsis" foregroundStyle="tintColor" fontWeight="semibold" />}>
+              {autofill ? <Button title="保存账号密码" systemImage="key.fill" action={() => { void runAutofill(autofill.save) }} /> : null}
               <Button title="在 Safari 中打开" systemImage="safari" action={() => { void openInSafari() }} />
               <Button title="复制链接" systemImage="doc.on.doc" action={() => { void copyCurrentURL() }} />
-              <Button title="分享链接" systemImage="square.and.arrow.up" action={() => { void shareCurrentURL() }} />
             </Menu>
           </ToolbarItem>
         </Toolbar>}
@@ -135,6 +141,6 @@ export function WebViewPage({ controller, title, homeURL }: {
 }
 
 // 以工具栏模式呈现 WebView（替代 webView.present），页面关闭后 Promise resolve
-export async function presentWebViewWithToolbar(controller: WebViewController, title: string, homeURL?: string) {
-  await Navigation.present(<WebViewPage controller={controller} title={title} homeURL={homeURL} />)
+export async function presentWebViewWithToolbar(controller: WebViewController, title: string, homeURL?: string, autofill?: WebViewAutofill) {
+  await Navigation.present(<WebViewPage controller={controller} title={title} homeURL={homeURL} autofill={autofill} />)
 }

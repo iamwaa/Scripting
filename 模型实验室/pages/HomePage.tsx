@@ -2,12 +2,22 @@ import { Button, Form, HStack, Image, Navigation, NavigationLink, NavigationStac
 import { fetchModels, executeTest } from "../api/openaiCompatible"
 import { AppConfig, ModelInfo, TestMode, TestResult, ThinkingLevel } from "../types"
 import { thinkingLevels } from "../constants"
-import { FormRow } from "../components/FormRow"
+import { ApiManagerPage } from "./ApiManagerPage"
 import { ModelDetailPage } from "./ModelDetailPage"
+import { activeApi, apiDisplayName } from "../utils/apiProfiles"
 import { evaluateQuestionTest } from "../utils/candyTest"
 import { isValidHtml } from "../utils/htmlTest"
 
 type Activity = "idle" | "models" | "testing"
+
+function emptyTestButtonTitles(): Record<TestMode, string> {
+  const title = "开始测试（已选 0 个）"
+  return { chat: title, vision: title, image: title, candy: title, svg: title }
+}
+
+function errorText(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
 
 export function HomePage({ config, onConfigChanged }: { config: AppConfig; onConfigChanged: (config: AppConfig) => void }) {
   const [models, setModels] = useState<ModelInfo[]>([])
@@ -22,8 +32,18 @@ export function HomePage({ config, onConfigChanged }: { config: AppConfig; onCon
   const [testingProgress, setTestingProgress] = useState("")
   const [selectionMode, setSelectionMode] = useState(false)
   const [modelButtonTitle, setModelButtonTitle] = useState("获取模型列表")
-  const [testButtonTitles, setTestButtonTitles] = useState<Record<TestMode, string>>({ chat: "开始测试（已选 0 个）", vision: "开始测试（已选 0 个）", image: "开始测试（已选 0 个）", candy: "开始测试（已选 0 个）", svg: "开始测试（已选 0 个）" })
+  const [testButtonTitles, setTestButtonTitles] = useState<Record<TestMode, string>>(emptyTestButtonTitles())
   const dismiss = Navigation.useDismiss()
+  const currentApi = activeApi(config)
+
+  // 切接口或改当前接口地址后，已有模型列表与结果不再对应，直接清空
+  useEffect(() => {
+    setModels([])
+    setSelectedModels([])
+    setResults([])
+    setTestButtonTitles(emptyTestButtonTitles())
+    setModelButtonTitle("获取模型列表")
+  }, [currentApi.id, currentApi.baseURL])
 
   useEffect(() => {
     if (testingStartedAt === null) {
@@ -59,9 +79,9 @@ export function HomePage({ config, onConfigChanged }: { config: AppConfig; onCon
       setModels(next)
       setSelectedModels([])
       setResults([])
-      setTestButtonTitles({ chat: "开始测试（已选 0 个）", vision: "开始测试（已选 0 个）", image: "开始测试（已选 0 个）", candy: "开始测试（已选 0 个）", svg: "开始测试（已选 0 个）" })
+      setTestButtonTitles(emptyTestButtonTitles())
       setModelButtonTitle(`已获取 ${next.length} 个模型`)
-    } catch (error) { setModelButtonTitle(`获取失败：${String(error)}`) } finally { setActivity("idle") }
+    } catch (error) { setModelButtonTitle(`获取失败：${errorText(error)}`) } finally { setActivity("idle") }
   }
 
   function setModelSelected(modelID: string, selected: boolean) {
@@ -86,7 +106,7 @@ export function HomePage({ config, onConfigChanged }: { config: AppConfig; onCon
     try {
       return await executeTest(config, modelID, testMode, imageData, onProgress)
     } catch (error) {
-      return { mode: testMode, model: modelID, ok: false, status: null, durationMs: 0, content: `请求异常：${String(error)}`, createdAt: Date.now() } as TestResult
+      return { mode: testMode, model: modelID, ok: false, status: null, durationMs: 0, content: `请求异常：${errorText(error)}`, createdAt: Date.now() } as TestResult
     }
   }
 
@@ -200,9 +220,20 @@ export function HomePage({ config, onConfigChanged }: { config: AppConfig; onCon
         cancellationAction: selectionMode ? <Button title="完成" action={() => setSelectionMode(false)} /> : <Button title="关闭" tint="red" action={dismiss} />,
         confirmationAction: models.length === 0 ? undefined : selectionMode ? <Button title={selectedModels.length === models.length ? "取消全选" : "全选"} action={toggleAllModels} /> : <Button title="选择" action={() => setSelectionMode(true)} />
       }}>
-        <Section header={<Text>连接</Text>}>
-          <FormRow label="URL" value={config.baseURL} prompt="https://example.com/v1" onChanged={value => updateConfig({ baseURL: value })} labelWidth={58} />
-          <FormRow label="KEY" value={config.apiKey} prompt="sk-..." onChanged={value => updateConfig({ apiKey: value })} labelWidth={58} />
+        <Section header={<Text>连接</Text>} footer={<Text>接口信息保存在本机，可添加多个并随时切换；切换后需重新获取模型列表。</Text>}>
+          {config.apis.length > 0 ? (
+            <Picker title="当前接口" pickerStyle="menu" value={currentApi.id} disabled={activity === "testing"} onChanged={(value: string) => updateConfig({ activeApiID: value })}>
+              {config.apis.map(api => <Text key={api.id} tag={api.id}>{apiDisplayName(api)}</Text>)}
+            </Picker>
+          ) : null}
+          <NavigationLink destination={<ApiManagerPage config={config} onChanged={onConfigChanged} />}>
+            <HStack alignment="center" spacing={10} frame={{ maxWidth: Infinity }}>
+              <Text>接口管理</Text>
+              <Text foregroundStyle="secondaryLabel" font={13} lineLimit={1} frame={{ maxWidth: Infinity, alignment: "trailing" }}>
+                {config.apis.length === 0 ? "尚未添加接口" : `共 ${config.apis.length} 个`}
+              </Text>
+            </HStack>
+          </NavigationLink>
           <Picker title="模型思考等级" pickerStyle="menu" value={config.thinkingLevel} onChanged={(value: string) => updateConfig({ thinkingLevel: value as ThinkingLevel })}>
             {thinkingLevels.map(item => <Text key={item.tag} tag={item.tag}>{item.label}</Text>)}
           </Picker>

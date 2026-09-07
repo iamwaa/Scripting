@@ -14,7 +14,8 @@ export type SelfInfo = {
   status?: string
 }
 
-export type AccountPlatform = "newapi" | "sub2api"
+// 支持的平台：newapi 系（NewAPI / OneAPI / OneHub / DoneHub / Veloera 同族接口）与独立协议的 sub2api
+export type AccountPlatform = "newapi" | "oneapi" | "onehub" | "donehub" | "veloera" | "sub2api"
 
 export type CheckinRecord = {
   checkin_date?: string
@@ -59,6 +60,8 @@ export type Account = {
   passwordKey?: string
   cookieKey?: string
   accessTokenKey?: string
+  // API Key（sk-）存储键：站点拦截 /api/user/self 时改用 OpenAI 兼容计费接口读额度
+  apiKeyKey?: string
   // Sub2API JWT 刷新令牌存储键：用它调 /auth/refresh 换新 access_token，避开登录时的 Turnstile
   refreshTokenKey?: string
   checkinTime?: string
@@ -71,7 +74,7 @@ export type Account = {
   checkinRewards?: Record<string, number>
   lastError?: string
   lastSiteStatus?: SiteStatus
-  authSource?: "password" | "web" | "cookie" | "accessToken"
+  authSource?: "password" | "web" | "cookie" | "accessToken" | "apiKey"
   excludeFromBatchCheckin?: boolean
   // 已归档：不计入总览，也不参与首页的任何批量或自动操作，只在“已归档”分区展示
   archived?: boolean
@@ -89,6 +92,7 @@ export type AccountDraft = {
   password: string
   cookie: string
   accessToken: string
+  apiKey: string
   checkinTime: string
   lastSelf?: SelfInfo
   authSource?: Account["authSource"]
@@ -112,6 +116,11 @@ export type ApiJson<T = any> = {
 export type ApiResult<T = any> = {
   data: T
   cookie?: string
+}
+
+// WebView 工具栏的账号密码入口：由 services/webAutofill 提供，save 返回值直接用于 Toast
+export type WebViewAutofill = {
+  save: () => Promise<string>
 }
 
 export type WebLoginCookieResult = {

@@ -65,13 +65,23 @@ export function saveAccountSortPreference(preference: AccountSortPreference) {
   writeJsonFile(SORT_FILE, preference)
 }
 
-export function secretKey(accountId: string, kind: "password" | "cookie" | "accessToken" | "refreshToken") {
+export function secretKey(accountId: string, kind: "password" | "cookie" | "accessToken" | "refreshToken" | "apiKey") {
   return `${SECRET_PREFIX}${accountId}.${kind}`
 }
 
 // 获取账号的刷新令牌存储键：老账号未分配时按确定性规则推导，免于必须重存账号才能用
 export function getRefreshTokenKey(account: Pick<Account, "id" | "refreshTokenKey">) {
   return account.refreshTokenKey ?? secretKey(account.id, "refreshToken")
+}
+
+// 获取账号的 API Key 存储键：同样对老账号做确定性推导
+export function getApiKeyKey(account: Pick<Account, "id" | "apiKeyKey">) {
+  return account.apiKeyKey ?? secretKey(account.id, "apiKey")
+}
+
+// 读取账号保存的 API Key（sk-），未填写时返回空串
+export function getAccountApiKey(account: Pick<Account, "id" | "apiKeyKey">) {
+  return getSecret(getApiKeyKey(account)).trim()
 }
 
 export function getSecret(key?: string) {

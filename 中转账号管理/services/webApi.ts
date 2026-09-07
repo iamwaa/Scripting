@@ -2,7 +2,7 @@
 // 部分站点的会话 Cookie（尤其 cf_clearance）绑定 WebView 的 UA/IP，关页后导出的 Cookie
 // 交给原生 fetch 已失效；页内 fetch 由浏览器自动携带完整 Cookie jar，可绕开该问题。
 import type { Account, ApiJson, CheckinStatus, SelfInfo } from "../types"
-import { localMonthString } from "../utils/format"
+import { getPlatformCapability, localMonthString } from "../utils/format"
 
 // 网页签到关闭后的页内预查结果：缺失的字段由调用方回退到原生请求
 export type ManualCheckinRefresh = {
@@ -82,8 +82,9 @@ function parsePageJson<T>(result: PageFetchResult | undefined): T | undefined {
 }
 
 // 在页面上下文并发请求余额与签到状态：
-// New-Api-User 头优先取页面 localStorage.user 的 id，缺失时用本地缓存的用户 ID 兜底
-function buildPageRefreshScript(selfUrl: string, checkinUrl: string, fallbackUserId: string) {
+// 用户 ID 头优先取页面 localStorage.user 的 id，缺失时用本地缓存的用户 ID 兜底；
+// checkinUrl 为空时只取余额（签到状态交给原生请求归一化）
+function buildPageRefreshScript(selfUrl: string, checkinUrl: string, fallbackUserId: string, userIdHeaders: string[]) {
   return `
     return (async function () {
       let userId = ${JSON.stringify(fallbackUserId)};
@@ -92,7 +93,8 @@ function buildPageRefreshScript(selfUrl: string, checkinUrl: string, fallbackUse
         if (stored && stored.id) userId = String(stored.id);
       } catch (e) {}
       const headers = { 'Accept': 'application/json, text/plain, */*' };
-      if (userId) headers['New-Api-User'] = String(userId);
+      const userIdHeaderNames = ${JSON.stringify(userIdHeaders)};
+      if (userId) userIdHeaderNames.forEach(function (name) { headers[name] = String(userId); });
       const request = async (url) => {
         try {
           const response = await fetch(url, { method: 'GET', headers: headers, credentials: 'include' });
@@ -102,9 +104,10 @@ function buildPageRefreshScript(selfUrl: string, checkinUrl: string, fallbackUse
           return { status: 0, raw: '', failed: true };
         }
       };
+      const checkinUrl = ${JSON.stringify(checkinUrl)};
       const results = await Promise.all([
         request(${JSON.stringify(selfUrl)}),
-        request(${JSON.stringify(checkinUrl)}),
+        checkinUrl ? request(checkinUrl) : Promise.resolve(undefined),
       ]);
       return { self: results[0], checkin: results[1] };
     })();
@@ -119,10 +122,14 @@ export async function refreshNewApiDataInWebView(
   month = localMonthString(),
 ): Promise<ManualCheckinRefresh | undefined> {
   if (!(await ensurePageReady(webView, baseUrl))) return undefined
+  const capability = getPlatformCapability(account)
+  // 只有签到状态接口返回完整月历的平台才适合页内取数，其余（如 Veloera）交由原生请求归一化
+  const checkinPath = capability.checkinHistory ? capability.checkin?.statusPath(month) : undefined
   const script = buildPageRefreshScript(
     `${baseUrl}/api/user/self`,
-    `${baseUrl}/api/user/checkin?month=${encodeURIComponent(month)}`,
+    checkinPath ? `${baseUrl}${checkinPath}` : "",
     account.lastSelf?.id ? String(account.lastSelf.id) : "",
+    capability.userIdHeaders,
   )
   let result: PageRefreshResult
   try {

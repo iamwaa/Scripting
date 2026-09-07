@@ -1,8 +1,16 @@
-import { AppConfig, ThinkingLevel } from "./types"
+import { ApiProfile, AppConfig, ThinkingLevel } from "./types"
 
-export const defaultConfig: AppConfig = {
+// 首次运行的内置接口：id 固定，方便迁移与去重
+const defaultApi: ApiProfile = {
+  id: "default",
+  name: "",
   baseURL: "https://api.openai.com/v1",
   apiKey: "",
+}
+
+export const defaultConfig: AppConfig = {
+  apis: [defaultApi],
+  activeApiID: defaultApi.id,
   defaultPrompt: "盆里有6只馒头，6个小朋友每人分到1只，但盆里还留着1只，为什么？",
   visionPrompt: "请描述这张图片中的主要内容，并指出你识别到的关键细节。",
   imagePrompt: "一张干净、细节丰富的美女摄影图，柔和自然光，简洁背景。",

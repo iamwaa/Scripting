@@ -1,5 +1,6 @@
 import { fetch } from "scripting"
-import { AppConfig, ModelInfo, TestMode, TestResult, ThinkingLevel } from "../types"
+import { ApiProfile, AppConfig, ModelInfo, TestMode, TestResult, ThinkingLevel } from "../types"
+import { activeApi } from "../utils/apiProfiles"
 import { buildQuestionPrompt } from "../utils/candyTest"
 import { buildHtmlPrompt } from "../utils/htmlTest"
 import { readSSEStream } from "./sseStream"
@@ -21,11 +22,18 @@ function endpoint(baseURL: string, path: string) {
   return `${baseURL.replace(/\/+$/, "")}${path}`
 }
 
-function headers(config: AppConfig) {
+function headers(api: ApiProfile) {
   return {
     "Content-Type": "application/json",
-    ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+    ...(api.apiKey ? { Authorization: `Bearer ${api.apiKey}` } : {}),
   }
+}
+
+// 当前接口未填地址时直接给出可读提示，避免请求抛出难懂的网络错误
+function requireApi(config: AppConfig): ApiProfile {
+  const api = activeApi(config)
+  if (!api.baseURL.trim()) throw new Error("请先在「接口管理」中填写接口地址")
+  return api
 }
 
 // 思考等级映射：default 不干预；off 显式关闭思考；其余作为 reasoning_effort 强度
@@ -75,7 +83,8 @@ function messageContent(value: any): string {
 }
 
 export async function fetchModels(config: AppConfig): Promise<ModelInfo[]> {
-  const response = await fetch(endpoint(config.baseURL, "/models"), { headers: headers(config) })
+  const api = requireApi(config)
+  const response = await fetch(endpoint(api.baseURL, "/models"), { headers: headers(api) })
   const { data, text } = await readJSON(response)
   if (!response.ok) throw new Error(data?.error?.message ?? text ?? `HTTP ${response.status}`)
   return Array.isArray(data?.data) ? data.data : []
@@ -84,10 +93,10 @@ export async function fetchModels(config: AppConfig): Promise<ModelInfo[]> {
 type ChatOutcome = { content: string; raw: string; status: number; ok: boolean; finishReason?: string }
 
 // 流式读取一次 chat 请求：逐行解析 SSE，累加 delta；服务端不遵守 stream 时回退为整包 JSON
-async function streamChat(url: string, config: AppConfig, payload: object, useStream = true, onProgress?: (text: string) => void): Promise<ChatOutcome> {
+async function streamChat(url: string, api: ApiProfile, payload: object, useStream = true, onProgress?: (text: string) => void): Promise<ChatOutcome> {
   const response = await fetch(url, {
     method: "POST",
-    headers: headers(config),
+    headers: headers(api),
     body: JSON.stringify({ ...payload, stream: useStream }),
   })
   if (!response.ok) {
@@ -156,10 +165,11 @@ export async function executeTest(
   onProgress?: (text: string) => void,
 ): Promise<TestResult> {
   const started = Date.now()
+  const api = requireApi(config)
   if (mode === "image") {
-    const response = await fetch(endpoint(config.baseURL, "/images/generations"), {
+    const response = await fetch(endpoint(api.baseURL, "/images/generations"), {
       method: "POST",
-      headers: headers(config),
+      headers: headers(api),
       body: JSON.stringify({ model, prompt: config.imagePrompt, n: 1, size: "1024x1024" }),
     })
     const { data, text } = await readJSON(response)
@@ -177,7 +187,7 @@ export async function executeTest(
     : config.defaultPrompt
   const requestContent = mode === "candy" ? buildQuestionPrompt(config.qaQuestions) : mode === "svg" ? buildHtmlPrompt(config.htmlPrompt) : content
   const structuredTest = mode === "candy" || mode === "svg"
-  const url = endpoint(config.baseURL, "/chat/completions")
+  const url = endpoint(api.baseURL, "/chat/completions")
 
   // 预算字段适配：推理类模型只接受 max_completion_tokens，且可能拒绝 temperature
   type Variant = { completionTokens: boolean; dropTemperature: boolean; uncapped: boolean }
@@ -201,7 +211,7 @@ export async function executeTest(
   for (const level of fallbackLevels(config.thinkingLevel)) {
     let variant: Variant = { completionTokens: false, dropTemperature: false, uncapped: false }
     for (let attempt = 0; attempt < 4; attempt++) {
-      outcome = await streamChat(url, config, payloadFor(level, variant), !structuredTest, onProgress)
+      outcome = await streamChat(url, api, payloadFor(level, variant), !structuredTest, onProgress)
       usedLevel = level ?? "default"
       if (outcome.ok) break
       // 参数不被接受时不只看 400：部分中转服务会用 500 报“max_tokens exceeds the limit”
@@ -230,7 +240,7 @@ export async function executeTest(
 
   // 正文被思考 token 吃完时（finish_reason=length 且无内容），去掉输出上限重试一次
   if (!outcome!.ok && outcome!.finishReason === "length") {
-    const retry = await streamChat(url, config, payloadFor(usedLevel === "default" ? "default" : usedLevel, { completionTokens: false, dropTemperature: false, uncapped: true }), !structuredTest, onProgress)
+    const retry = await streamChat(url, api, payloadFor(usedLevel === "default" ? "default" : usedLevel, { completionTokens: false, dropTemperature: false, uncapped: true }), !structuredTest, onProgress)
     if (retry.ok) outcome = retry
   }
 

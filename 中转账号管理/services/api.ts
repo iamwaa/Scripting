@@ -1,9 +1,9 @@
 declare const fetch: any
 import type { Account, SelfInfo, CheckinStatus, CheckinRecord, ApiJson, ApiResult } from "../types"
-import { normalizeBaseUrl, quotaFromUsd, localDateString, localMonthString } from "../utils/format"
+import { normalizeBaseUrl, quotaFromUsd, localDateString, localMonthString, getPlatformCapability } from "../utils/format"
 import { translateErrorMessage } from "../utils/error"
 import { mergeCookies } from "../utils/cookie"
-import { getSecret, setSecret, removeSecret, getRefreshTokenKey } from "./storage"
+import { getSecret, setSecret, removeSecret, getRefreshTokenKey, getApiKeyKey, getAccountApiKey } from "./storage"
 import { isWebChallengeResponse, refreshWebChallengeCookies, requestApiThroughVerifiedWebView } from "./antiBot"
 
 // 服务端消息中出现这些关键词才认为是登录失效；
@@ -31,6 +31,7 @@ export function removeAccountSecrets(account: Account) {
   if (account.cookieKey) removeSecret(account.cookieKey)
   if (account.accessTokenKey) removeSecret(account.accessTokenKey)
   removeSecret(getRefreshTokenKey(account))
+  removeSecret(getApiKeyKey(account))
 }
 
 export function unwrapSub2ApiJson<T>(json: any): T {
@@ -180,7 +181,7 @@ export async function sub2ApiRequest<T = any>(account: Account, method: string, 
   return unwrapSub2ApiJson<T>(json)
 }
 
-function isRouteUnavailable(error: any) {
+export function isRouteUnavailable(error: any) {
   const status = Number(error?.status)
   return status === 404 || status === 405
 }
@@ -395,8 +396,10 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
     // 3) 网页获取的 Cookie
     headers.Cookie = cookie
   }
-  if (userId) headers["New-Api-User"] = String(userId)
-  else if (path !== "/api/user/login" && !accessToken) throw new Error("缺少用户 ID，请先登录")
+  // 用户 ID 头：NewAPI 系各分支命名不同（Veloera-User 等），OneAPI / OneHub / DoneHub 则不需要
+  const userIdHeaders = getPlatformCapability(account).userIdHeaders
+  if (userId) for (const name of userIdHeaders) headers[name] = String(userId)
+  else if (userIdHeaders.length > 0 && path !== "/api/user/login" && !accessToken) throw new Error("缺少用户 ID，请先登录")
   if (body !== undefined) headers["Content-Type"] = "application/json"
 
   let response: any
@@ -451,4 +454,60 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
 
 export async function apiRequest<T = any>(account: Account, method: string, path: string, body?: any, extraHeaders?: Record<string, string>): Promise<T> {
   return (await apiRequestWithMeta<T>(account, method, path, body, extraHeaders)).data
+}
+
+// 无限额度令牌在计费接口返回的哨兵值，此时剩余额度没有意义
+const UNLIMITED_BILLING_USD = 100000000
+
+// 用 API Key（sk-）请求 OpenAI 兼容接口：这类路径只认 Authorization，不需要用户 ID 头与 Cookie
+async function apiKeyRequest<T = any>(account: Account, path: string): Promise<T> {
+  const baseUrl = normalizeBaseUrl(account.baseUrl)
+  if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+    throw new Error("站点地址必须以 http:// 或 https:// 开头")
+  }
+  const apiKey = getAccountApiKey(account)
+  if (!apiKey) throw new Error("缺少 API Key")
+
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: "GET",
+    headers: {
+      "Accept": "application/json, text/plain, */*",
+      "Authorization": apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`,
+    },
+    allowInsecureRequest: baseUrl.startsWith("http://"),
+    timeout: 25,
+  } as any)
+
+  const raw = await response.text()
+  let json: any
+  try {
+    json = raw ? JSON.parse(raw) : {}
+  } catch {
+    throw makeApiError(`响应不是 JSON：${raw.slice(0, 60)}`, { status: Number(response?.status) || 0 })
+  }
+  if (!response.ok) {
+    // OpenAI 兼容错误信封是 { error: { message, type } }；
+    // 这里的 401 只说明 API Key 本身无效，不能标记 authExpired，否则会触发账号重登流程
+    const status = Number(response?.status) || 0
+    throw makeApiError(json?.error?.message || json?.message || (status ? `HTTP ${status}` : "未知错误"), { status })
+  }
+  return json as T
+}
+
+// 用 API Key 读额度：subscription 给总额度（剩余 + 已用），usage 给已用量（美元 × 100）。
+// 站点开启 DisplayTokenStat（默认）时两者都是令牌维度，关闭时是用户维度，剩余额度的算法一致。
+export async function fetchApiKeyBalance(account: Account): Promise<SelfInfo> {
+  const subscription = await apiKeyRequest<any>(account, "/v1/dashboard/billing/subscription")
+  const usage = await apiKeyRequest<any>(account, "/v1/dashboard/billing/usage")
+  const totalUsd = firstFiniteNumber(subscription?.hard_limit_usd, subscription?.system_hard_limit_usd, subscription?.soft_limit_usd)
+  const totalUsage = firstFiniteNumber(usage?.total_usage)
+  if (totalUsd === undefined || totalUsage === undefined) throw new Error("计费接口未返回额度信息")
+
+  const usedUsd = totalUsage / 100
+  const unlimited = totalUsd >= UNLIMITED_BILLING_USD
+  return {
+    // 无限额度令牌算不出剩余，只保留已用量
+    quota: unlimited ? undefined : quotaFromUsd(Math.max(totalUsd - usedUsd, 0)),
+    used_quota: quotaFromUsd(usedUsd),
+  }
 }

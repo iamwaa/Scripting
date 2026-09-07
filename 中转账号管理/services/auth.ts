@@ -1,12 +1,12 @@
 declare const fetch: any
 
 import type { Account, SelfInfo, SiteStatus, CheckinStatus } from "../types"
-import { isSub2ApiAccount, normalizeBaseUrl, quotaFromUsd, localMonthString, localDateString, now } from "../utils/format"
+import { isSub2ApiAccount, getPlatformCapability, isRecordOnlyAccount, normalizeBaseUrl, quotaFromUsd, localMonthString, localDateString, now } from "../utils/format"
 import { translateErrorMessage, getErrorMessage } from "../utils/error"
 import { mergeCookies } from "../utils/cookie"
 import { sha256Hex } from "../utils/crypto"
-import { getSecret, setSecret, removeSecret, loadAccounts, patchAccount, getRefreshTokenKey } from "./storage"
-import { unwrapSub2ApiJson, sub2ApiRequest, fetchSub2ApiSelf, fetchSub2ApiCheckinStatus, doSub2ApiCheckin, apiRequestWithMeta, apiRequest } from "./api"
+import { getSecret, setSecret, removeSecret, loadAccounts, patchAccount, getRefreshTokenKey, getAccountApiKey } from "./storage"
+import { unwrapSub2ApiJson, sub2ApiRequest, fetchSub2ApiSelf, fetchSub2ApiCheckinStatus, doSub2ApiCheckin, apiRequestWithMeta, apiRequest, isRouteUnavailable, fetchApiKeyBalance } from "./api"
 import {
   getWebLoginCookie,
   openManualCheckinWebView,
@@ -195,8 +195,19 @@ function isAuthExpiredError(error: any): boolean {
   )
 }
 
+// 除 API Key 以外是否还有可用凭据（Cookie / 访问令牌 / 账号密码）
+function hasNonApiKeyCredential(account: Account) {
+  return !!getSecret(account.cookieKey) || !!getSecret(account.accessTokenKey) || !!(account.username && getSecret(account.passwordKey))
+}
+
 // 获取用户信息（含自动重登录）
 export async function fetchSelf(account: Account) {
+  // 仅记录账号的平台不兼容 /api/user/*，只能靠 API Key 的计费接口拿额度
+  if (isRecordOnlyAccount(account)) {
+    if (!getAccountApiKey(account)) throw new Error("仅记录账号需填写 API Key 才能查余额")
+    const billing = await fetchApiKeyBalance(account)
+    return { ...(account.lastSelf ?? {}), ...billing } as SelfInfo
+  }
   if (isSub2ApiAccount(account)) {
     try {
       return await fetchSub2ApiSelf(account)
@@ -205,6 +216,18 @@ export async function fetchSelf(account: Account) {
         return await loginAccount(account)
       }
       throw e
+    }
+  }
+  // 填了 API Key 的账号优先走 OpenAI 兼容计费接口：这类站点多半把 /api/user/self 拦在防护层后面，
+  // 直接请求只会反复触发防护；计费接口只需 Authorization，也不依赖用户 ID
+  if (getAccountApiKey(account)) {
+    try {
+      const billing = await fetchApiKeyBalance(account)
+      // 计费接口只能读到额度，用户名、分组等沿用上次查询结果
+      return { ...(account.lastSelf ?? {}), ...billing } as SelfInfo
+    } catch (e: any) {
+      // 没有其他凭据时直接报错，避免把 API Key 的问题混成登录失败
+      if (!hasNonApiKeyCredential(account)) throw new Error(`API Key 查余额失败：${getErrorMessage(e)}`)
     }
   }
   try {
@@ -219,20 +242,40 @@ export async function fetchSelf(account: Account) {
   }
 }
 
+// 签到状态接口不返回历史的平台（如 Veloera 的 /api/user/check_in_status 只有 can_check_in）：
+// 用本地已记录的当月签到 + 今日状态拼出可用的签到状态
+function normalizeCheckinStatus(account: Account, month: string, data: any): CheckinStatus {
+  const today = localDateString()
+  const records = (account.lastCheckin?.stats?.records ?? [])
+    .filter(record => record.checkin_date?.startsWith(month) && record.checkin_date !== today)
+  // can_check_in 为 false 说明今日已签到
+  if (data?.can_check_in === false && today.startsWith(month)) records.push({ checkin_date: today })
+  return { enabled: true, stats: { checkin_count: records.length, records } }
+}
+
 // 获取签到状态（根据平台分发，先验证登录状态再查询）
 export async function fetchCheckinStatus(account: Account, month = localMonthString()) {
   // 验证登录状态，失效时自动重登，返回刷新后的账号
   const verified = await verifyLoginStatus(account)
   if (isSub2ApiAccount(verified)) return await fetchSub2ApiCheckinStatus(verified, month)
-  const checkinPath = `/api/user/checkin?month=${encodeURIComponent(month)}`
+  const capability = getPlatformCapability(verified)
+  const checkin = capability.checkin
+  if (!checkin) return { enabled: false } as CheckinStatus
+  const checkinPath = checkin.statusPath(month)
+  const request = async (target: Account) => {
+    const data = await apiRequest<any>(target, "GET", checkinPath)
+    return capability.checkinHistory ? data as CheckinStatus : normalizeCheckinStatus(target, month, data)
+  }
   try {
-    return await apiRequest<CheckinStatus>(verified, "GET", checkinPath)
+    return await request(verified)
   } catch (e: any) {
+    // 站点没有签到路由（OneAPI / OneHub / DoneHub 等）：按未启用返回，不当错误处理
+    if (isRouteUnavailable(e)) return { enabled: false } as CheckinStatus
     // 校验通过但查询接口仍报登录失效：登录后重试一次
     if (!isAuthExpiredError(e)) throw e
     await loginAccount(verified)
     const latest = loadAccounts().find(a => a.id === account.id) ?? account
-    return await apiRequest<CheckinStatus>(latest, "GET", checkinPath)
+    return await request(latest)
   }
 }
 
@@ -339,14 +382,16 @@ async function fetchCheckinNonce(account: Account): Promise<string> {
 }
 
 // 发起一次签到 POST（可选带签名头），登录失效时自动重登一次后重试
-async function postCheckinOnce(account: Account, extraHeaders?: Record<string, string>): Promise<any> {
+async function postCheckinOnce(account: Account, doPath: string, extraHeaders?: Record<string, string>): Promise<any> {
   try {
-    return await apiRequest<any>(account, "POST", "/api/user/checkin", {}, extraHeaders)
+    return await apiRequest<any>(account, "POST", doPath, {}, extraHeaders)
   } catch (e: any) {
+    // 站点没有签到路由（OneAPI / OneHub / DoneHub 等）：给出未启用提示，供上层标记为不可签到
+    if (isRouteUnavailable(e)) throw new Error("该站点签到功能未启用")
     if (!isAuthExpiredError(e)) throw e
     await loginAccount(account)
     const latest = loadAccounts().find(a => a.id === account.id) ?? account
-    return await apiRequest<any>(latest, "POST", "/api/user/checkin", {}, extraHeaders)
+    return await apiRequest<any>(latest, "POST", doPath, {}, extraHeaders)
   }
 }
 
@@ -356,23 +401,27 @@ export async function doCheckin(account: Account) {
   const verified = await verifyLoginStatus(account)
   if (isSub2ApiAccount(verified)) return await doSub2ApiCheckin(verified)
 
+  const checkin = getPlatformCapability(verified).checkin
+  if (!checkin) throw new Error("该站点签到功能未启用")
+  const doPath = checkin.doPath
+
   // 先尝试获取 PoW 签到 nonce：有 nonce 走签名签到，无 nonce（普通站点）走普通签到
   let nonce: string | undefined
   try {
     nonce = await fetchCheckinNonce(verified)
   } catch {
     // 站点不支持签名签到（未返回 nonce）：走普通签到流程
-    return await postCheckinOnce(verified)
+    return await postCheckinOnce(verified, doPath)
   }
 
   // 带 PoW 签名头签到；签名/nonce 失效则刷新 nonce 重试一次
   try {
-    return await postCheckinOnce(verified, buildCheckinSignatureHeaders(verified, nonce))
+    return await postCheckinOnce(verified, doPath, buildCheckinSignatureHeaders(verified, nonce))
   } catch (e: any) {
     if (!isCheckinSignatureError(e)) throw e
     const latest = loadAccounts().find(a => a.id === account.id) ?? verified
     const freshNonce = await fetchCheckinNonce({ ...latest, lastCheckin: undefined })
-    return await postCheckinOnce(latest, buildCheckinSignatureHeaders(latest, freshNonce))
+    return await postCheckinOnce(latest, doPath, buildCheckinSignatureHeaders(latest, freshNonce))
   }
 }
 

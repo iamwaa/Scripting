@@ -9,9 +9,18 @@ export type ModelInfo = {
   owned_by?: string
 }
 
-export type AppConfig = {
+// 一个 OpenAI 兼容接口的持久化配置，id 生成后不再变化
+export type ApiProfile = {
+  id: string
+  name: string
   baseURL: string
   apiKey: string
+}
+
+export type AppConfig = {
+  // 全部已保存的接口，与 activeApiID 一起决定当前请求发往哪里
+  apis: ApiProfile[]
+  activeApiID: string
   defaultPrompt: string
   visionPrompt: string
   imagePrompt: string

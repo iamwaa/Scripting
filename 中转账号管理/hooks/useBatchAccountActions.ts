@@ -5,7 +5,7 @@ import { localDateString, now, shouldSkipBatchCheckinByTime } from "../utils/for
 import { getErrorMessage, isAlreadyCheckedInError } from "../utils/error"
 import { loadAccounts, saveAccounts, patchAccount } from "../services/storage"
 import { checkSiteStatus, fetchSelf, fetchCheckinStatus, doCheckin } from "../services/auth"
-import { getTodayCheckinPatch, getTodayCheckinInfo, getOfflineSiteStatus, getCheckinDisabledPatch, getCheckinRewardPatch, getActiveAccounts, getApiOperableAccounts } from "../services/account"
+import { getTodayCheckinPatch, getTodayCheckinInfo, getOfflineSiteStatus, getCheckinDisabledPatch, getCheckinRewardPatch, getActiveAccounts, getApiOperableAccounts, getBalanceQueryAccounts } from "../services/account"
 
 // 检查是否需要自动检测站点状态
 function shouldAutoCheckSiteStatus(account: Account) {
@@ -105,11 +105,11 @@ export function useBatchAccountActions({ reload, toast }: { reload: () => void, 
   }
 
   async function syncAll() {
-    // 归档与仅记录账号不参与批量查余额
+    // 归档账号不参与批量查余额；仅记录账号需填了 API Key 才参与
     const allAccounts = loadAccounts()
-    const targetAccounts = getApiOperableAccounts(allAccounts)
+    const targetAccounts = getBalanceQueryAccounts(allAccounts)
     if (targetAccounts.length === 0) {
-      toast(allAccounts.length > 0 ? "没有参与批量查余额的账号（归档与仅记录账号不参与）" : "请先添加账号后再批量查询")
+      toast(allAccounts.length > 0 ? "没有参与批量查余额的账号（归档账号与未填 API Key 的仅记录账号不参与）" : "请先添加账号后再批量查询")
       return
     }
     // 请求后台运行权限

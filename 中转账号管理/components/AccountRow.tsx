@@ -3,7 +3,7 @@ import type { VirtualNode } from "scripting"
 import type { Account, AccountSortKey, SortDirection } from "../types"
 import { fmtQuota, shortUrl, getSelfQuotaValue, getSelfUsedQuotaValue, getAccountTypeText, isRecordOnlyAccount, isCheckinTimeReached, fmtCheckinAward } from "../utils/format"
 import { getErrorMessage } from "../utils/error"
-import { getAuthSourceText, getSiteStatusView, getSiteStatusLatencyText, getSiteStatusLatencyColor, getAccountSortTitle, getTodayCheckinInfo } from "../services/account"
+import { getAuthSourceText, getSiteStatusView, getSiteStatusLatencyText, getSiteStatusLatencyColor, getAccountSortTitle, getTodayCheckinInfo, canQueryAccountBalance } from "../services/account"
 
 // 账户总览 Section
 export function AccountSummary({ accounts }: { accounts: Account[] }) {
@@ -35,6 +35,7 @@ export function AccountRowContent({ account, busy = false }: { account: Account,
   const latencyText = getSiteStatusLatencyText(account.lastSiteStatus)
   const todayCheckin = getTodayCheckinInfo(account)
   const recordOnly = isRecordOnlyAccount(account)
+  const balanceEnabled = canQueryAccountBalance(account)
   const checkinTime = account.checkinTime
   const checkinTimeReached = checkinTime ? isCheckinTimeReached(checkinTime) : true
   const checkinText = todayCheckin.checked
@@ -68,11 +69,11 @@ export function AccountRowContent({ account, busy = false }: { account: Account,
         <Text font="caption" foregroundStyle="secondaryLabel">{shortUrl(account.baseUrl)} · {getAccountTypeText(account)}</Text>
       </HStack>
       <HStack spacing={10}>
-        {/* 仅记录账号不查余额，此处改展示记录的账号名 */}
-        {recordOnly
-          ? <Text font={12} foregroundStyle="secondaryLabel">账号 {account.username || "未填写"}</Text>
-          : <Text font="caption">余额 {fmtQuota(getSelfQuotaValue(account.lastSelf))}</Text>}
-        {recordOnly ? null : <Text font="caption" foregroundStyle="secondaryLabel">已用 {fmtQuota(getSelfUsedQuotaValue(account.lastSelf))}</Text>}
+        {/* 查不了余额的仅记录账号改展示记录的账号名 */}
+        {balanceEnabled
+          ? <Text font="caption">余额 {fmtQuota(getSelfQuotaValue(account.lastSelf))}</Text>
+          : <Text font={12} foregroundStyle="secondaryLabel">账号 {account.username || "未填写"}</Text>}
+        {balanceEnabled ? <Text font="caption" foregroundStyle="secondaryLabel">已用 {fmtQuota(getSelfUsedQuotaValue(account.lastSelf))}</Text> : null}
       </HStack>
       {account.lastError ? <Text font="caption" foregroundStyle="systemRed">{getErrorMessage(account.lastError)}</Text> : null}
     </VStack>
@@ -85,7 +86,7 @@ export function AccountRowMenu({ account, onQuickSync, onQuickCheckin, onOpenSit
   const recordOnly = isRecordOnlyAccount(account)
 
   return <Group>
-    {recordOnly ? null : <Button title="查询余额" systemImage="arrow.clockwise" action={() => onQuickSync(account)} disabled={disabled} />}
+    {canQueryAccountBalance(account) ? <Button title="查询余额" systemImage="arrow.clockwise" action={() => onQuickSync(account)} disabled={disabled} /> : null}
     {/* 今日已签到后隐藏签到与网页签到；仅记录账号的“打开站点”不受影响 */}
     {recordOnly || todayCheckin.checked ? null : <Button title="签到" systemImage="checkmark.seal" action={() => onQuickCheckin(account)} disabled={disabled} />}
     <Button title="连通性检测" systemImage="network" action={() => onCheckSiteStatus(account)} disabled={disabled} />
