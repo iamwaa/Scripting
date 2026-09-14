@@ -1,0 +1,41 @@
+{
+  "intentInputTypes" : [
+
+  ],
+  "contributors" : [
+
+  ],
+  "entry" : "index.tsx",
+  "author" : null,
+  "permissions" : null,
+  "remoteResource" : null,
+  "description" : "智能IP检测小组件，支持IPPure纯净度、VPN\/代理状态检测、风险评分、国旗显示",
+  "version" : "1.0.0",
+  "color" : "rgba(174, 109, 216, 1)",
+  "localizedDescriptions" : {
+    "ja" : "",
+    "de" : "",
+    "zh" : "",
+    "pt" : "",
+    "fr" : "",
+    "en" : "",
+    "es" : "",
+    "ru" : "",
+    "it" : ""
+  },
+  "name" : "IP检测",
+  "runInApp" : true,
+  "localizedNames" : {
+    "zh" : "",
+    "fr" : "",
+    "ru" : "",
+    "es" : "",
+    "it" : "",
+    "ja" : "",
+    "pt" : "",
+    "de" : "",
+    "en" : ""
+  },
+  "icon" : "antenna.radiowaves.left.and.right",
+  "iconImage" : null
+}
