@@ -37,6 +37,13 @@ AI 中转站账号管理脚本：多站点余额查询、接口/网页签到、�
 
 - 仅记录账号填了 API Key 后也参与余额查询（`canQueryAccountBalance`）：`fetchSelf` 对它只走计费接口、失败直接报错，不回落 `/api/user/self`（平台本来不兼容）；批量查余额用 `getBalanceQueryAccounts`，批量签到仍用 `getApiOperableAccounts`（永远排除仅记录）；详情页对它以 `balanceOnly` 模式刷新，不碰签到接口。
 
+## 网页签到后的刷新链路
+
+`openManualCheckinWebView`（`services/webAuth.ts`）关页后：先在 WebView 存活时页内预查（`refreshNewApiDataInWebView`，只支持有月历的平台），再由 `pages/AccountListView.tsx` 的 `quickOpenSite` 把缺失部分降级到原生 `fetchSelf` / `fetchCheckinStatus`。
+
+- 降级请求一律带 `failFast`（`services/api.ts` 的 `ApiRequestOptions`）：跳过 WebView 验证回退、超时 25→10 秒、现场登录子请求同样透传。理由：用户刚手动关页，再弹「完成安全验证后关闭页面」只会困惑；失败站点（未开启签到、CF 硬拦、错误信封）原本会在验证回退 + 多重 25 秒超时上空耗数十秒到分钟级。失败直接写 `lastError` 并 Toast。
+- `failFast` 只用于这一条链路；其他链路（批量查询、接口签到、详情页刷新）仍保留验证回退与完整超时，因为那里自动恢复有价值。
+
 ## 网页账号密码自动填写（services/webAutofill.ts）
 
 `installLoginAutofill(webView, { credential, onSave })` 给 WebView 装两样东西：页内代理脚本 + 消息桥 `newapiSaveLogin`；返回的 handle 直接作为 `WebViewPage` 的 `autofill` prop（类型 `WebViewAutofill` 在 `types.ts`），更多菜单据此显示「保存账号密码」。填写全程自动，没有手动填写入口（强制填写已按用户要求删除）。

@@ -65,8 +65,21 @@ export function ChatPage({ initialFiles }: { initialFiles?: string[] }) {
 
   // 初始待发文件（intent 传入）
   useEffect(() => {
-    if (initialFiles && initialFiles.length > 0) void sendFiles(initialFiles)
+    if (initialFiles && initialFiles.length > 0) {
+      sendFiles(initialFiles).catch(async (e) => {
+        // 发送失败不能静默吞掉（之前 file:// 路径问题时毫无提示）
+        await Dialog.alert({ title: "发送失败", message: String(e) })
+      })
+    }
   }, [])
+
+  // 部分文件不可读时提示，并引导用 App 内选取重试（该路径权限正常）
+  async function reportFailed(items: string[]) {
+    await Dialog.alert({
+      title: "部分文件无法发送",
+      message: `${items.join("\n")}\n\n可在下方「选取文件」中重新选择该文件后发送。`,
+    })
+  }
 
   // 新消息滚到底
   useEffect(() => {
@@ -77,7 +90,9 @@ export function ChatPage({ initialFiles }: { initialFiles?: string[] }) {
 
   async function sendFiles(paths: string[]) {
     if (paths.length === 0) return
-    const msgs = await share.sendFiles(paths)
+    const msgs = await share.sendFiles(paths, (items) => {
+      reportFailed(items)
+    })
     if (msgs.length) messages.setValue([...messages.value, ...msgs])
   }
 

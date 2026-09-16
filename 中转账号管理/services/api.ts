@@ -344,7 +344,13 @@ async function requestThroughVerifiedWebView<T>(account: Account, method: string
   return { data: webJson.data as T, cookie: "" }
 }
 
-export async function apiRequestWithMeta<T = any>(account: Account, method: string, path: string, body?: any, extraHeaders?: Record<string, string>, challengeRetried = false): Promise<ApiResult<T>> {
+// 请求选项：failFast 用于网页签到等已确认站点异常的场景，跳过 WebView 验证回退并使用更短的超时，
+// 避免失败站点在防护页/超时上空耗数十秒（用户已手动关页，再弹验证页只会更困惑）
+export type ApiRequestOptions = {
+  failFast?: boolean
+}
+
+export async function apiRequestWithMeta<T = any>(account: Account, method: string, path: string, body?: any, extraHeaders?: Record<string, string>, challengeRetried = false, options?: ApiRequestOptions): Promise<ApiResult<T>> {
   const baseUrl = normalizeBaseUrl(account.baseUrl)
   if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
     throw new Error("站点地址必须以 http:// 或 https:// 开头")
@@ -378,7 +384,7 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
       const login = await apiRequestWithMeta<any>(account, "POST", "/api/user/login", {
         username: account.username,
         password,
-      })
+      }, undefined, false, options)
       if (login.data?.require_2fa) {
         // 2FA 无法自动登录，回退到已有网页 Cookie
         if (cookie) headers.Cookie = cookie
@@ -409,9 +415,13 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       allowInsecureRequest: baseUrl.startsWith("http://"),
-      timeout: 25,
+      timeout: options?.failFast ? 10 : 25,
     } as any)
   } catch (error: any) {
+    // 快速失败模式：不再打开 WebView 做防护验证，直接把网络错误抛给调用方
+    if (options?.failFast) {
+      throw makeApiError(`网络请求失败：${error?.message || "Load failed"}`, { authExpired: false })
+    }
     if (!challengeRetried) {
       try {
         return await requestThroughVerifiedWebView<T>(account, method, path, body, headers)
@@ -427,7 +437,7 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
   try {
     json = raw ? JSON.parse(raw) : {}
   } catch {
-    if (isWebChallengeResponse(response, raw)) {
+    if (!options?.failFast && isWebChallengeResponse(response, raw)) {
       if (!challengeRetried) {
         return await requestThroughVerifiedWebView<T>(account, method, path, body, headers)
       }
@@ -452,8 +462,8 @@ export async function apiRequestWithMeta<T = any>(account: Account, method: stri
   return { data: json.data as T, cookie: mergeCookies("", setCookie, responseCookies) }
 }
 
-export async function apiRequest<T = any>(account: Account, method: string, path: string, body?: any, extraHeaders?: Record<string, string>): Promise<T> {
-  return (await apiRequestWithMeta<T>(account, method, path, body, extraHeaders)).data
+export async function apiRequest<T = any>(account: Account, method: string, path: string, body?: any, extraHeaders?: Record<string, string>, options?: ApiRequestOptions): Promise<T> {
+  return (await apiRequestWithMeta<T>(account, method, path, body, extraHeaders, false, options)).data
 }
 
 // 无限额度令牌在计费接口返回的哨兵值，此时剩余额度没有意义

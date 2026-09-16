@@ -11,6 +11,17 @@ function headerValue(headers: Record<string, string>, key: string): string | und
   return undefined
 }
 
+// 防御性归一化：绝大多数入口给的是纯路径，只在真的带 file:// 前缀时才处理
+function toFilePath(s: string): string {
+  const p = s.startsWith("file://") ? s.slice(7) : s.startsWith("file:") ? s.slice(5) : s
+  if (p === s) return s
+  try {
+    return decodeURIComponent(p)
+  } catch {
+    return p
+  }
+}
+
 // 本机局域网 IPv4：优先 Wi-Fi（en0），个人热点主机走 bridge100
 function lanIPv4(): string | undefined {
   const interfaces = Device.networkInterfaces()
@@ -35,6 +46,9 @@ export class Share {
   private sessions: WebSocketSession[] = []
   private listener: ((e: AppEvent) => void) | null = null
   private started = false
+  // App 端已发出（文字/文件）的广播历史：浏览器连接时补发，
+  // 避免对方未连接时发送、连接后无记录（下载路由 /dl/<id> 随服务存活，补发后可直接下载）
+  private history: Broadcast[] = []
   // 上传收到的事件队列：registerAsyncHandler 的上下文里直接回调 UI（observable setValue）
   // 会导致整个进程崩溃，因此这里只入队，由页面在自己的定时器里 drainInbox 后再刷新
   private inbox: AppEvent[] = []
@@ -57,6 +71,7 @@ export class Share {
   }
 
   private broadcast(packet: Broadcast) {
+    this.history.push(packet)
     const text = JSON.stringify(packet)
     for (const session of this.sessions) session.writeText(text)
   }
@@ -140,6 +155,9 @@ export class Share {
     this.server.registerWebsocket("/ws", {
       onConnected: (session) => {
         this.sessions.push(session)
+        // 补发连接前 App 端已发送的消息（含本次连接的首条），
+        // 浏览器端按 id 去重，断线重连不会重复显示
+        for (const packet of this.history) session.writeText(JSON.stringify(packet))
         this.emit({ type: "status", peer: "browser", online: true })
       },
       onDisconnected: (session) => {
@@ -173,29 +191,39 @@ export class Share {
     return { id, ts, role: "app", kind: "text", text }
   }
 
-  /** App 端发送若干文件：注册下载路由并广播 */
-  async sendFiles(paths: string[]): Promise<ChatMessage[]> {
+  /**
+   * App 端发送若干文件：注册下载路由并广播。
+   * 单个文件失败不中断整批，失败项通过 onFailed 回调交给调用方提示。
+   */
+  async sendFiles(paths: string[], onFailed?: (items: string[]) => void): Promise<ChatMessage[]> {
     const out: ChatMessage[] = []
-    for (const path of paths) {
-      const id = uid()
-      const ts = Date.now()
+    const failed: string[] = []
+    for (const raw of paths) {
+      const path = toFilePath(raw)
       const fileName = Path.basename(path)
-      const stat = await FileManager.stat(path)
-      const mime = FileManager.mimeType(path)
-      this.server.registerFile(`/dl/${id}`, path)
-      const message: ChatMessage = {
-        id,
-        ts,
-        role: "app",
-        kind: "file",
-        fileName,
-        fileSize: stat.size,
-        mime,
-        url: path,
+      try {
+        const id = uid()
+        const ts = Date.now()
+        const stat = await FileManager.stat(path)
+        const mime = FileManager.mimeType(path)
+        this.server.registerFile(`/dl/${id}`, path)
+        const message: ChatMessage = {
+          id,
+          ts,
+          role: "app",
+          kind: "file",
+          fileName,
+          fileSize: stat.size,
+          mime,
+          url: path,
+        }
+        this.broadcast({ role: "app", type: "file", fileName, fileSize: stat.size, mime, url: `/dl/${id}`, id, ts })
+        out.push(message)
+      } catch (e) {
+        failed.push(`${fileName}（${String(e)}）`)
       }
-      this.broadcast({ role: "app", type: "file", fileName, fileSize: stat.size, mime, url: `/dl/${id}`, id, ts })
-      out.push(message)
     }
+    if (failed.length) onFailed?.(failed)
     return out
   }
 
@@ -225,6 +253,7 @@ export class Share {
     this.server.stop()
     this.sessions = []
     this.inbox = []
+    this.history = []
     this.started = false
     // 会话结束清空上传目录，避免收到的文件在 Documents 累积；下次 start 会重建
     try {

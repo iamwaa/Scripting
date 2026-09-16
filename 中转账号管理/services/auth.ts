@@ -6,7 +6,7 @@ import { translateErrorMessage, getErrorMessage } from "../utils/error"
 import { mergeCookies } from "../utils/cookie"
 import { sha256Hex } from "../utils/crypto"
 import { getSecret, setSecret, removeSecret, loadAccounts, patchAccount, getRefreshTokenKey, getAccountApiKey } from "./storage"
-import { unwrapSub2ApiJson, sub2ApiRequest, fetchSub2ApiSelf, fetchSub2ApiCheckinStatus, doSub2ApiCheckin, apiRequestWithMeta, apiRequest, isRouteUnavailable, fetchApiKeyBalance } from "./api"
+import { unwrapSub2ApiJson, sub2ApiRequest, fetchSub2ApiSelf, fetchSub2ApiCheckinStatus, doSub2ApiCheckin, apiRequestWithMeta, apiRequest, isRouteUnavailable, fetchApiKeyBalance, type ApiRequestOptions } from "./api"
 import {
   getWebLoginCookie,
   openManualCheckinWebView,
@@ -201,7 +201,7 @@ function hasNonApiKeyCredential(account: Account) {
 }
 
 // 获取用户信息（含自动重登录）
-export async function fetchSelf(account: Account) {
+export async function fetchSelf(account: Account, options?: ApiRequestOptions) {
   // 仅记录账号的平台不兼容 /api/user/*，只能靠 API Key 的计费接口拿额度
   if (isRecordOnlyAccount(account)) {
     if (!getAccountApiKey(account)) throw new Error("仅记录账号需填写 API Key 才能查余额")
@@ -231,12 +231,12 @@ export async function fetchSelf(account: Account) {
     }
   }
   try {
-    return await apiRequest<SelfInfo>(account, "GET", "/api/user/self")
+    return await apiRequest<SelfInfo>(account, "GET", "/api/user/self", undefined, undefined, options)
   } catch (e: any) {
     if (isAuthExpiredError(e)) {
       await loginAccount(account)
       const latest = loadAccounts().find(a => a.id === account.id) ?? account
-      return await apiRequest<SelfInfo>(latest, "GET", "/api/user/self")
+      return await apiRequest<SelfInfo>(latest, "GET", "/api/user/self", undefined, undefined, options)
     }
     throw e
   }
@@ -254,16 +254,16 @@ function normalizeCheckinStatus(account: Account, month: string, data: any): Che
 }
 
 // 获取签到状态（根据平台分发，先验证登录状态再查询）
-export async function fetchCheckinStatus(account: Account, month = localMonthString()) {
+export async function fetchCheckinStatus(account: Account, month = localMonthString(), options?: ApiRequestOptions) {
   // 验证登录状态，失效时自动重登，返回刷新后的账号
-  const verified = await verifyLoginStatus(account)
+  const verified = await verifyLoginStatus(account, options)
   if (isSub2ApiAccount(verified)) return await fetchSub2ApiCheckinStatus(verified, month)
   const capability = getPlatformCapability(verified)
   const checkin = capability.checkin
   if (!checkin) return { enabled: false } as CheckinStatus
   const checkinPath = checkin.statusPath(month)
   const request = async (target: Account) => {
-    const data = await apiRequest<any>(target, "GET", checkinPath)
+    const data = await apiRequest<any>(target, "GET", checkinPath, undefined, undefined, options)
     return capability.checkinHistory ? data as CheckinStatus : normalizeCheckinStatus(target, month, data)
   }
   try {
@@ -280,7 +280,7 @@ export async function fetchCheckinStatus(account: Account, month = localMonthStr
 }
 
 // 检查账号登录状态是否有效（轻量验证，失效时自动重登，重登失败才抛错）
-async function verifyLoginStatus(account: Account): Promise<Account> {
+async function verifyLoginStatus(account: Account, options?: ApiRequestOptions): Promise<Account> {
   // 重登后返回最新的账号数据
   const reload = () => loadAccounts().find(a => a.id === account.id) ?? account
   // 该账号是否可用账号密码重登（决定校验失败后能否无条件回退登录）
@@ -327,7 +327,7 @@ async function verifyLoginStatus(account: Account): Promise<Account> {
     // 仅剩访问令牌但尚未解析出用户 ID：用裸令牌请求 /api/user/self 自动解析并回填（NewAPI 访问令牌自带用户身份）
     if (accessToken) {
       try {
-        const self = await apiRequest<SelfInfo>(account, "GET", "/api/user/self")
+        const self = await apiRequest<SelfInfo>(account, "GET", "/api/user/self", undefined, undefined, options)
         patchAccount(account.id, { lastSelf: self, lastError: "", authSource: "accessToken" })
         return loadAccounts().find(a => a.id === account.id) ?? account
       } catch (e: any) {
@@ -341,7 +341,7 @@ async function verifyLoginStatus(account: Account): Promise<Account> {
     throw new Error("缺少 Cookie 或访问令牌")
   }
   try {
-    await apiRequest<SelfInfo>(account, "GET", "/api/user/self")
+    await apiRequest<SelfInfo>(account, "GET", "/api/user/self", undefined, undefined, options)
     return account
   } catch (e: any) {
     // 校验失败：有账号密码则无条件重登（与详情页“登录”按钮一致，不依赖错误文案匹配）

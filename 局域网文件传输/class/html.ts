@@ -96,8 +96,11 @@ function connect(){
 function scheduleReconnect(){ if (reconnectTimer) return; reconnectTimer = setTimeout(function(){ reconnectTimer = null; connect(); }, 2000); }
 function setStatus(on){ statusEl.textContent = on ? '● 已连接到设备' : '● 正在连接设备…'; statusEl.className = 'status ' + (on ? 'on' : 'off'); }
 
+var seenIds = {};
 function handleIncoming(raw){
   var p; try { p = JSON.parse(raw); } catch (e){ return; }
+  // 服务端在（重）连接时会补发历史消息，按 id 去重避免重复显示
+  if (p.id != null){ if (seenIds[p.id]) return; seenIds[p.id] = true; }
   if (p.role === 'app' && p.type === 'text'){ addMessage({ role: 'app', kind: 'text', text: p.text }); }
   else if (p.role === 'app' && p.type === 'file'){ addMessage({ role: 'app', kind: 'file', fileName: p.fileName, fileSize: p.fileSize, mime: p.mime, url: location.origin + p.url }); }
 }

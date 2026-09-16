@@ -1,6 +1,6 @@
 import { useState, useEffect, Navigation, NavigationStack, List, Section, Text, Button, Image, NavigationLink, Toolbar, ToolbarItem } from "scripting"
 import type { Account, AccountSortKey, SortDirection } from "../types"
-import { isRecordOnlyAccount } from "../utils/format"
+import { isRecordOnlyAccount, localMonthString } from "../utils/format"
 import { getErrorMessage, showConfirm } from "../utils/error"
 import { loadAccounts, loadAccountSortPreference, saveAccountSortPreference, patchAccount } from "../services/storage"
 import { checkSiteStatus, fetchSelf, fetchCheckinStatus, openManualCheckinWebView } from "../services/auth"
@@ -121,10 +121,12 @@ export function AccountListView({ scope, dataVersion, onDataChanged, onClose }: 
         return
       }
       const latest = loadAccounts().find(item => item.id === account.id) ?? account
-      // 页内预查缺失的部分才降级到原生请求
+      // 页内预查缺失的部分才降级到原生请求；快速失败模式跳过 WebView 验证回退并缩短超时，
+      // 避免未开启签到/被拦截的站点关页后仍空耗数十秒转圈
+      const failFast = { failFast: true } as const
       const [selfResult, statusResult] = await Promise.allSettled([
-        refresh?.self ? Promise.resolve(refresh.self) : fetchSelf(latest),
-        refresh?.checkin ? Promise.resolve(refresh.checkin) : fetchCheckinStatus(latest),
+        refresh?.self ? Promise.resolve(refresh.self) : fetchSelf(latest, failFast),
+        refresh?.checkin ? Promise.resolve(refresh.checkin) : fetchCheckinStatus(latest, localMonthString(), failFast),
       ])
       const patch: Partial<Account> = {}
       if (selfResult.status === "fulfilled") {
