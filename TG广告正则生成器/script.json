@@ -1,0 +1,13 @@
+{
+  "name": "TG广告正则生成器",
+  "icon": "text.magnifyingglass",
+  "color": "rgba(10, 132, 255, 1)",
+  "version": "1.0.0",
+  "description": "Generate keyword regex from Telegram channel ad messages to filter them out.",
+  "localizedNames": {
+    "zh": "TG广告正则生成器"
+  },
+  "localizedDescriptions": {
+    "zh": "填入多条广告推文，提取相似关键文字，一键生成用于过滤广告的正则表达式。"
+  }
+}

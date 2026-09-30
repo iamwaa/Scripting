@@ -109,7 +109,10 @@ export function getLunarParts(date: Date): LunarParts {
       const index = LUNAR_MONTH_NAMES.indexOf(raw)
       month = index > 0 ? index : (parseInt(raw, 10) || 0)
     } else if (part.type === 'day') {
-      day = parseInt(part.value, 10) || 0
+      // iOS 中文农历返回的日期是中文名称（如“初五”“廿一”），需先按名称表映射，取不到再退回数字
+      const raw = part.value
+      const index = LUNAR_DAY_NAMES.indexOf(raw)
+      day = index > 0 ? index : (parseInt(raw, 10) || 0)
     }
   }
   return { year, month, day, isLeapMonth }

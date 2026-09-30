@@ -47,6 +47,25 @@ export async function extractResources() {
   selectedCategory.setValue("all")
 
   try {
+    statusText.setValue("正在读取 Safari 保存的资源 JSON...")
+    const savedSnapshot = await readRuntimeSnapshot(targetURL)
+    if (savedSnapshot) {
+      // 快照来自 Safari 页面，不重复请求网页或联网验证，以免登录资源被误删。
+      const savedResources = parseRuntimeSnapshotResources(savedSnapshot, targetURL)
+      resources.setValue(savedResources)
+      pageTitle.setValue(savedSnapshot.title || targetURL)
+      const thumbCount = hideThumbnails.value
+        ? savedResources.filter(item => item.likelyThumbnail).length
+        : 0
+      const message = savedResources.length > 0
+        ? `已从 Safari JSON 读取 ${savedResources.length - thumbCount} 个资源${thumbCount > 0 ? ` (隐藏了 ${thumbCount} 个疑似缩略图)` : ""}`
+        : "Safari JSON 中没有可提取的资源，请在网页加载完成后重新提取"
+      statusText.setValue(message)
+      showToast(message)
+      return
+    }
+
+    statusText.setValue("正在获取页面内容...")
     const directType = detectDirectResourceType(targetURL)
     if (directType) {
       const fileName = getResourceFileName(targetURL)
