@@ -165,6 +165,37 @@ export function generateRegex(
   return { regex, keywords, usernames, domains, customKeywords: customs }
 }
 
+// 剥掉正则的 (?i) 前缀与外层 (?:...) 包裹，取回内部主体
+function unwrapRegex(r: string): string {
+  let s = r.trim()
+  if (s.startsWith("(?i)")) s = s.slice(4)
+  if (s.startsWith("(?:") && s.endsWith(")")) s = s.slice(3, -1)
+  return s
+}
+
+// 合并多个分组正则为一个总集合正则（整体带 (?i)，逐组主体用 | 连接）
+// 注意：不在“或”分支层面拆分去重，避免破坏宽松匹配里字符类中的 | / ｜
+export function combineRegexes(regexes: string[]): string {
+  const bodies = [
+    ...new Set(regexes.map(unwrapRegex).filter(Boolean)),
+  ]
+  if (bodies.length === 0) return ""
+  return "(?i)(?:" + bodies.join("|") + ")"
+}
+
+// 遍历各分组，返回所有命中的分组与命中关键词
+export function findMatches(
+  entries: { name: string; regex: string }[],
+  message: string
+): { name: string; hit: string }[] {
+  const out: { name: string; hit: string }[] = []
+  for (const e of entries) {
+    const t = testRegex(e.regex, message)
+    if (t.ok && t.matched) out.push({ name: e.name, hit: t.hit })
+  }
+  return out
+}
+
 // 测试一条消息是否被正则命中；返回命中的片段。用 JS RegExp 近似（(?i) 转为 i 标志）
 export function testRegex(
   regexStr: string,

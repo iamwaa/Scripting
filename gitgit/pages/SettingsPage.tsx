@@ -21,6 +21,7 @@ import {
   useEffect,
   useRef,
 } from "scripting"
+import type { Color } from "scripting"
 import { FormRow } from "../components/FormRow"
 import { AvatarView } from "../components/AvatarView"
 import {
@@ -44,13 +45,15 @@ import {
   clearSlowOperations,
   getSlowOperations,
 } from "../utils/performance"
-import { verifyToken, getCurrentUser } from "../api/githubApi"
+import { checkTokenValidity } from "../api/githubApi"
 import type { GitIdentity } from "../services/authStore"
 import type { VerifiedGithubUser } from "../types/git"
 import {
   COLOR_SECONDARY_LABEL,
   COLOR_GREEN,
   COLOR_ACCENT,
+  COLOR_ORANGE,
+  COLOR_RED,
 } from "../constants/colors"
 
 type AlertState = { title: string; message: string } | null
@@ -64,6 +67,11 @@ export function SettingsPage() {
   const [tokenConfigured, setTokenConfigured] = useState(false)
   const [githubUser, setGithubUser] = useState<VerifiedGithubUser | null>(null)
   const [verifying, setVerifying] = useState(false)
+  // Token 常驻有效性校验：区分无效（已过期/被撤销）与无法校验（网络）
+  const [tokenCheck, setTokenCheck] = useState<{
+    status: "checking" | "valid" | "invalid" | "error"
+    message?: string
+  } | null>(null)
   const [savingIdentity, setSavingIdentity] = useState(false)
   const [showClearAlert, setShowClearAlert] = useState(false)
   const [alertState, setAlertState] = useState<AlertState>(null)
@@ -96,19 +104,35 @@ export function SettingsPage() {
     // 恢复上次验证成功的用户；token 不存在时验证状态已随清除作废
     const verified = configured ? getVerifiedUser() : null
     setGithubUser(verified)
-    // 旧缓存只有用户名没有头像：后台拉取补齐并回写缓存，失败静默（验证按钮在用户已认证时隐藏，不补齐老用户永远看不到头像）
-    if (verified && !verified.avatarUrl) {
-      getCurrentUser()
-        .then((user) => {
-          const next = { login: user.login, avatarUrl: user.avatarUrl || "" }
-          setGithubUser(next)
-          try {
-            saveVerifiedUser(next)
-          } catch {
-            // 忽略持久化失败
-          }
-        })
-        .catch(() => { })
+    // 已配置 Token 时常驻校验一次有效性（后台，不阻塞设置页渲染）
+    if (configured) {
+      runTokenCheck()
+    }
+  }
+
+  // 后台校验 Token 是否仍有效：无效时清已验证用户，无法校验时保留上次结果
+  async function runTokenCheck() {
+    setTokenCheck({ status: "checking" })
+    const result = await checkTokenValidity()
+    if (result.status === "valid") {
+      const next = {
+        login: result.user.login,
+        avatarUrl: result.user.avatarUrl || "",
+      }
+      setGithubUser(next)
+      setTokenCheck({ status: "valid" })
+      try {
+        saveVerifiedUser(next)
+      } catch {
+        // 忽略持久化失败
+      }
+    } else if (result.status === "invalid") {
+      // Token 确实失效：作废已验证用户，提示重新输入
+      setGithubUser(null)
+      setTokenCheck({ status: "invalid", message: result.message })
+    } else {
+      // 无法校验（网络）：保留上次结果，仅标注
+      setTokenCheck({ status: "error", message: result.message })
     }
   }
 
@@ -183,23 +207,34 @@ export function SettingsPage() {
     setTokenConfigured(true)
     setTokenState("")
     setVerifying(true)
+    setTokenCheck({ status: "checking" })
     try {
-      const user = await verifyToken()
-      const verified = { login: user.login, avatarUrl: user.avatarUrl || "" }
-      setGithubUser(verified)
-      // 持久化失败仅影响下次进入页面的验证状态显示，不吞掉本次验证成功
-      try {
-        saveVerifiedUser(verified)
-      } catch {
-        // 忽略持久化失败
+      const result = await checkTokenValidity()
+      if (result.status === "valid") {
+        const verified = {
+          login: result.user.login,
+          avatarUrl: result.user.avatarUrl || "",
+        }
+        setGithubUser(verified)
+        setTokenCheck({ status: "valid" })
+        // 持久化失败仅影响下次进入页面的验证状态显示，不吞掉本次验证成功
+        try {
+          saveVerifiedUser(verified)
+        } catch {
+          // 忽略持久化失败
+        }
+        showAlert("验证成功", `已认证为 @${result.user.login}`)
+      } else if (result.status === "invalid") {
+        setGithubUser(null)
+        setTokenCheck({ status: "invalid", message: result.message })
+        showAlert("Token 无效", `${result.message}。请检查后重新输入。`)
+      } else {
+        setTokenCheck({ status: "error", message: result.message })
+        showAlert(
+          "Token 已保存",
+          `但无法校验（${result.message}）。token 已保存，可稍后重试验证。`
+        )
       }
-      showAlert("验证成功", `已认证为 @${user.login}`)
-    } catch (e: any) {
-      setGithubUser(null)
-      showAlert(
-        "Token 已保存",
-        `但验证未通过（${String(e?.message || e)}）。token 已保存，可稍后重试验证。`
-      )
     } finally {
       setVerifying(false)
     }
@@ -215,26 +250,39 @@ export function SettingsPage() {
       clearToken()
       setTokenConfigured(false)
       setGithubUser(null)
+      setTokenCheck(null)
     } catch (e: any) {
       showAlert("清除失败", String(e?.message || e))
     }
   }
 
+  // 手动验证有效性：区分有效 / 无效 / 无法校验
   async function handleReverify() {
     setVerifying(true)
+    setTokenCheck({ status: "checking" })
     try {
-      const user = await verifyToken()
-      const verified = { login: user.login, avatarUrl: user.avatarUrl || "" }
-      setGithubUser(verified)
-      // 持久化失败仅影响下次进入页面的验证状态显示，不吞掉本次验证成功
-      try {
-        saveVerifiedUser(verified)
-      } catch {
-        // 忽略持久化失败
+      const result = await checkTokenValidity()
+      if (result.status === "valid") {
+        const verified = {
+          login: result.user.login,
+          avatarUrl: result.user.avatarUrl || "",
+        }
+        setGithubUser(verified)
+        setTokenCheck({ status: "valid" })
+        try {
+          saveVerifiedUser(verified)
+        } catch {
+          // 忽略持久化失败
+        }
+        showAlert("验证成功", `已认证为 @${result.user.login}`)
+      } else if (result.status === "invalid") {
+        setGithubUser(null)
+        setTokenCheck({ status: "invalid", message: result.message })
+        showAlert("Token 无效", `${result.message}。请清除后重新输入。`)
+      } else {
+        setTokenCheck({ status: "error", message: result.message })
+        showAlert("无法验证", `${result.message}。请检查网络后重试。`)
       }
-      showAlert("验证成功", `已认证为 @${user.login}`)
-    } catch (e: any) {
-      showAlert("验证失败", String(e?.message || e))
     } finally {
       setVerifying(false)
     }
@@ -258,6 +306,48 @@ export function SettingsPage() {
     setDiagnosticCount(0)
     showAlert("已清除", "内存中的性能诊断已清除")
   }
+
+  // Token 状态行的图标/颜色/文案（区分未配置/校验中/有效/无效/无法校验）
+  const tokenStatus: { icon: string; color: Color; text: string } = (() => {
+    if (!tokenConfigured) {
+      return { icon: "key.fill", color: COLOR_SECONDARY_LABEL, text: "未配置 Token" }
+    }
+    if (tokenCheck?.status === "checking") {
+      return {
+        icon: "arrow.triangle.2.circlepath",
+        color: COLOR_SECONDARY_LABEL,
+        text: "正在验证有效性…",
+      }
+    }
+    if (tokenCheck?.status === "invalid") {
+      return {
+        icon: "xmark.shield.fill",
+        color: COLOR_RED,
+        text: `Token 无效：${tokenCheck.message || "请重新输入"}`,
+      }
+    }
+    if (tokenCheck?.status === "error") {
+      return {
+        icon: "exclamationmark.triangle.fill",
+        color: COLOR_ORANGE,
+        text: githubUser
+          ? `已认证 @${githubUser.login}（本次无法校验）`
+          : "Token 已配置（无法校验）",
+      }
+    }
+    if (githubUser) {
+      return {
+        icon: "checkmark.shield.fill",
+        color: COLOR_GREEN,
+        text: `已认证 @${githubUser.login}`,
+      }
+    }
+    return {
+      icon: "checkmark.shield.fill",
+      color: COLOR_GREEN,
+      text: "Token 已配置",
+    }
+  })()
 
   // 清除确认优先，否则显示普通提示
   const activeAlert = showClearAlert
@@ -343,22 +433,16 @@ export function SettingsPage() {
         }
       >
         <HStack alignment="center" spacing={6}>
-          {githubUser ? (
+          {githubUser && tokenCheck?.status !== "invalid" ? (
             <AvatarView url={githubUser.avatarUrl} size={20} />
           ) : (
             <Image
-              systemName={tokenConfigured ? "checkmark.shield.fill" : "key.fill"}
-              foregroundStyle={
-                tokenConfigured ? COLOR_GREEN : COLOR_SECONDARY_LABEL
-              }
+              systemName={tokenStatus.icon}
+              foregroundStyle={tokenStatus.color}
             />
           )}
-          <Text font="subheadline" foregroundStyle={COLOR_SECONDARY_LABEL}>
-            {githubUser
-              ? `已认证 @${githubUser.login}`
-              : tokenConfigured
-                ? "Token 已配置（未验证）"
-                : "未配置 Token"}
+          <Text font="subheadline" foregroundStyle={tokenStatus.color}>
+            {tokenStatus.text}
           </Text>
         </HStack>
 
@@ -379,16 +463,16 @@ export function SettingsPage() {
           </>
         ) : (
           <>
-            {githubUser ? null : (
-              <Button
-                title={verifying ? "验证中…" : "重新验证"}
-                action={handleReverify}
-                disabled={verifying}
-              />
-            )}
+            <Button
+              title={verifying ? "验证中…" : "验证有效性"}
+              systemImage="checkmark.shield"
+              action={handleReverify}
+              disabled={verifying}
+            />
             <Button
               title="清除 Token"
-              role="destructive"
+              systemImage="trash"
+              foregroundStyle="red"
               action={confirmClearToken}
             />
           </>

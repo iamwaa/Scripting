@@ -14,6 +14,7 @@ import {
   VStack,
   Button,
   Picker,
+  ProgressView,
   useState,
   useEffect,
   useRef,
@@ -34,6 +35,7 @@ import {
 import { COLOR_SECONDARY_LABEL } from "../constants/colors"
 import { toastContent } from "../components/Toast"
 import { useToast } from "../hooks/useToast"
+import { yieldForUi } from "../utils/remoteProgress"
 
 type AlertState = { title: string; message: string } | null
 
@@ -57,6 +59,7 @@ export function RemotesPage({
   const [showAddSheet, setShowAddSheet] = useState(false)
 
   const [branchLoading, setBranchLoading] = useState(false)
+  const [branchProgress, setBranchProgress] = useState<string | null>(null)
   const [branchLoadWarning, setBranchLoadWarning] = useState<string | null>(null)
   const branchRequestRef = useRef(0)
 
@@ -71,13 +74,23 @@ export function RemotesPage({
   async function refreshRemoteBranches(remote: string): Promise<void> {
     const request = ++branchRequestRef.current
     setBranchLoading(true)
+    setBranchProgress(null)
     setBranchLoadWarning(null)
     try {
-      await fetchRemote(bookmarkName, remote, undefined, true)
+      await fetchRemote(bookmarkName, remote, undefined, true, {
+        onProgress: async (info) => {
+          if (request === branchRequestRef.current) {
+            setBranchProgress(info.label)
+            await yieldForUi()
+          }
+        },
+      })
     } catch (e: any) {
       if (request === branchRequestRef.current) {
         setBranchLoadWarning(`自动获取失败，当前显示本地缓存：${String(e?.message || e)}`)
       }
+    } finally {
+      if (request === branchRequestRef.current) setBranchProgress(null)
     }
     try {
       const branches = await getRemoteBranches(bookmarkName, remote)
@@ -389,7 +402,11 @@ export function RemotesPage({
             </Picker>
             {branchOptions.length > 0 ? (
               <Picker
-                title={branchLoading ? "正在获取分支…" : "远端分支"}
+                title={
+                  branchLoading
+                    ? branchProgress || "正在获取分支…"
+                    : "远端分支"
+                }
                 value={upstreamMerge}
                 onChanged={setUpstreamMerge}
                 disabled={branchLoading}
@@ -400,6 +417,14 @@ export function RemotesPage({
                   </Text>
                 ))}
               </Picker>
+            ) : null}
+            {branchLoading && branchOptions.length === 0 ? (
+              <HStack alignment="center" spacing={8}>
+                <ProgressView />
+                <Text font={13} foregroundStyle={COLOR_SECONDARY_LABEL}>
+                  {branchProgress || "正在获取分支…"}
+                </Text>
+              </HStack>
             ) : null}
             {branchLoadWarning ? (
               <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL}>

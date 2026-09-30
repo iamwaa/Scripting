@@ -8,18 +8,33 @@ import {
   Text,
   Button,
   Image,
+  TextField,
   useState,
   useEffect,
 } from "scripting"
 import { AdGroup, defaultOptions } from "../types"
 import { loadGroups, saveGroups, newId, STORAGE_FILE } from "../store"
+import { combineRegexes, findMatches } from "../regex"
 import { GroupDetailPage } from "./GroupDetailPage"
+
+// NextDNS / 正则过滤设置页（Telegram 内打开）
+const SETTINGS_URL = "https://t.me/nasettings/chat?p=ios&r=RegexFilters"
 
 // 主页面：广告库列表管理
 export function RootView() {
   const dismiss = Navigation.useDismiss()
   const [groups, setGroups] = useState<AdGroup[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [testText, setTestText] = useState("")
+
+  // 实时测试：遍历各分组正则，找出命中的分组与关键词
+  const matches =
+    testText.trim().length > 0
+      ? findMatches(
+          groups.map(g => ({ name: g.name, regex: g.regex })),
+          testText
+        )
+      : []
 
   useEffect(() => {
     loadGroups().then(g => {
@@ -81,6 +96,23 @@ export function RootView() {
     if (ok === true) persist(groups.filter(g => g.id !== id))
   }
 
+  // 复制所有分组的总集合正则
+  const copyAllRegex = async () => {
+    const combined = combineRegexes(groups.map(g => g.regex))
+    if (!combined) {
+      await Dialog.alert({ message: "还没有任何已生成的正则，请先在各分组里生成。" })
+      return
+    }
+    await Clipboard.copyText(combined) // Clipboard 为全局命名空间
+    const count = groups.filter(g => g.regex).length
+    await Dialog.alert({ message: `已复制 ${count} 个分组的总集合正则到剪贴板。` })
+  }
+
+  // 跳转正则过滤设置
+  const openSettings = () => {
+    Safari.openURL(SETTINGS_URL)
+  }
+
   // 打开详情
   const openGroup = async (id: string) => {
     const target = groups.find(g => g.id === id)
@@ -109,6 +141,66 @@ export function RootView() {
           ),
         }}
       >
+        {loaded ? (
+          <Section header={<Text>工具</Text>}>
+            <Button action={copyAllRegex}>
+              <HStack spacing={10} frame={{ maxWidth: Infinity, alignment: "leading" }}>
+                <Image systemName="doc.on.doc" foregroundStyle="blue" />
+                <Text>复制所有正则</Text>
+              </HStack>
+            </Button>
+            <Button action={openSettings}>
+              <HStack spacing={10} frame={{ maxWidth: Infinity, alignment: "leading" }}>
+                <Image systemName="arrow.up.forward.app" foregroundStyle="blue" />
+                <Text>Nagram 设置</Text>
+              </HStack>
+            </Button>
+          </Section>
+        ) : null}
+        {loaded ? (
+          <Section
+            header={<Text>测试匹配</Text>}
+            footer={
+              <Text>粘贴一条消息，看它会被哪些分组的正则命中（需先在分组里生成正则）。</Text>
+            }
+          >
+            <TextField
+              label={<Text>测试文本</Text>}
+              value={testText}
+              prompt="粘贴一条消息试试…"
+              axis="vertical"
+              onChanged={setTestText}
+            />
+            {testText.trim().length > 0 ? (
+              matches.length > 0 ? (
+                matches.map(m => (
+                  <HStack
+                    key={m.name}
+                    spacing={8}
+                    frame={{ maxWidth: Infinity, alignment: "leading" }}
+                  >
+                    <Image
+                      systemName="checkmark.circle.fill"
+                      foregroundStyle="green"
+                      imageScale="small"
+                    />
+                    <Text>命中分组：{m.name}</Text>
+                    <Text foregroundStyle="secondaryLabel">关键词：{m.hit}</Text>
+                  </HStack>
+                ))
+              ) : (
+                <HStack spacing={8}>
+                  <Image
+                    systemName="xmark.circle"
+                    foregroundStyle="secondaryLabel"
+                    imageScale="small"
+                  />
+                  <Text foregroundStyle="secondaryLabel">未命中任何分组（不会被过滤）</Text>
+                </HStack>
+              )
+            ) : null}
+          </Section>
+        ) : null}
         {!loaded ? (
           <Text foregroundStyle="secondaryLabel">加载中…</Text>
         ) : groups.length === 0 ? (

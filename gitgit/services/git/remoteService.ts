@@ -109,9 +109,12 @@ export async function fetchRemoteInternal(
   bookmarkName: string,
   remote = "origin",
   ref?: string,
-  prune = false
+  prune = false,
+  options?: RemoteOpOptions
 ): Promise<void> {
   const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
+  checkRemoteCancelled(options)
+  await emitRemoteProgress(options, "Connecting")
   const auth = requireAuth()
   const http = createHttpTransport(auth.username, auth.password)
   await git.fetch({
@@ -125,7 +128,9 @@ export async function fetchRemoteInternal(
     singleBranch: false,
     tags: false,
     prune,
+    onProgress: createGitOnProgress(options),
   })
+  checkRemoteCancelled(options)
 }
 
 export async function cloneInternal(

@@ -35,6 +35,28 @@ export interface RemoteOpOptions {
 /** 取消错误 code，与 MergeConflictError 一样挂在 Error 上 */
 export const REMOTE_OPERATION_CANCELLED = "RemoteOperationCancelled"
 
+/**
+ * 按字节传输的 phase：其 loaded/total 是字节数（HTTP 传输层上报），
+ * 展示时格式化为 KB/MB；其余 phase（如 Receiving objects）loaded 是对象数，仍用百分比。
+ */
+const BYTE_PHASES = new Set(["Downloading", "Uploading"])
+
+/** 字节大小格式化（如 "1.2 MB"）；非法/零返回空串，交由上层退回纯 phase */
+export function formatProgressBytes(bytes: number): string {
+  const n = Number(bytes)
+  if (!Number.isFinite(n) || n <= 0) return ""
+  if (n < 1024) return `${Math.round(n)} B`
+  const units = ["KB", "MB", "GB"]
+  let value = n / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  const text = value >= 100 ? String(Math.round(value)) : value.toFixed(1)
+  return `${text} ${units[unit]}`
+}
+
 /** 常见 phase 中文映射（未知 phase 原样展示） */
 const PHASE_LABELS: Record<string, string> = {
   "Receiving objects": "接收对象",
@@ -117,7 +139,19 @@ export function localizeProgressPhase(phase: unknown): string {
 export function formatRemoteProgress(
   event: GitProgressEvent | null | undefined
 ): string {
+  const rawPhase = String(event?.phase ?? "").trim()
   const phase = localizeProgressPhase(event?.phase)
+  // 字节传输阶段：优先展示已下载/上传字节数（总量未知时仅计数器，已知时附百分比）
+  if (BYTE_PHASES.has(rawPhase)) {
+    const loadedText = formatProgressBytes(Number(event?.loaded))
+    if (!loadedText) return phase
+    const pct = progressPercent(event?.loaded, event?.total)
+    if (pct == null) return `${phase} ${loadedText}`
+    const totalText = formatProgressBytes(Number(event?.total))
+    return totalText
+      ? `${phase} ${pct}%（${loadedText} / ${totalText}）`
+      : `${phase} ${pct}%`
+  }
   const pct = progressPercent(event?.loaded, event?.total)
   if (pct == null) return phase
   return `${phase} ${pct}%`

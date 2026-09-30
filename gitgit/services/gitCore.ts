@@ -397,7 +397,9 @@ async function reportHttpProgress(
  * 移植自 isomorphic-git 技能的 createHttpTransport：
  * 用 Scripting 的 fetch + Data 处理 git 协议的二进制流式请求。
  * 关键修复：toUint8Array() 可能返回只读视图，必须复制为可写副本。
- * 进度：透传 request.onProgress，在上传/等待响应/读响应时上报阶段。
+ * 进度：透传 request.onProgress，上传按字节累计上报；下载流式读取响应体，
+ *      每累计 256KB 上报一次已下载字节（服务端给 content-length 时附带总量，
+ *      GitHub git 协议多为 chunked，总量未知则只报已下载字节）。
  */
 export function createHttpTransport(username?: string, password?: string) {
   return {
@@ -446,18 +448,35 @@ export function createHttpTransport(username?: string, password?: string) {
         body: fetchBody,
       })
 
-      // 响应体：优先用 response.data()，备用 arrayBuffer；均复制为可写副本
+      // 服务端返回 content-length 时为总字节数；chunked 传输返回 -1，此时总量未知
+      const expected = Number(response.expectedContentLength)
+      const total = Number.isFinite(expected) && expected > 0 ? expected : 0
+
+      // 响应体：流式读取以便增量上报已下载字节；失败回退整体读取
       let result: any
       try {
-        const dataObj = await response.data()
-        if (dataObj && typeof dataObj.toUint8Array === "function") {
-          const uint8Data = dataObj.toUint8Array()
+        const chunks: Uint8Array[] = []
+        let loaded = 0
+        let lastReport = 0
+        for await (const chunk of response.dataStream) {
+          const uint8Data = chunk.toUint8Array()
           const mutableCopy = new Uint8Array(uint8Data.length)
           mutableCopy.set(uint8Data)
-          result = Buffer.from(mutableCopy)
-        } else {
-          result = Buffer.alloc(0)
+          chunks.push(mutableCopy)
+          loaded += mutableCopy.length
+          // 节流：每累计 256KB 上报一次，避免过于频繁刷新 UI
+          if (loaded - lastReport >= 262144) {
+            lastReport = loaded
+            await reportHttpProgress(onProgress, "Downloading", loaded, total)
+          }
         }
+        const merged = new Uint8Array(loaded)
+        let offset = 0
+        for (const chunk of chunks) {
+          merged.set(chunk, offset)
+          offset += chunk.length
+        }
+        result = Buffer.from(merged)
       } catch (e1) {
         try {
           const responseData = await response.arrayBuffer()
@@ -475,7 +494,7 @@ export function createHttpTransport(username?: string, password?: string) {
           onProgress,
           "Downloading",
           byteLength,
-          byteLength
+          total > 0 ? total : byteLength
         )
       }
 

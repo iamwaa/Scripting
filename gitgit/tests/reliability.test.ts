@@ -110,6 +110,7 @@ import {
   emitRemoteProgress,
   formatBusyActionLabel,
   formatBusyWithPercent,
+  formatProgressBytes,
   formatRemoteProgress,
   isRemoteOperationCancelled,
   localizeProgressPhase,
@@ -1720,6 +1721,38 @@ async function testRemoteProgressHelpers(): Promise<void> {
   assert(
     formatRemoteProgress({ phase: "Resolving deltas" }) === "解析增量",
     "无 total 时仅 phase"
+  )
+
+  // 字节大小格式化
+  assert(formatProgressBytes(0) === "", "零字节返回空串")
+  assert(formatProgressBytes(-5) === "", "负数返回空串")
+  assert(formatProgressBytes(512) === "512 B", "B 级")
+  assert(formatProgressBytes(2048) === "2.0 KB", "KB 级")
+  assert(formatProgressBytes(1572864) === "1.5 MB", "MB 级")
+
+  // 字节传输阶段：总量未知仅计数器，已知附百分比
+  assert(
+    formatRemoteProgress({ phase: "Downloading", loaded: 1572864, total: 0 }) ===
+      "下载中 1.5 MB",
+    "下载总量未知时仅显示已下载字节"
+  )
+  assert(
+    formatRemoteProgress({
+      phase: "Downloading",
+      loaded: 1048576,
+      total: 2097152,
+    }) === "下载中 50%（1.0 MB / 2.0 MB）",
+    "下载总量已知时附带百分比与字节"
+  )
+  assert(
+    formatRemoteProgress({ phase: "Downloading", loaded: 0, total: 0 }) ===
+      "下载中",
+    "下载 0 字节时回退为纯 phase"
+  )
+  assert(
+    formatRemoteProgress({ phase: "Uploading", loaded: 2048, total: 0 }) ===
+      "上传对象 2.0 KB",
+    "上传总量未知时显示已上传字节"
   )
   assert(
     formatBusyWithPercent("推送中", 50) === "推送中…（50%）",

@@ -388,6 +388,60 @@ export async function verifyToken(): Promise<GitHubUser> {
   return await getCurrentUser()
 }
 
+/** Token 校验结果：区分有效 / 无效（被撤销或过期）/ 无法校验（网络等） */
+export type TokenCheckResult =
+  | { status: "valid"; user: GitHubUser }
+  | { status: "invalid"; message: string }
+  | { status: "error"; message: string }
+
+/**
+ * 校验当前 Token 是否仍有效。
+ * 直接读 HTTP 状态码区分：401/403 为无效（凭据错误/权限不足），
+ * 其余非 2xx 与 fetch 抛异常（超时/断网）归为无法校验，不误删已验证状态。
+ */
+export async function checkTokenValidity(): Promise<TokenCheckResult> {
+  const token = getToken()
+  if (!token) return { status: "invalid", message: "未配置 Token" }
+  try {
+    const res = await fetch(`${API_BASE}/user`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      timeout: 20,
+      debugLabel: "gitgit token check",
+    })
+    if (res.status === 401 || res.status === 403) {
+      let msg = res.status === 401 ? "Token 无效或已过期" : "Token 权限不足或已被撤销"
+      try {
+        const err = await res.json()
+        if (err?.message) msg = String(err.message)
+      } catch (_e) {
+        // 响应非 JSON 时保留默认文案
+      }
+      return { status: "invalid", message: msg }
+    }
+    if (!res.ok) {
+      return { status: "error", message: `HTTP ${res.status}` }
+    }
+    const data = await res.json()
+    return {
+      status: "valid",
+      user: {
+        login: data.login,
+        name: data.name,
+        avatarUrl: data.avatar_url,
+        bio: data.bio,
+        publicRepos: data.public_repos,
+        followers: data.followers,
+      },
+    }
+  } catch (e: any) {
+    return { status: "error", message: String(e?.message || e) }
+  }
+}
+
 export async function listIssuesOrPulls(
   fullName: string,
   kind: "issue" | "pr",

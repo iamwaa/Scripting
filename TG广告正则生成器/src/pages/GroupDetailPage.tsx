@@ -10,12 +10,11 @@ import {
   Image,
   Toggle,
   Stepper,
-  TextField,
   useState,
 } from "scripting"
 import { AdGroup, GenOptions, GenResult } from "../types"
 import { newId } from "../store"
-import { generateRegex, testRegex } from "../regex"
+import { generateRegex } from "../regex"
 import { presentAdEditor } from "./AdEditorPage"
 
 // 取广告首行摘要
@@ -43,7 +42,6 @@ export function GroupDetailPage({
   const dismiss = Navigation.useDismiss()
   const [state, setState] = useState<AdGroup>(group)
   const [result, setResult] = useState<GenResult | null>(null)
-  const [testText, setTestText] = useState("")
 
   // 更新并向上同步（持久化在父层处理）
   const update = (patch: Partial<AdGroup>) => {
@@ -119,8 +117,6 @@ export function GroupDetailPage({
   }
 
   const opt = state.options
-  // 实时测试结果
-  const test = testRegex(state.regex, testText)
 
   return (
     <NavigationStack>
@@ -309,36 +305,6 @@ export function GroupDetailPage({
           ) : null}
         </Section>
 
-        {/* 测试 */}
-        <Section
-          header={<Text>测试匹配</Text>}
-          footer={<Text>粘贴一条消息，实时验证当前正则会不会命中，便于排查误伤/漏匹配。</Text>}
-        >
-          <TextField
-            label={<Text>测试文本</Text>}
-            value={testText}
-            prompt="粘贴一条消息试试…"
-            axis="vertical"
-            onChanged={setTestText}
-          />
-          {testText.trim().length > 0 ? (
-            !state.regex ? (
-              <Text foregroundStyle="secondaryLabel">请先生成正则</Text>
-            ) : !test.ok ? (
-              <Text foregroundStyle="orange">正则无效：{test.error}</Text>
-            ) : test.matched ? (
-              <HStack spacing={8}>
-                <Image systemName="checkmark.circle.fill" foregroundStyle="green" />
-                <Text>命中：{test.hit}</Text>
-              </HStack>
-            ) : (
-              <HStack spacing={8}>
-                <Image systemName="xmark.circle" foregroundStyle="secondaryLabel" />
-                <Text foregroundStyle="secondaryLabel">未命中（不会被过滤）</Text>
-              </HStack>
-            )
-          ) : null}
-        </Section>
       </List>
     </NavigationStack>
   )

@@ -485,11 +485,12 @@ export async function fetchRemote(
   bookmarkName: string,
   remote = "origin",
   ref?: string,
-  prune = false
+  prune = false,
+  options?: RemoteOpOptions
 ): Promise<void> {
   return runWithBackgroundKeepAlive(() =>
     runRepoMutation(bookmarkName, () =>
-      fetchRemoteInternal(bookmarkName, remote, ref, prune)
+      fetchRemoteInternal(bookmarkName, remote, ref, prune, options)
     )
   )
 }
