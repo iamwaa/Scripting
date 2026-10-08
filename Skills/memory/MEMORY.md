@@ -147,6 +147,35 @@
 
 - **SDK 没有 VPN / 代理状态 API，判隧道只能靠 `Device.networkInterfaces()` 自己推。** 实测（scripting_reference 全量检索 + 运行时枚举）`Device` 原型上与网络相关的只有 `networkInterfaces`，不存在 `isVPNConnected` / `networkType` / `connectionType` / `proxySettings` 之类；Python 侧 `Device` 更少（无网络项）。`NetworkInterface` 字段为 `address/netmask/family/mac/isInternal/cidr`。推断规则：`utun*` / `tun*` / `ppp*` / `wg*` 带非内网 IPv4 才是用户隧道（代理软件 Fake-IP 常见 `198.18.0.0/15`，如 `utun3 = 198.19.0.1/24`）；**`ipsec*` 上的 `192.0.0.4/6`（RFC 7335 `192.0.0.0/29`）是蜂窝 464XLAT，不是 VPN**，把「名字含 ipsec 且有非内网 IPv4」当 VPN 会常年误报。另：原生命名空间成员不可枚举，`Object.keys(Device)` 返回空数组，要探测得用 `Object.getOwnPropertyNames(Object.getPrototypeOf(Device))`。
 
+- **`FileManager` / `HttpServer.registerFile` 只吃纯路径，不接受 `file://` URL；但 `Intent.fileURLsParameter` 实际给的就是纯路径。** 前半段实测确凿：`FileManager.stat("file:///var/.../a.txt")` 抛「未能打开文件…因为它不存在」，`registerFile(route, "file://…")` 注册不报错但请求返回 **404**，换纯路径则 `stat` / `mimeType` / `registerFile` 全部正常。**但不要据此推断 intent 传的是 URL**——文档措辞是 "file URLs"，实测真机分享给的是纯路径（老版本代码把原始值直接透传给 `stat` 一直工作正常）。所以归一化只当防御写（`file://` 前缀才处理，纯路径原样透传），不要把「分享失败」归因到这里。
+
+- **共享表单传入的文件路径，安全作用域只在 intent 启动的同步阶段有效；未识别类型必须在第一个 `await` 之前同步拷进沙箱。** 现象：分享 `.exe` 报「未能打开文件…因为你没有查看它的权限」，而同一份代码分享 `.json` / `.zip` / 图片全部正常。原因不是扩展名，而是 iOS 对**已识别类型**会先把文件拷到 App 收件箱（给的是沙箱内副本路径，之后随便读），对**未识别类型**直接给原位置路径（`/private/var/mobile/.../File Provider Storage/...`），这种路径的访问权在脚本跨过 `await`（启动服务、present 页面）后就失效，等页面挂载再 `stat` 必然失败。注意「没有查看权限」与「不存在」是两种不同错误，前者是作用域问题、后者才是路径问题。
+
+  **不要把这条误记成「路径只能读一次、入口必须极简」**——极简入口对未识别类型同样失败（实测），因为问题在时机而非次数。规避：入口在任何 `await` 之前用**同步** API 立刻落盘，后续全程用副本；`imagePathsParameter` 已是沙箱路径，不用处理：
+  ```tsx
+  const stageDir = Path.join(FileManager.temporaryDirectory, "lan-share")
+  function stageSync(raw: string): string {
+    try {
+      if (!FileManager.existsSync(stageDir)) FileManager.createDirectorySync(stageDir, true)
+      const dest = Path.join(stageDir, Path.basename(raw))
+      if (FileManager.existsSync(dest)) FileManager.removeSync(dest)
+      FileManager.copyFileSync(raw, dest) // 必须是 Sync 版本
+      return dest
+    } catch {
+      return raw // 失败回退原路径，交给下游统一报错，不中断整批
+    }
+  }
+  runChat([...(Intent.fileURLsParameter ?? []).map(stageSync), ...(Intent.imagePathsParameter ?? [])])
+  ```
+  另：文档里的 `FileManager.addFileBookmark` / `bookmarkedPath` / `removeFileBookmark` **在实际构建里是 `undefined`**（文档超前于 App），照文档直接调会抛 `is not a function`，需先 `typeof` 探测。`getAllFileBookmarks()` 存在但是**全局**列表（含其他项目、`.Trash` 里的无关文件），按 basename 兜底匹配会解析到错误的文件，不要这么用。真遇到不可读的文件时，引导用户用 `DocumentPicker.pickFiles` 在 App 内重选（该路径权限正常），并保证单个文件失败不中断整批流程。
+
+  归一化参考写法（`imagePathsParameter` 本身是纯路径，不用处理）：
+  ```ts
+  function toFilePath(s: string): string {
+    const p = s.startsWith("file://") ? s.slice(7) : s.startsWith("file:") ? s.slice(5) : s
+    if (p === s) return s // 已是纯路径，避免误解码文件名里的 %
+    try { return decodeURIComponent(p) } catch { return p }
+  }
+  ```
+
 - **SF Symbol 图标与同字号文字放一行时，图标视觉上大一圈。** `<Image systemName=... font={N}>` 与 `font={N}` 的 Text 同处一个 HStack 时，符号包围盒按字体 point size 设计，填充类圆形符号（`checkmark.circle.fill`、`doc.on.doc` 等）明显高于文字字面。规避：加 `imageScale="small"` 并把 `font` 取得比目标文字小 1–2 号——探针实测（`tmp/tests/icon-size-probe.tsx`）：17 号标题配 `font={15} imageScale="small"` 最贴合，11 号小字配 `font={11} imageScale="small"` 即基本等高；只加 `imageScale` 不降字号仍偏大。`imageScale` 是相对缩放，可与 `fixedSize` 同用。
-
-

@@ -8,6 +8,12 @@ const LATIN_DIGIT_RE = /[A-Za-z0-9]/
 const MAX_CJK_LEN = 40
 // 英文噪声词（多来自链接协议，域名已单独提取）
 const LATIN_STOP = new Set(["https", "http", "www", "com", "cn", "net", "org"])
+// 不应作为中文短语首字的功能词/代词（避免生成「的网络」这类误杀碎片）
+const CJK_LEAD_STOP = new Set("的了和是在这那你我他她它们有也就都很更还又".split(""))
+// 不应作为中文短语尾字的功能词/代词
+const CJK_TAIL_STOP = new Set("的了和与及之在是你我他她它们".split(""))
+// 识别为「句柄型」链接域名：裸域名几乎必然误杀，应改取 handle 段
+const HANDLE_HOSTS = new Set(["t.me", "telegram.me", "telegram.dog"])
 
 // 宽松匹配时，关键词字符之间允许插入的分隔符（空格 / 零宽 / emoji / 常见标点 / 数字）
 const LOOSE_SEP =
@@ -48,6 +54,9 @@ function extractCandidates(text: string, minLen: number): Set<string> {
       const max = Math.min(MAX_CJK_LEN, run.length)
       for (let len = minLen; len <= max; len++) {
         for (let s = 0; s + len <= run.length; s++) {
+          // 跳过以功能词/代词开头或结尾的碎片，降低误杀
+          if (CJK_LEAD_STOP.has(run[s])) continue
+          if (CJK_TAIL_STOP.has(run[s + len - 1])) continue
           set.add(run.slice(s, s + len))
         }
       }
@@ -75,15 +84,24 @@ function extractUsernames(text: string): string[] {
 }
 
 // 从文本抽取域名（含链接里的 host 与裸域名）
+// 对 Telegram 链接（t.me/<handle> 等）取 handle 段而非裸域名：裸「t.me」几乎命中所有 TG 链接会误杀，
+// handle 段（去掉 ?start= 等参数）才是这条广告稳定复现的强特征。
 function extractDomains(text: string): string[] {
   const out: string[] = []
-  const urlRe = /https?:\/\/([^\s/]+)/gi
   let m: RegExpExecArray | null
-  while ((m = urlRe.exec(text)) !== null) out.push(m[1].toLowerCase())
+  // Telegram 链接 handle：t.me/jisou2、telegram.me/xxx，支持 + 开头的邀请链接
+  const tgRe =
+    /(?:https?:\/\/)?(?:t\.me|telegram\.me|telegram\.dog)\/(\+?[A-Za-z0-9_]{3,32})/gi
+  while ((m = tgRe.exec(text)) !== null) out.push("t.me/" + m[1].toLowerCase())
+  const urlRe = /https?:\/\/([^\s/]+)/gi
+  while ((m = urlRe.exec(text)) !== null) {
+    const h = m[1].toLowerCase()
+    if (!HANDLE_HOSTS.has(h)) out.push(h)
+  }
   const bareRe = /\b([a-z0-9-]+(?:\.[a-z0-9-]+)+)\b/gi
   while ((m = bareRe.exec(text)) !== null) {
     const d = m[1].toLowerCase()
-    if (/\.[a-z]{2,}$/.test(d)) out.push(d)
+    if (/\.[a-z]{2,}$/.test(d) && !HANDLE_HOSTS.has(d)) out.push(d)
   }
   return out
 }

@@ -22,6 +22,7 @@ import {
   buildNewApiLocalUser,
   buildSub2ApiAuthUser,
   injectWebCookies,
+  repairWebChallengeCookies,
   injectNewApiLocalUser,
   injectSub2ApiLocalAuth,
   recycleNewApiWebSession,
@@ -300,6 +301,7 @@ export async function installWebNavigationBridge(webView: WebViewController, bas
 export async function loadWebUrlWithFallback(webView: WebViewController, url: string, fallbackBaseUrl: string) {
   const targetUrl = resolveWebUrl(url, fallbackBaseUrl)
   if (!isHttpUrl(targetUrl)) return false
+  await repairWebChallengeCookies(webView, getUrlHostname(targetUrl))
   return await webView.loadURL(targetUrl)
 }
 
@@ -566,7 +568,7 @@ export async function openManualCheckinWebView(account: Account): Promise<Manual
       return /^(about|data|blob):/i.test(url)
     }
     // 有已保存 Cookie 则预置；没有则打开网页由用户手动登录，关闭后再回收
-    if (cookieHeader) await injectWebCookies(webView, hostname, cookieHeader, secure)
+    await injectWebCookies(webView, hostname, cookieHeader, secure)
     await presentWebViewAndLoadURL(webView, openUrl, {
       fullscreen: true,
       navigationTitle: "网页签到后关闭页面",

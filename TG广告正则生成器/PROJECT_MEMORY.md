@@ -8,7 +8,7 @@
 - `src/types.ts`：`AdGroup` / `AdItem` / `GenOptions` / `GenResult`；`defaultOptions()`；`normalizeGroup()` 兼容旧存档补齐新字段。
 - `src/store.ts`：持久化到 `Path.join(Path.dirname(Path.dirname(Script.directory)), 'configs')/tg-ad-regex.json`（实际 = Documents/configs/）。`Path`/`Script` 从 `"scripting"` import；`FileManager`/`Clipboard`/`Dialog`/`Pasteboard` 是全局命名空间，不能 import（import 会报 no exported member）。
 - `src/regex.ts`：核心算法 `generateRegex(ads, opt, customKeywords, excludeKeywords)` + `testRegex(regexStr, message)`。
-- `src/pages/`：`RootView`（库列表，含关闭按钮）、`GroupDetailPage`（广告管理+选项+关键词精修+生成+测试）、`AdEditorPage`（多行编辑，`presentAdEditor` 以独立页返回文本）。
+- `src/pages/`：`RootView`（库列表，含关闭按钮、总集合复制、设置跳转、首页测试匹配）、`GroupDetailPage`（广告管理+逐条命中状态+选项+关键词精修+生成）、`AdEditorPage`（多行编辑，`presentAdEditor` 以独立页返回文本）。
 - `src/components/FormRow.tsx`：表单输入行（全局记忆的标准实现）。
 
 ## 算法要点与已踩的坑
@@ -19,6 +19,9 @@
 - **忽略大小写**：`caseInsensitive` 默认 true，输出正则前缀 `(?i)`（JS RegExp 不认 `(?i)`，`testRegex` 会剥掉前缀并改用 `i` flag 近似）。目标过滤引擎需支持 `(?i)` 内联标志。
 - 单条广告时 `minDocFreq` 自动按 1 处理，否则永远取不到词。
 - 英文 token 已小写化并过滤 `LATIN_STOP`（https/http/www/com/cn/net/org），域名/@用户名单独提取。
+- **t.me 链接按 handle 提取**：`t.me|telegram.me|telegram.dog/<handle>`（去掉 `?start=` 参数）生成 `t.me/jisou2` 这样的强特征，不再产出裸 `t.me`（会误杀所有 TG 链接）。注意：`excludeKeywords` 按子串生效且也作用于域名/handle——排除「t.me」会把 handle 连带剔掉。
+- **中文 n-gram 首尾功能词过滤**：`CJK_LEAD_STOP` / `CJK_TAIL_STOP`，丢弃以「的/了/是/在/我/你…」开头或结尾的碎片（根除「的网络」这类误杀源）；只收功能词，不收「不/没/最」这类实质字，避免误杀真信号。
+- **逐条命中状态**：详情页每条广告右侧显示「命中/会漏」（用 `testRegex` 对当前 `state.regex` 实时计算），footer 汇总 X/Y；用于排除词后判断哪条广告失去了唯一信号、需要补强标识或自定义关键词。
 
 ## 命令
 

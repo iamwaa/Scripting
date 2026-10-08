@@ -10,11 +10,12 @@ import {
   Image,
   Toggle,
   Stepper,
+  Spacer,
   useState,
 } from "scripting"
 import { AdGroup, GenOptions, GenResult } from "../types"
 import { newId } from "../store"
-import { generateRegex } from "../regex"
+import { generateRegex, testRegex } from "../regex"
 import { presentAdEditor } from "./AdEditorPage"
 
 // 取广告首行摘要
@@ -118,6 +119,12 @@ export function GroupDetailPage({
 
   const opt = state.options
 
+  // 每条广告相对当前正则的命中状态（未生成正则时为 null）
+  const re = state.regex
+  const covers = re ? state.ads.map(a => testRegex(re, a.text)) : null
+  const invalidRegex = covers ? covers.some(c => !c.ok) : false
+  const hitCount = covers ? covers.filter(c => c.ok && c.matched).length : 0
+
   return (
     <NavigationStack>
       <List
@@ -135,25 +142,64 @@ export function GroupDetailPage({
         {/* 广告信息列表 */}
         <Section
           header={<Text>广告信息（{state.ads.length}）</Text>}
-          footer={<Text>右上角 + 添加广告；左滑可删除，点按可编辑。</Text>}
+          footer={
+            covers ? (
+              invalidRegex ? (
+                <Text>当前正则无法解析，请重新生成。</Text>
+              ) : (
+                <Text>
+                  当前正则可命中 {hitCount}/{state.ads.length} 条；「会漏」的需要补强标识（域名、@、t.me 链接）或加自定义关键词。
+                </Text>
+              )
+            ) : (
+              <Text>右上角 + 添加广告；左滑可删除，点按可编辑。生成正则后，这里会显示每条广告能否被命中。</Text>
+            )
+          }
         >
           {state.ads.length === 0 ? (
             <Text foregroundStyle="secondaryLabel">暂无广告，点右上角 + 添加。</Text>
           ) : (
-            state.ads.map(ad => (
-              <Button
-                key={ad.id}
-                action={() => editAd(ad.id)}
-                buttonStyle="plain"
-                trailingSwipeActions={{
-                  actions: [<Button title="删除" tint="red" action={() => deleteAd(ad.id)} />],
-                }}
-              >
-                <HStack spacing={10} frame={{ maxWidth: Infinity, alignment: "leading" }}>
-                  <Text>{snippet(ad.text)}</Text>
-                </HStack>
-              </Button>
-            ))
+            state.ads.map((ad, i) => {
+              const c = covers ? covers[i] : null
+              return (
+                <Button
+                  key={ad.id}
+                  action={() => editAd(ad.id)}
+                  buttonStyle="plain"
+                  trailingSwipeActions={{
+                    actions: [<Button title="删除" tint="red" action={() => deleteAd(ad.id)} />],
+                  }}
+                >
+                  <HStack spacing={10} frame={{ maxWidth: Infinity, alignment: "leading" }}>
+                    <Text>{snippet(ad.text)}</Text>
+                    <Spacer />
+                    {c && c.ok ? (
+                      c.matched ? (
+                        <HStack spacing={4}>
+                          <Image
+                            systemName="checkmark.circle.fill"
+                            foregroundStyle="green"
+                            font={12}
+                            imageScale="small"
+                          />
+                          <Text font={12} foregroundStyle="green">命中</Text>
+                        </HStack>
+                      ) : (
+                        <HStack spacing={4}>
+                          <Image
+                            systemName="exclamationmark.triangle.fill"
+                            foregroundStyle="orange"
+                            font={12}
+                            imageScale="small"
+                          />
+                          <Text font={12} foregroundStyle="orange">会漏</Text>
+                        </HStack>
+                      )
+                    ) : null}
+                  </HStack>
+                </Button>
+              )
+            })
           )}
         </Section>
 

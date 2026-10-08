@@ -12,21 +12,22 @@ import {
   maskPassword, maskApiKey, sortByDisplayTitle, saveLaunchBiometricsEnabled
 } from "./utils"
 
-import { AvatarIcon, FormRow, AccountRow, BookmarkRow } from "./components"
+import { AvatarIcon, FormRow, AccountRow, BookmarkRow, TagPicker } from "./components"
 
 // --- 页面 Props 类型定义 ---
-export type AccountEditorPageProps = { initialAccount?: AccountItem; onSave: (account: AccountItem) => void; groups?: GroupItem[] }
-export type AccountPreviewPageProps = { account: AccountItem; onUpdate: (updatedAccount: AccountItem) => void; onDelete: (id: string) => void; groups?: GroupItem[] }
+export type AccountEditorPageProps = { initialAccount?: AccountItem; onSave: (account: AccountItem) => void; groups?: GroupItem[]; allTags?: string[] }
+export type AccountPreviewPageProps = { account: AccountItem; onUpdate: (updatedAccount: AccountItem) => void; onDelete: (id: string) => void; groups?: GroupItem[]; allTags?: string[] }
 export type ApiListPageProps = { accounts: AccountItem[]; setAccounts: StateSetter<AccountItem[]>; groups: GroupItem[]; setGroups: StateSetter<GroupItem[]>; isSelecting: boolean; setIsSelecting: (isSelecting: boolean) => void }
 export type BookmarkListPageProps = { bookmarks: BookmarkItem[]; setBookmarks: StateSetter<BookmarkItem[]>; groups: GroupItem[]; setGroups: StateSetter<GroupItem[]>; isSelecting: boolean; setIsSelecting: (isSelecting: boolean) => void }
 
-export type BookmarkEditorPageProps = { initialBookmark?: BookmarkItem; onSave: (bookmark: BookmarkItem) => void; groups?: GroupItem[] }
+export type BookmarkEditorPageProps = { initialBookmark?: BookmarkItem; onSave: (bookmark: BookmarkItem) => void; groups?: GroupItem[]; allTags?: string[] }
 export type BookmarkPreviewPageProps = {
   bookmark: BookmarkItem
   onUpdate: (updatedBookmark: BookmarkItem) => void
   onDelete: (id: string) => void
   onDuplicate?: (bookmark: BookmarkItem) => void
   groups?: GroupItem[]
+  allTags?: string[]
 }
 
 export type SettingsPageProps = {
@@ -52,7 +53,7 @@ export type GroupPageProps = {
 let pendingActionToast: { msg: string; isError: boolean } | null = null
 
 // Account 业务页面
-export const AccountEditorPage = ({ initialAccount, onSave, groups }: AccountEditorPageProps) => {
+export const AccountEditorPage = ({ initialAccount, onSave, groups, allTags }: AccountEditorPageProps) => {
   const [name, setName] = useState<string>(initialAccount?.name || "")
   const [tagsStr, setTagsStr] = useState<string>(initialAccount?.tags?.join(", ") || "")
   const [groupId, setGroupId] = useState<string | undefined>(initialAccount?.groupId)
@@ -64,6 +65,8 @@ export const AccountEditorPage = ({ initialAccount, onSave, groups }: AccountEdi
   const [url, setUrl] = useState<string>(initialAccount?.url || "")
   const [notes, setNotes] = useState<string>(initialAccount?.notes || "")
   const [customFields, setCustomFields] = useState<CustomField[]>(initialAccount?.customFields || [])
+  // 记录最近新增的附加字段 id，用于新增后自动聚焦到其输入框
+  const [lastAddedFieldId, setLastAddedFieldId] = useState<string | null>(null)
 
   const [toast, setToast] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false })
   const showToast = (msg: string, isError = false) => setToast({ msg, isError })
@@ -100,7 +103,11 @@ export const AccountEditorPage = ({ initialAccount, onSave, groups }: AccountEdi
 
   const handleAddCustomField = async () => {
     const key = await Dialog.prompt({ title: "新增附加信息", message: "请输入信息标题" })
-    if (key?.trim()) setCustomFields([...customFields, { id: generateId(), key: key.trim(), value: "" }])
+    if (key?.trim()) {
+      const newField = { id: generateId(), key: key.trim(), value: "" }
+      setCustomFields([...customFields, newField])
+      setLastAddedFieldId(newField.id)
+    }
   }
 
   const handleSave = async (): Promise<void> => {
@@ -154,6 +161,7 @@ export const AccountEditorPage = ({ initialAccount, onSave, groups }: AccountEdi
             {avatarUrl.length > 0 ? <Button buttonStyle="plain" action={() => setAvatarUrl("")}><Image systemName="xmark.circle.fill" foregroundStyle="#C7C7CC" font="subheadline" /></Button> : undefined}
           </HStack>
           <FormRow label="分类标签" value={tagsStr} onChanged={setTagsStr} prompt="多个标签用逗号分隔（可选）" />
+          <TagPicker allTags={allTags} value={tagsStr} onChanged={setTagsStr} />
           {groups && groups.length > 0 ? (
             <Picker
               title="所属分组"
@@ -177,7 +185,7 @@ export const AccountEditorPage = ({ initialAccount, onSave, groups }: AccountEdi
           {customFields.map(field => (
             <HStack key={field.id} alignment="center" spacing={8} padding={{ vertical: 4 }}>
               <Text frame={{ width: 75, alignment: "leading" }} lineLimit={1} foregroundStyle="#333333">{field.key}</Text>
-              <TextField label={<Text>{""}</Text>} value={field.value} onChanged={v => setCustomFields(customFields.map(f => f.id === field.id ? { ...f, value: v } : f))} prompt="请输入内容" />
+              <TextField label={<Text>{""}</Text>} value={field.value} onChanged={v => setCustomFields(customFields.map(f => f.id === field.id ? { ...f, value: v } : f))} prompt="请输入内容" autofocus={field.id === lastAddedFieldId} />
               <HStack alignment="center" spacing={12} frame={{ width: 60, alignment: "trailing" }}>
                 {field.value.length > 0 ? <Button buttonStyle="plain" action={() => setCustomFields(customFields.map(f => f.id === field.id ? { ...f, value: "" } : f))}><Image systemName="xmark.circle.fill" foregroundStyle="#C7C7CC" font="subheadline" /></Button> : <VStack frame={{ width: 18 }} />}
                 <Button buttonStyle="plain" action={() => setCustomFields(customFields.filter(f => f.id !== field.id))}><Image systemName="minus.circle.fill" foregroundStyle="#FF3B30" font="title3" /></Button>
@@ -193,7 +201,7 @@ export const AccountEditorPage = ({ initialAccount, onSave, groups }: AccountEdi
   )
 }
 
-export const AccountPreviewPage = ({ account, onUpdate, onDelete, groups }: AccountPreviewPageProps) => {
+export const AccountPreviewPage = ({ account, onUpdate, onDelete, groups, allTags }: AccountPreviewPageProps) => {
   const [currentAccount, setCurrentAccount] = useState<AccountItem>(account)
   const [toast, setToast] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false })
   const showToast = (msg: string, isError = false) => setToast({ msg, isError })
@@ -201,7 +209,7 @@ export const AccountPreviewPage = ({ account, onUpdate, onDelete, groups }: Acco
   const ShapeVStack = VStack as any
 
   const handleEdit = () => {
-    Navigation.present(<AccountEditorPage initialAccount={currentAccount} groups={groups} onSave={(acc) => { setCurrentAccount(acc); onUpdate(acc); showToast("修改已保存") }} />)
+    Navigation.present(<AccountEditorPage initialAccount={currentAccount} groups={groups} allTags={allTags} onSave={(acc) => { setCurrentAccount(acc); onUpdate(acc); showToast("修改已保存") }} />)
   }
 
   const handleDelete = async () => {
@@ -354,7 +362,7 @@ export const ApiListPage = ({ accounts, setAccounts, groups, setGroups, isSelect
   }, [accounts, groups, activeTag, activeFilterType])
 
   const addAccount = async () => {
-    await Navigation.present(<AccountEditorPage groups={groups} onSave={acc => { setAccounts(prev => [...prev, acc]); showToast("账号已添加") }} />)
+    await Navigation.present(<AccountEditorPage groups={groups} allTags={allTags} onSave={acc => { setAccounts(prev => [...prev, acc]); showToast("账号已添加") }} />)
   }
 
   // 创建新分组
@@ -385,6 +393,7 @@ export const ApiListPage = ({ accounts, setAccounts, groups, setGroups, isSelect
       <AccountPreviewPage
         account={account}
         groups={groups}
+        allTags={allTags}
         onUpdate={updatedAccount => { setAccounts(prev => prev.map(a => a.id === updatedAccount.id ? updatedAccount : a)) }}
         onDelete={id => { setAccounts(prev => prev.filter(a => a.id !== id)); showToast("账号已删除", true) }}
       />
@@ -575,7 +584,7 @@ export const ApiListPage = ({ accounts, setAccounts, groups, setGroups, isSelect
 }
 
 // Bookmark 业务页面
-export const BookmarkEditorPage = ({ initialBookmark, onSave, groups }: BookmarkEditorPageProps) => {
+export const BookmarkEditorPage = ({ initialBookmark, onSave, groups, allTags }: BookmarkEditorPageProps) => {
   const [title, setTitle] = useState<string>(initialBookmark?.title || "")
   const [url, setUrl] = useState<string>(initialBookmark?.url || "")
   const [tagsStr, setTagsStr] = useState<string>(initialBookmark?.tags?.join(", ") || "")
@@ -583,6 +592,8 @@ export const BookmarkEditorPage = ({ initialBookmark, onSave, groups }: Bookmark
   const [iconUrl, setIconUrl] = useState<string>(initialBookmark?.iconUrl || "")
   const [notes, setNotes] = useState<string>(initialBookmark?.notes || "")
   const [customFields, setCustomFields] = useState<CustomField[]>(initialBookmark?.customFields || [])
+  // 记录最近新增的附加字段 id，用于新增后自动聚焦到其输入框
+  const [lastAddedFieldId, setLastAddedFieldId] = useState<string | null>(null)
   const [toast, setToast] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false })
   const dismiss = Navigation.useDismiss()
   const showToast = (msg: string, isError = false) => setToast({ msg, isError })
@@ -618,7 +629,11 @@ export const BookmarkEditorPage = ({ initialBookmark, onSave, groups }: Bookmark
 
   const handleAddCustomField = async () => {
     const key = await Dialog.prompt({ title: "新增附加信息", message: "请输入信息标题" })
-    if (key?.trim()) setCustomFields([...customFields, { id: generateId(), key: key.trim(), value: "" }])
+    if (key?.trim()) {
+      const newField = { id: generateId(), key: key.trim(), value: "" }
+      setCustomFields([...customFields, newField])
+      setLastAddedFieldId(newField.id)
+    }
   }
 
   const handleSave = () => {
@@ -670,6 +685,7 @@ export const BookmarkEditorPage = ({ initialBookmark, onSave, groups }: Bookmark
           </HStack>
           <FormRow label="书签链接" value={url} onChanged={(v: string) => { setUrl(v); autoFillFromUrl(v) }} prompt="https://example.com" />
           <FormRow label="分类标签" value={tagsStr} onChanged={setTagsStr} prompt="多个标签用逗号分隔（可选）" />
+          <TagPicker allTags={allTags} value={tagsStr} onChanged={setTagsStr} />
           {groups && groups.length > 0 ? (
             <Picker
               title="所属分组"
@@ -686,7 +702,7 @@ export const BookmarkEditorPage = ({ initialBookmark, onSave, groups }: Bookmark
           {customFields.map((field: CustomField) => (
             <HStack key={field.id} alignment="center" spacing={8} padding={{ vertical: 4 }}>
               <Text frame={{ width: 75, alignment: "leading" }} lineLimit={1} foregroundStyle="#333333">{field.key}</Text>
-              <TextField label={<Text>{""}</Text>} value={field.value} onChanged={(v: string) => setCustomFields(customFields.map(f => f.id === field.id ? { ...f, value: v } : f))} prompt="请输入内容" />
+              <TextField label={<Text>{""}</Text>} value={field.value} onChanged={(v: string) => setCustomFields(customFields.map(f => f.id === field.id ? { ...f, value: v } : f))} prompt="请输入内容" autofocus={field.id === lastAddedFieldId} />
               <HStack alignment="center" spacing={12} frame={{ width: 60, alignment: "trailing" }}>
                 {field.value.length > 0 && <Button buttonStyle="plain" action={() => setCustomFields(customFields.map(f => f.id === field.id ? { ...f, value: "" } : f))}><Image systemName="xmark.circle.fill" foregroundStyle="#C7C7CC" font="subheadline" /></Button>}
                 <Button buttonStyle="plain" action={() => setCustomFields(customFields.filter(f => f.id !== field.id))}><Image systemName="minus.circle.fill" foregroundStyle="#FF3B30" font="title3" /></Button>
@@ -700,7 +716,7 @@ export const BookmarkEditorPage = ({ initialBookmark, onSave, groups }: Bookmark
   )
 }
 
-export const BookmarkPreviewPage = ({ bookmark, onUpdate, onDelete, groups }: BookmarkPreviewPageProps) => {
+export const BookmarkPreviewPage = ({ bookmark, onUpdate, onDelete, groups, allTags }: BookmarkPreviewPageProps) => {
   const [currentBookmark, setCurrentBookmark] = useState<BookmarkItem>(bookmark)
   const [toast, setToast] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false })
   const dismiss = Navigation.useDismiss()
@@ -708,7 +724,7 @@ export const BookmarkPreviewPage = ({ bookmark, onUpdate, onDelete, groups }: Bo
   const ShapeVStack = VStack as any
   const groupName = bookmark.groupId && groups ? groups.find(g => g.id === bookmark.groupId)?.name : undefined
 
-  const handleEdit = () => { Navigation.present(<BookmarkEditorPage initialBookmark={currentBookmark} groups={groups} onSave={(nextBookmark: BookmarkItem) => { setCurrentBookmark(nextBookmark); onUpdate(nextBookmark); showToast("修改已保存") }} />) }
+  const handleEdit = () => { Navigation.present(<BookmarkEditorPage initialBookmark={currentBookmark} groups={groups} allTags={allTags} onSave={(nextBookmark: BookmarkItem) => { setCurrentBookmark(nextBookmark); onUpdate(nextBookmark); showToast("修改已保存") }} />) }
   const handleDelete = async () => { if (await Dialog.confirm({ title: "确认删除", message: `确定要删除「${currentBookmark.title}」吗？` })) { onDelete(currentBookmark.id); dismiss() } }
   const CopyableRow = ({ label, value }: { label: string, value: string }) => (
     <Button action={() => { Pasteboard.setString(value); showToast(`${label}已复制`) }}><HStack alignment="center"><Text>{label}</Text><Spacer /><Text foregroundStyle="#8E8E93" lineLimit={1} frame={{ maxWidth: 220, alignment: "trailing" }}>{value}</Text></HStack></Button>
@@ -842,7 +858,7 @@ export const BookmarkListPage = ({ bookmarks, setBookmarks, groups, setGroups, i
     return { filteredBookmarks: filtered, sectionData: sections, allTags: tags }
   }, [bookmarks, groups, activeTag, activeFilterType])
 
-  const addBookmark = async () => { Navigation.present(<BookmarkEditorPage groups={groups} onSave={bookmark => { setBookmarks(prev => [...prev, bookmark]); showToast("书签已添加") }} />) }
+  const addBookmark = async () => { Navigation.present(<BookmarkEditorPage groups={groups} allTags={allTags} onSave={bookmark => { setBookmarks(prev => [...prev, bookmark]); showToast("书签已添加") }} />) }
 
   // 创建新分组
   const handleCreateGroup = async () => {
@@ -871,6 +887,7 @@ export const BookmarkListPage = ({ bookmarks, setBookmarks, groups, setGroups, i
       <BookmarkPreviewPage
         bookmark={bookmark}
         groups={groups}
+        allTags={allTags}
         onUpdate={(updatedBookmark: BookmarkItem) => { setBookmarks(prev => prev.map(item => item.id === updatedBookmark.id ? updatedBookmark : item)) }}
         onDelete={(id: string) => { setBookmarks(prev => prev.filter(item => item.id !== id)); showToast("书签已删除", true) }}
         onDuplicate={(nextBookmark: BookmarkItem) => { setBookmarks(prev => [...prev, nextBookmark]); showToast("书签副本已添加") }}
@@ -1100,7 +1117,7 @@ export const GroupPage = ({ group, groups, setGroups, items, setItems, type }: G
   }
 
   const addAccount = async () => {
-    await Navigation.present(<AccountEditorPage groups={groups} onSave={(acc: AccountItem) => { updateItems((prev: AccountItem[]) => [...prev, { ...acc, groupId: group.id }]); showToast("账号已添加") }} />)
+    await Navigation.present(<AccountEditorPage groups={groups} allTags={allTags} onSave={(acc: AccountItem) => { updateItems((prev: AccountItem[]) => [...prev, { ...acc, groupId: group.id }]); showToast("账号已添加") }} />)
   }
 
   const isAllSelected = groupItems.length > 0 && selectedIds.size === groupItems.length
@@ -1196,7 +1213,7 @@ export const GroupPage = ({ group, groups, setGroups, items, setItems, type }: G
                     setSelectedIds(newSet)
                     showToast(newSet.size > 0 ? `已选择 ${newSet.size} 个项目` : "已取消选择")
                   }}
-                  onClick={() => Navigation.present(<AccountPreviewPage account={item} groups={groups} onUpdate={(updated: AccountItem) => { updateItems((prev: AccountItem[]) => prev.map((i: AccountItem) => i.id === updated.id ? updated : i)) }} onDelete={(id: string) => { updateItems((prev: AccountItem[]) => prev.filter((i: AccountItem) => i.id !== id)); showToast("已删除", true) }} />)}
+                  onClick={() => Navigation.present(<AccountPreviewPage account={item} groups={groups} allTags={allTags} onUpdate={(updated: AccountItem) => { updateItems((prev: AccountItem[]) => prev.map((i: AccountItem) => i.id === updated.id ? updated : i)) }} onDelete={(id: string) => { updateItems((prev: AccountItem[]) => prev.filter((i: AccountItem) => i.id !== id)); showToast("已删除", true) }} />)}
                   onDelete={() => { updateItems((prev: AccountItem[]) => prev.filter((i: AccountItem) => i.id !== item.id)); showToast("已删除", true) }}
                   onRemoveFromGroup={() => handleRemoveFromGroup(item.id)}
                   showToast={showToast}
@@ -1255,7 +1272,7 @@ export const BookmarkGroupPage = ({ group, groups, setGroups, items, setItems }:
   }
 
   const addBookmark = async () => {
-    await Navigation.present(<BookmarkEditorPage groups={groups} onSave={(bookmark: BookmarkItem) => { updateItems((prev: BookmarkItem[]) => [...prev, { ...bookmark, groupId: group.id }]); showToast("书签已添加") }} />)
+    await Navigation.present(<BookmarkEditorPage groups={groups} allTags={allTags} onSave={(bookmark: BookmarkItem) => { updateItems((prev: BookmarkItem[]) => [...prev, { ...bookmark, groupId: group.id }]); showToast("书签已添加") }} />)
   }
 
   const isAllSelected = groupItems.length > 0 && selectedIds.size === groupItems.length
@@ -1345,7 +1362,7 @@ export const BookmarkGroupPage = ({ group, groups, setGroups, items, setItems }:
                     else newSet.add(item.id)
                     setSelectedIds(newSet); showToast(newSet.size > 0 ? `已选择 ${newSet.size} 个项目` : "已取消选择")
                   }}
-                  onClick={() => Navigation.present(<BookmarkPreviewPage bookmark={item} groups={groups} onUpdate={(updated: BookmarkItem) => { updateItems((prev: BookmarkItem[]) => prev.map((i: BookmarkItem) => i.id === updated.id ? updated : i)) }} onDelete={(id: string) => { updateItems((prev: BookmarkItem[]) => prev.filter((i: BookmarkItem) => i.id !== id)); showToast("已删除", true) }} />)}
+                  onClick={() => Navigation.present(<BookmarkPreviewPage bookmark={item} groups={groups} allTags={allTags} onUpdate={(updated: BookmarkItem) => { updateItems((prev: BookmarkItem[]) => prev.map((i: BookmarkItem) => i.id === updated.id ? updated : i)) }} onDelete={(id: string) => { updateItems((prev: BookmarkItem[]) => prev.filter((i: BookmarkItem) => i.id !== id)); showToast("已删除", true) }} />)}
                   onDelete={() => { updateItems((prev: BookmarkItem[]) => prev.filter((i: BookmarkItem) => i.id !== item.id)); showToast("已删除", true) }}
                   onRemoveFromGroup={() => handleRemoveFromGroup(item.id)}
                   showToast={showToast}
@@ -1367,6 +1384,10 @@ export const SearchPage = ({ accounts, setAccounts, bookmarks, setBookmarks, acc
   const [toast, setToast] = useState<{ msg: string; isError: boolean }>({ msg: "", isError: false })
   const showToast = (msg: string, isError = false) => setToast({ msg, isError })
 
+  // 历史标签（用于编辑时选取已有标签）
+  const accountTags = useMemo(() => Array.from(new Set(accounts.flatMap(a => a.tags || []))).sort(), [accounts])
+  const bookmarkTags = useMemo(() => Array.from(new Set(bookmarks.flatMap(b => b.tags || []))).sort(), [bookmarks])
+
   const filteredAccounts = useMemo(() => {
     if (!searchText.trim()) return []
     const query = searchText.toLowerCase()
@@ -1378,7 +1399,7 @@ export const SearchPage = ({ accounts, setAccounts, bookmarks, setBookmarks, acc
   }, [accounts, searchText])
 
   const openPreviewPage = (account: AccountItem) => {
-    Navigation.present(<AccountPreviewPage account={account} groups={accountGroups} onUpdate={(updatedAccount: AccountItem) => { setAccounts(prev => prev.map(a => a.id === updatedAccount.id ? updatedAccount : a)) }} onDelete={(id: string) => { setAccounts(prev => prev.filter(a => a.id !== id)); showToast("账号已删除", true) }} />)
+    Navigation.present(<AccountPreviewPage account={account} groups={accountGroups} allTags={accountTags} onUpdate={(updatedAccount: AccountItem) => { setAccounts(prev => prev.map(a => a.id === updatedAccount.id ? updatedAccount : a)) }} onDelete={(id: string) => { setAccounts(prev => prev.filter(a => a.id !== id)); showToast("账号已删除", true) }} />)
   }
 
   const filteredBookmarks = useMemo(() => {
@@ -1392,7 +1413,7 @@ export const SearchPage = ({ accounts, setAccounts, bookmarks, setBookmarks, acc
   }, [bookmarks, searchText])
 
   const openBookmarkPreviewPage = (bookmark: BookmarkItem) => {
-    Navigation.present(<BookmarkPreviewPage bookmark={bookmark} groups={bookmarkGroups} onUpdate={(updatedBookmark: BookmarkItem) => { setBookmarks(prev => prev.map(item => item.id === updatedBookmark.id ? updatedBookmark : item)) }} onDelete={(id: string) => { setBookmarks(prev => prev.filter(item => item.id !== id)); showToast("书签已删除", true) }} />)
+    Navigation.present(<BookmarkPreviewPage bookmark={bookmark} groups={bookmarkGroups} allTags={bookmarkTags} onUpdate={(updatedBookmark: BookmarkItem) => { setBookmarks(prev => prev.map(item => item.id === updatedBookmark.id ? updatedBookmark : item)) }} onDelete={(id: string) => { setBookmarks(prev => prev.filter(item => item.id !== id)); showToast("书签已删除", true) }} />)
   }
 
   return (

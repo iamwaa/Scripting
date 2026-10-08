@@ -33,6 +33,19 @@ export function buildSub2ApiAuthUser(account: Account): Record<string, any> | un
   }
 }
 
+const JS_CHALLENGE_COOKIE = "acw_sc__v2"
+
+// 只移除旧版误设为 HttpOnly 的挑战 Cookie，保留登录态及网页正常生成的验证值。
+export async function repairWebChallengeCookies(webView: WebViewController, hostname: string) {
+  const host = hostname.toLowerCase()
+  if (!host) return
+  for (const cookie of await webView.getAllCookies()) {
+    if (cookie.name !== JS_CHALLENGE_COOKIE || !cookie.isHTTPOnly) continue
+    if (cookie.domain.replace(/^\./, "").toLowerCase() !== host) continue
+    await webView.deleteCookie({ name: cookie.name, domain: cookie.domain, path: cookie.path })
+  }
+}
+
 // 向 WebView 注入 session cookie（同时写 host 与 .host，提高命中率）
 export async function injectWebCookies(
   webView: WebViewController,
@@ -40,9 +53,13 @@ export async function injectWebCookies(
   cookieHeader: string,
   secure: boolean,
 ) {
-  if (!cookieHeader.trim() || !hostname) return
+  if (!hostname) return
+  await repairWebChallengeCookies(webView, hostname)
+  if (!cookieHeader.trim()) return
   const expiresDate = new Date(Date.now() + 30 * 24 * 3600 * 1000)
   for (const cookie of parseCookieHeader(cookieHeader)) {
+    // 挑战值由网页自行生成/更新，不能从丢失属性的 Cookie Header 恢复为 HttpOnly。
+    if (cookie.name === JS_CHALLENGE_COOKIE) continue
     for (const domain of [hostname, `.${hostname}`]) {
       try {
         await webView.setCookie({

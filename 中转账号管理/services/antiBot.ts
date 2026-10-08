@@ -119,9 +119,7 @@ export async function requestApiThroughVerifiedWebViewImpl(
   const webView = new WebViewController()
   try {
     const cookie = getSecret(account.cookieKey)
-    if (cookie) {
-      await injectWebCookies(webView, getUrlHostname(baseUrl), cookie, baseUrl.startsWith("https://"))
-    }
+    await injectWebCookies(webView, getUrlHostname(baseUrl), cookie, baseUrl.startsWith("https://"))
     await withTimeout(webView.loadURL(baseUrl), 20, "主站页面加载超时")
     let needsVerification = false
     try {
@@ -190,9 +188,7 @@ async function runWebChallengeRefresh(account: Account) {
   const webView = new WebViewController()
   try {
     const cookie = getSecret(account.cookieKey)
-    if (cookie) {
-      await injectWebCookies(webView, getUrlHostname(baseUrl), cookie, baseUrl.startsWith("https://"))
-    }
+    await injectWebCookies(webView, getUrlHostname(baseUrl), cookie, baseUrl.startsWith("https://"))
     await webView.loadURL(baseUrl)
     const merged = await waitForWebChallengeCookie(webView, baseUrl, cookie)
     if (!getChallengeClearance(merged) || getChallengeClearance(merged) === getChallengeClearance(cookie)) {

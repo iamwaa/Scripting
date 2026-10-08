@@ -1,4 +1,4 @@
-import { useState, useMemo, VStack, HStack, Text, Button, Spacer, Image, TextField, Link, Menu } from "scripting"
+import { useState, useMemo, VStack, HStack, Text, Button, Spacer, Image, TextField, Link, Menu, ScrollView } from "scripting"
 
 import { AccountItem, BookmarkItem, GroupItem, maskPassword, maskApiKey, processUrl } from "./utils"
 
@@ -45,6 +45,45 @@ export const FormRow = ({ label, value, onChanged, prompt, autofocus = false }: 
     ) : undefined}
   </HStack>
 )
+
+// 已有标签选取器：点击标签片切换选中，与分类标签输入框联动
+// allTags 为历史标签；value 为输入框当前文本；onChanged 会回写「A, B」格式
+// 标签可能较多，用横向滚动避免在 List 行内挤压换行
+const splitTags = (str: string): string[] => str.split(/[,，]/).map(t => t.trim()).filter(Boolean)
+
+export const TagPicker = ({ allTags = [], value, onChanged }: { allTags?: string[]; value: string; onChanged: (v: string) => void }) => {
+  const ShapeVStack = VStack as any
+  const selected = splitTags(value)
+  // 合并历史标签与当前已选，去重排序
+  const options = Array.from(new Set([...allTags, ...selected])).sort((a, b) => a.localeCompare(b, "zh-Hans-CN"))
+  if (options.length === 0) return null
+  const toggle = (tag: string) => {
+    const has = selected.includes(tag)
+    const next = has ? selected.filter(t => t !== tag) : [...selected, tag]
+    onChanged(next.join(", "))
+  }
+  return (
+    <VStack alignment="leading" spacing={8} padding={{ top: 4, bottom: 4 }} frame={{ maxWidth: "infinity" }}>
+      <ScrollView axes="horizontal" scrollIndicator="never">
+        <HStack spacing={8}>
+          {options.map(tag => {
+            const isOn = selected.includes(tag)
+            return (
+              <Button key={tag} buttonStyle="plain" action={() => toggle(tag)}>
+                <ShapeVStack background={isOn ? "#007AFF" : "quaternarySystemFill"} clipShape={{ type: "rect", cornerRadius: 14 }}>
+                  <HStack spacing={4} alignment="center" padding={{ horizontal: 12, vertical: 6 }}>
+                    <Text foregroundStyle={isOn ? "white" : "#007AFF"} font={13} fontWeight="medium" fixedSize={{ horizontal: true, vertical: true }}>{tag}</Text>
+                    {isOn ? <Image systemName="checkmark" font={11} foregroundStyle="white" fontWeight="semibold" imageScale="small" /> : undefined}
+                  </HStack>
+                </ShapeVStack>
+              </Button>
+            )
+          })}
+        </HStack>
+      </ScrollView>
+    </VStack>
+  )
+}
 
 export type AccountRowProps = {
   account: AccountItem
