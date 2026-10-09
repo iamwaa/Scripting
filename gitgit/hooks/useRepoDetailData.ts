@@ -5,7 +5,7 @@
  * 各自的加载函数。首屏只解析 HEAD，Stash、文件、历史首次切 Tab 才加载（P2.47）。
  */
 
-import { useState } from "scripting"
+import { useRef, useState } from "scripting"
 import type {
   BranchInfo,
   CommitEntry,
@@ -26,12 +26,14 @@ import {
   isInitialized,
   listRemotes,
   listStashes,
+  statusRevision,
 } from "../services/gitService"
 import { findRepo, getBranchLastPulledAt } from "../services/repoStore"
 import { relativeTime } from "../utils/format"
 import { githubRepoFromRemoteUrl } from "../utils/github"
 import type { UpstreamConfig } from "../utils/remote"
 import type { ToastType } from "./useToast"
+import { isRepoStatusFresh } from "../utils/statusFreshness"
 
 const HISTORY_PAGE_SIZE = 50
 
@@ -49,6 +51,11 @@ export function useRepoDetailData({
   name,
   showToast,
 }: UseRepoDetailDataProps) {
+  const loadState = useRef({
+    pending: null as Promise<void> | null,
+    revision: -1, completedAt: 0,
+    rerun: false, nextSource: "详情刷新",
+  })
   const [tab, setTab] = useState<RepoDetailTabIndex>(0)
   const [changes, setChanges] = useState<FileChange[]>([])
   const [stashes, setStashes] = useState<StashEntry[]>([])
@@ -91,15 +98,15 @@ export function useRepoDetailData({
     setDisplayName(meta.name || name)
   }
 
-  async function loadChanges(): Promise<FileChange[]> {
-    const c = await getChanges(bookmarkName)
+  async function loadChanges(source = "详情操作后刷新", fresh = false): Promise<FileChange[]> {
+    const c = await getChanges(bookmarkName, source, { fresh })
     setChanges(c)
     return c
   }
 
   async function refreshChangesAndSnapshot(): Promise<FileChange[]> {
     const currentChanges = await loadChanges()
-    await getRepoListStatus(bookmarkName, currentChanges.length)
+    await getRepoListStatus(bookmarkName, currentChanges.length, { source: "详情改动摘要" })
     return currentChanges
   }
 
@@ -187,7 +194,44 @@ export function useRepoDetailData({
     }
   }
 
-  async function loadAll() {
+  function loadAll(source = "详情操作后刷新", force = true): Promise<void> {
+    refreshMeta()
+    const current = loadState.current
+    const revision = statusRevision(bookmarkName)
+    if (current.pending) {
+      if (source === "详情下拉" || revision !== current.revision) {
+        current.rerun = true
+        current.nextSource = source
+      }
+      return current.pending
+    }
+    if (isRepoStatusFresh({
+      now: Date.now(), completedAt: current.completedAt,
+      revision: current.revision, currentRevision: revision, force,
+    })) return Promise.resolve()
+    const pending = (async () => {
+      try {
+        let nextSource = source
+        let nextFresh = !force
+        do {
+          current.rerun = false
+          current.revision = statusRevision(bookmarkName)
+          const success = await loadAllInternal(nextSource, nextFresh)
+          current.completedAt = success ? Date.now() : 0
+          nextSource = current.nextSource
+          // 重跑来自下拉或跨写代次，必须实时读取
+          nextFresh = false
+        } while (current.rerun)
+      } finally {
+        // 循环退出与释放占用同步完成，避免新刷新落入 Promise 收尾间隙。
+        current.pending = null
+      }
+    })()
+    current.pending = pending
+    return pending
+  }
+
+  async function loadAllInternal(source: string, fresh = false): Promise<boolean> {
     refreshMeta()
     setLoading(true)
     // 全量刷新时重置懒加载标记
@@ -201,7 +245,7 @@ export function useRepoDetailData({
       }
       // 首屏只解析 HEAD，不读取提交列表；Stash、文件、历史按 Tab 懒加载
       const [currentChanges, headExists] = await Promise.all([
-        loadChanges(),
+        loadChanges(source, fresh),
         hasHeadCommit(bookmarkName),
         loadBranches(),
         loadRemote(),
@@ -213,9 +257,11 @@ export function useRepoDetailData({
       if (tab === 1) await loadStashes()
       if (tab === 2) await loadTrackedFiles()
       if (tab === 3) await loadLog()
-      await getRepoListStatus(bookmarkName, currentChanges.length)
+      await getRepoListStatus(bookmarkName, currentChanges.length, { source: `${source}摘要` })
+      return true
     } catch (e: any) {
       showToast("加载失败：" + String(e?.message || e), "error")
+      return false
     } finally {
       setLoading(false)
     }

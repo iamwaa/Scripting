@@ -1,3 +1,4 @@
+import { scanMutationMatrix } from "./matrixScanService"
 import { DEFAULT_BRANCH } from "../../constants/git"
 import {
   normalizeMatrixPath,
@@ -81,12 +82,7 @@ export async function addFilesInternal(
 ): Promise<void> {
   const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
   if (filepath === ".") {
-    const matrix = (await git.statusMatrix({ fs, dir, gitdir })) as [
-      string,
-      number,
-      number,
-      number,
-    ][]
+    const matrix = await scanMutationMatrix({ git, fs, dir, gitdir }, "写操作全部暂存")
     for (const row of matrix) {
       const path = normalizeMatrixPath(row[0])
       const action = stageActionForRow(row)
@@ -149,12 +145,7 @@ export async function unstageFilesInternal(
     await unstagePath(git, fs, dir, gitdir, filepath, hasHead)
     return
   }
-  const matrix = (await git.statusMatrix({ fs, dir, gitdir })) as [
-    string,
-    number,
-    number,
-    number,
-  ][]
+  const matrix = await scanMutationMatrix({ git, fs, dir, gitdir }, "写操作全部取消暂存")
   for (const path of pathsNeedingUnstage(matrix)) {
     await unstagePath(git, fs, dir, gitdir, path, hasHead)
   }

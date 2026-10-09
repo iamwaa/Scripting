@@ -139,15 +139,9 @@ export function RepoDetailPage({
   })
 
   async function handleRefresh() {
-    // 操作进行中点刷新只重读当前 Tab 的核心数据，避免与 loadAll 竞态
-    if (mutating) {
-      if (data.tab === 0) await data.loadChanges()
-      else if (data.tab === 1) await data.loadStashes()
-      else if (data.tab === 2) await data.loadTrackedFiles()
-      else await data.loadLog()
-      return
-    }
-    await data.loadAll()
+    // 写操作完成后已有统一刷新，此时不再并发读取其它 Tab 的中间状态。
+    if (mutating) return
+    await data.loadAll("详情下拉", true)
   }
 
   const confirmAlert = pendingActions.pending
@@ -201,7 +195,7 @@ export function RepoDetailPage({
       }
       onAppear={() => {
         if (nav.consumeSkipNextAppearLoad()) return
-        data.loadAll()
+        data.loadAll("详情出现", false)
       }}
       refreshable={handleRefresh}
       toolbar={{

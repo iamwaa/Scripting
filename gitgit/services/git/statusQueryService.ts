@@ -7,6 +7,14 @@ import { paginateHistory, type HistoryPage } from "../../utils/history"
 import { setLruEntry } from "../../utils/lru"
 import { measureOperation } from "../../utils/performance"
 import { getCtx, type GitContext } from "./runtime"
+import {
+  cacheRepoChanges,
+  getCachedRepoChanges,
+  rememberChangesCount,
+  runStatusRead,
+  scanStatusMatrix,
+  statusRevision,
+} from "./statusScanService"
 
 const HISTORY_INITIAL_DEPTH = 64
 const HISTORY_SEARCH_INITIAL_DEPTH = 256
@@ -91,9 +99,27 @@ export async function hasHeadCommit(bookmarkName: string): Promise<boolean> {
   }
 }
 
-export async function getChanges(bookmarkName: string): Promise<FileChange[]> {
-  const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
-  if (!(await FileManager.exists(gitdir + "/HEAD"))) return []
+export function getChanges(
+  bookmarkName: string,
+  source = "详情刷新",
+  options?: { fresh?: boolean }
+): Promise<FileChange[]> {
+  // fresh=true 仅在详情“出现”路径传入：复用 30 秒内本仓成功读取；其余调用始终实时。
+  if (options?.fresh) {
+    const cached = getCachedRepoChanges(bookmarkName)
+    if (cached) return Promise.resolve(cached)
+  }
+  return runStatusRead(bookmarkName, () => readChanges(bookmarkName, source))
+}
+
+async function readChanges(bookmarkName: string, source: string): Promise<FileChange[]> {
+  const revision = statusRevision(bookmarkName)
+  const ctx = await getCtx(bookmarkName)
+  const { dir, gitdir } = ctx
+  if (!(await FileManager.exists(gitdir + "/HEAD"))) {
+    rememberChangesCount(bookmarkName, 0, revision)
+    return []
+  }
   try {
     const sample = await FileManager.readDirectory(dir)
     if (!sample) throw new Error("工作区不可读: " + dir)
@@ -104,11 +130,7 @@ export async function getChanges(bookmarkName: string): Promise<FileChange[]> {
     )
   }
 
-  const matrix = await measureOperation(
-    "扫描工作区状态",
-    () => git.statusMatrix({ fs, dir, gitdir }),
-    bookmarkName
-  )
+  const matrix = await scanStatusMatrix(bookmarkName, ctx, source)
   const changes: FileChange[] = []
   for (const row of matrix as [string, number, number, number][]) {
     const filepath = String(row[0] || "").replace(/^\/+/, "")
@@ -124,6 +146,9 @@ export async function getChanges(bookmarkName: string): Promise<FileChange[]> {
       unstaged: work !== stage,
     })
   }
+  rememberChangesCount(bookmarkName, changes.length, revision)
+  // 供 30 秒内详情“出现”复用；代次/写入屏障变化会拒绝发布旧结果
+  cacheRepoChanges(bookmarkName, changes, revision)
   return changes
 }
 

@@ -1,3 +1,4 @@
+import { scanMutationMatrix } from "./matrixScanService"
 import type { StashEntry } from "../../types/git"
 import {
   collectGhostStashIndices,
@@ -124,11 +125,7 @@ export async function applyStashInternal(
   if (!Number.isInteger(index) || index < 0) throw new Error("无效的 Stash 索引")
   const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
   await repairStashReflog(fs)
-  const matrix = (await git.statusMatrix({
-    fs,
-    dir,
-    gitdir,
-  })) as [string, number, number, number][]
+  const matrix = await scanMutationMatrix({ git, fs, dir, gitdir }, "写操作应用Stash前检查")
   if (!isStatusMatrixClean(matrix)) {
     throw new Error("请先提交、暂存到 Stash 或丢弃当前改动，再应用 Stash")
   }

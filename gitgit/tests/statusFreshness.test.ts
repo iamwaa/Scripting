@@ -1,62 +1,30 @@
 import { Script } from "scripting"
-import {
-  buildRepoSetSignature,
-  REPO_STATUS_FRESHNESS_MS,
-  shouldRefreshRepoStatuses,
-} from "../utils/statusFreshness"
+import { isRepoStatusFresh, REPO_STATUS_FRESHNESS_MS } from "../utils/statusFreshness"
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error("断言失败: " + message)
 }
 
 function main() {
-  const signature = buildRepoSetSignature(["repo-b", "repo-a"])
-  assert(signature === "repo-a\nrepo-b", "仓库签名与输入顺序无关")
-
-  const base = {
-    lastCompletedAt: 10000,
-    repoSignature: signature,
-    lastRepoSignature: signature,
-    latestSnapshotAt: 10000,
-  }
-  assert(
-    !shouldRefreshRepoStatuses({ ...base, now: 15000 }),
-    "完成后 5 秒内保持新鲜"
-  )
-  assert(
-    shouldRefreshRepoStatuses({
-      ...base,
-      now: 10000 + REPO_STATUS_FRESHNESS_MS,
-    }),
-    "达到 30 秒新鲜期后刷新"
-  )
-  assert(
-    shouldRefreshRepoStatuses({
-      ...base,
-      now: 15000,
-      repoSignature: buildRepoSetSignature(["repo-a"]),
-    }),
-    "仓库集合变化立即刷新"
-  )
-  assert(
-    shouldRefreshRepoStatuses({
-      ...base,
-      now: 15000,
-      latestSnapshotAt: 12000,
-    }),
-    "详情页写入更新快照后立即刷新"
-  )
-  assert(
-    shouldRefreshRepoStatuses({ ...base, now: 15000, force: true }),
-    "下拉刷新强制执行"
-  )
-  console.log("status freshness 测试通过")
+  const base = { completedAt: 10000, revision: 2, currentRevision: 2 }
+  assert(isRepoStatusFresh({ ...base, now: 15000 }), "完成后五秒内复用")
+  assert(!isRepoStatusFresh({ ...base, now: 10000 + REPO_STATUS_FRESHNESS_MS }), "到期后检测外部改动")
+  assert(!isRepoStatusFresh({ ...base, now: 15000, force: true }), "手动强制绕过缓存")
+  assert(!isRepoStatusFresh({ ...base, now: 15000, currentRevision: 4 }), "本仓写入立即失效")
+  assert(!isRepoStatusFresh({ ...base, now: 9000 }), "时钟回退保守刷新")
+  assert(!isRepoStatusFresh({ ...base, now: NaN }), "非法时间不命中")
+  // 每仓独立传入代次；更新其它仓库不改变本仓参数。
+  const repoA = { ...base, currentRevision: 4 }
+  const repoB = { ...base }
+  assert(!isRepoStatusFresh({ ...repoA, now: 15000 }), "A 变更失效")
+  assert(isRepoStatusFresh({ ...repoB, now: 15000 }), "A 变更不影响 B")
 }
 
 try {
   main()
-  Script.exit("status freshness 测试通过")
+  Script.exit("status freshness tests passed")
 } catch (error) {
   console.error(error)
+  Script.exit("status freshness tests failed: " + error)
   throw error
 }

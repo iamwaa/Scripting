@@ -5,11 +5,7 @@
  * .git 分离存储：gitdir 放 App Group git-repos/<repoId>/，工作区走安全范围书签解析。
  */
 
-import { Widget } from "scripting"
-import {
-  resolveGitdir,
-  runWithBackgroundKeepAlive,
-} from "./git/runtime"
+import { runWithBackgroundKeepAlive } from "./git/runtime"
 import {
   applyStashInternal,
   dropStashInternal,
@@ -33,7 +29,10 @@ import {
   hasHeadCommit,
   getTrackedFiles,
 } from "./git/statusQueryService"
-import { getRepoListStatusInternal } from "./git/repoStatusService"
+import { getRepoListStatus } from "./git/repoStatusReadService"
+import { runStatusMutation } from "./git/statusScanService"
+export { getRepoListStatus }
+export { getCachedRepoStatus, statusRevision } from "./git/statusScanService"
 import {
   amendHeadCommitInternal,
   revertCommitInternal,
@@ -86,17 +85,7 @@ import {
   restoreFileInternal,
   unstageFilesInternal,
 } from "./git/worktreeService"
-import {
-  findRepo,
-  getRepoId,
-  writeSnapshot,
-} from "./repoStore"
-import { measureOperation } from "../utils/performance"
-import { runSingleFlight } from "../utils/singleFlight"
-import {
-  acquireRepoMutationLock,
-  releaseRepoMutationLock,
-} from "../utils/gitSync"
+import { getRepoId, removeRepo as removeRepoInternal } from "./repoStore"
 import type {
   AutoMarkConflictsResult,
   ConflictResolution,
@@ -106,56 +95,31 @@ import type {
   PullResult,
 } from "../utils/branchMerge"
 import type { RemoteOpOptions } from "../utils/remoteProgress"
-import type {
-  RenameBranchResult,
-  RepoListStatus,
-} from "../types/git"
-
-
-const repoMutationLocks = new Set<string>()
-const repoStatusReads = new Map<string, Promise<RepoListStatus>>()
+import type { RenameBranchResult } from "../types/git"
 
 async function runRepoMutation<T>(
   bookmarkName: string,
   operation: () => Promise<T>,
   refreshSnapshot = true
 ): Promise<T> {
-  const lockKey = resolveGitdir(bookmarkName)
-  if (!acquireRepoMutationLock(repoMutationLocks, lockKey)) {
-    throw new Error("该仓库正在执行其它写操作，请稍后再试")
-  }
+  let started = false
   try {
-    return await operation()
+    return await runStatusMutation(bookmarkName, () => {
+      started = true
+      return operation()
+    })
   } finally {
-    releaseRepoMutationLock(repoMutationLocks, lockKey)
-    if (refreshSnapshot) await refreshRepoSnapshot(bookmarkName)
+    if (started && refreshSnapshot) await refreshRepoSnapshot(bookmarkName)
   }
 }
 
-async function persistRepoSnapshot(
-  bookmarkName: string,
-  status: RepoListStatus
-): Promise<void> {
-  const repo = findRepo(bookmarkName)
-  if (!repo) return
-  try {
-    await writeSnapshot(bookmarkName, {
-      name: repo.name,
-      branch: status.branch,
-      uncommitted: status.uncommitted,
-      ahead: status.ahead,
-      behind: status.behind,
-      updatedAt: Date.now(),
-    })
-    Widget.reloadAll()
-  } catch (e) {
-    console.warn("⚠️ 仓库快照写入失败: " + e)
-  }
+export function removeRepo(bookmarkName: string): Promise<void> {
+  return runRepoMutation(bookmarkName, () => removeRepoInternal(bookmarkName), false)
 }
 
 async function refreshRepoSnapshot(bookmarkName: string): Promise<void> {
   try {
-    await getRepoListStatus(bookmarkName)
+    await getRepoListStatus(bookmarkName, undefined, { source: "写操作收尾", force: true })
   } catch (e) {
     console.warn("⚠️ 仓库快照刷新失败: " + e)
   }
@@ -179,36 +143,6 @@ async function refreshRepoSnapshot(bookmarkName: string): Promise<void> {
  * 用于重编/回退前让「未推送」安全判定基于最新的远端 tip，
  * 避免因远端跟踪引用陈旧把「远端已领先」误判为「未推送」。
  */
-
-/**
- * 仓库列表用轻量状态：改动数 + 是否领先远端（待推送）+ 合并冲突
- * 单次 getCtx，避免 getChanges/getBranches/listRemotes 重复装载引擎。
- * ahead 计算失败时记 0，不阻断列表渲染。
- */
-
-export async function getRepoListStatus(
-  bookmarkName: string,
-  knownUncommitted?: number
-): Promise<RepoListStatus> {
-  const readStatus = async () => {
-    const repoName = findRepo(bookmarkName)?.name || bookmarkName
-    const status = await measureOperation(
-      "读取仓库完整状态",
-      () => getRepoListStatusInternal(
-        bookmarkName,
-        getMergeConflictState,
-        knownUncommitted
-      ),
-      repoName
-    )
-    await persistRepoSnapshot(bookmarkName, status)
-    return status
-  }
-  if (knownUncommitted != null) return readStatus()
-
-  return runSingleFlight(repoStatusReads, bookmarkName, readStatus)
-}
-
 
 /**
  * 绑定 origin 并推送当前分支（上传 GitHub 用）。

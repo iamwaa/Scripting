@@ -1,5 +1,5 @@
 import type { BranchInfo, ManagedBranches } from "../../types/git"
-import { ensureWorktreeMaterialized, getCtx } from "./runtime"
+import { getCtx } from "./runtime"
 
 async function readSymbolicHeadBranch(fs: any): Promise<string | null> {
   try {
@@ -48,11 +48,7 @@ export async function getRemoteBranches(
 export async function getBranches(bookmarkName: string): Promise<BranchInfo> {
   const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
   if (!(await hasHead(gitdir))) return { branches: [], current: null }
-  try {
-    await ensureWorktreeMaterialized(git, fs, dir, gitdir)
-  } catch (_e) {
-    // 分支查询不因工作区修复失败而中止
-  }
+  // 分支查询保持只读；不能在状态扫描并行时 force checkout 工作区。
   let localBranches: string[] = []
   try {
     localBranches = await git.listBranches({ fs, dir, gitdir })
@@ -91,11 +87,7 @@ export async function getManagedBranches(
   if (!(await hasHead(gitdir))) {
     return { current: null, locals: [], remotes: [], remoteNames: [], hasRemote: false }
   }
-  try {
-    await ensureWorktreeMaterialized(git, fs, dir, gitdir)
-  } catch (_e) {
-    // 分支查询不因工作区修复失败而中止
-  }
+  // 分支查询保持只读；不能在状态扫描并行时 force checkout 工作区。
   let locals: string[] = []
   try {
     locals = await git.listBranches({ fs, dir, gitdir })

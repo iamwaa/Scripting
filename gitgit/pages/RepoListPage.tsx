@@ -32,11 +32,9 @@ import type {
 import {
   listRepos,
   addRepoByPicker,
-  removeRepo,
-  readSnapshots,
   sourceLabel,
 } from "../services/repoStore"
-import { getRepoListStatus, initRepo } from "../services/gitService"
+import { initRepo, removeRepo } from "../services/gitService"
 import { BusyOverlay } from "../components/BusyOverlay"
 import { RepoDetailPage } from "./RepoDetailPage"
 import { ClonePage } from "./ClonePage"
@@ -51,15 +49,7 @@ import {
 import { formatRepoListMergeSummary } from "../utils/mergeConflict"
 import { yieldForUi } from "../utils/remoteProgress"
 import { sortReposForList } from "../utils/repoSort"
-import {
-  buildRepoSetSignature,
-  shouldRefreshRepoStatuses,
-} from "../utils/statusFreshness"
-
-let statusRefreshCompletedAt = 0
-let statusRefreshRepoSignature = ""
-let statusRefreshPromise: Promise<void> | null = null
-let cachedStatusMap: Record<string, RepoListStatus> = {}
+import { useRepoListStatus } from "../hooks/useRepoListStatus"
 
 export function RepoListPage() {
   // 关闭 present 的根界面（设置已独立为 Tab）
@@ -71,59 +61,12 @@ export function RepoListPage() {
     title: string
     message: string
   } | null>(null)
-  // bookmarkName → 列表状态；快照只补首屏占位，实时查询逐行覆盖
-  const [statusMap, setStatusMap] = useState<Record<string, RepoListStatus>>(
-    cachedStatusMap
-  )
-  const [snapshotMap, setSnapshotMap] = useState<Record<string, RepoSnapshot>>({})
+  const {
+    statusMap, snapshotMap, refreshAll, refreshRepo, forgetRepo, appear, disappear,
+  } = useRepoListStatus(setRepos)
   // 移除仓库忙态：删 gitdir 缓存对大仓库可能耗时，用全屏遮罩
   const [removingName, setRemovingName] = useState<string | null>(null)
 
-  function refreshAll(force = false): Promise<void> {
-    if (statusRefreshPromise) {
-      return statusRefreshPromise.then(() => {
-        setRepos(listRepos())
-        setStatusMap(cachedStatusMap)
-      })
-    }
-    const pending = refreshAllInternal(force).finally(() => {
-      if (statusRefreshPromise === pending) statusRefreshPromise = null
-    })
-    statusRefreshPromise = pending
-    return pending
-  }
-
-  async function refreshAllInternal(force: boolean) {
-    const latest = listRepos()
-    setRepos(latest)
-    let snapshots: Record<string, RepoSnapshot> = {}
-    try {
-      snapshots = await readSnapshots()
-      setSnapshotMap(snapshots)
-    } catch (_e) {
-      // 快照只用于首屏占位，读取失败仍继续实时刷新
-    }
-    const latestSnapshotAt = Object.values(snapshots).reduce(
-      (latestAt, snapshot) => Math.max(latestAt, snapshot.updatedAt),
-      0
-    )
-    const repoSignature = buildRepoSetSignature(
-      latest.map((repo) => repo.bookmarkName)
-    )
-    if (!shouldRefreshRepoStatuses({
-      now: Date.now(),
-      lastCompletedAt: statusRefreshCompletedAt,
-      repoSignature,
-      lastRepoSignature: statusRefreshRepoSignature,
-      latestSnapshotAt,
-      force,
-    })) {
-      return
-    }
-    await refreshStatuses(latest, snapshots)
-    statusRefreshCompletedAt = Date.now()
-    statusRefreshRepoSignature = repoSignature
-  }
 
   function showAlert(title: string, message: string) {
     setAlertState({ title, message })
@@ -135,23 +78,7 @@ export function RepoListPage() {
         ? current
         : [...current, repo]
     )
-    refreshStatuses([repo])
-  }
-
-  async function refreshStatuses(
-    list: RepoMeta[],
-    snapshots: Record<string, RepoSnapshot> = snapshotMap
-  ) {
-    // 尚无状态的行由 RepoRow 显示加载图标；串行逐个刷新，避免大仓库并行打爆 FS。
-    // 待处理仓库先刷新，组内顺序与列表展示一致。
-    for (const repo of sortReposForList(list, statusMap, snapshots)) {
-      const status = await getRepoListStatus(repo.bookmarkName)
-      cachedStatusMap = {
-        ...cachedStatusMap,
-        [repo.bookmarkName]: status,
-      }
-      setStatusMap(cachedStatusMap)
-    }
+    refreshRepo(repo)
   }
 
   async function handleAddLocal() {
@@ -190,10 +117,7 @@ export function RepoListPage() {
         )
         return next
       })
-      const nextStatuses = { ...cachedStatusMap }
-      delete nextStatuses[repo.bookmarkName]
-      cachedStatusMap = nextStatuses
-      setStatusMap(nextStatuses)
+      forgetRepo(repo.bookmarkName)
     } catch (e: any) {
       showAlert("删除失败", String(e?.message || e))
     } finally {
@@ -237,9 +161,8 @@ export function RepoListPage() {
             }
           : undefined
       }
-      onAppear={() => {
-        refreshAll()
-      }}
+      onAppear={appear}
+      onDisappear={disappear}
       refreshable={() => refreshAll(true)}
       navigationDestination={{
         isPresented: showClone,

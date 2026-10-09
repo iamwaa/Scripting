@@ -1,3 +1,4 @@
+import { scanMutationMatrix } from "./matrixScanService"
 import { resolveAuthor } from "../authStore"
 import {
   checkoutWithEmptyDirCleanup,
@@ -95,12 +96,7 @@ export async function revertCommitInternal(
     branch = null
   }
   if (!branch) throw new Error("当前不在命名分支上，无法撤销")
-  const matrix = (await git.statusMatrix({ fs, dir, gitdir })) as [
-    string,
-    number,
-    number,
-    number,
-  ][]
+  const matrix = await scanMutationMatrix({ git, fs, dir, gitdir }, "写操作撤销前检查")
   if (matrix.some((row) => !(row[1] === 1 && row[2] === 1 && row[3] === 1))) {
     throw new Error("工作区有未提交改动，撤销前请先提交或暂存（stash），以免丢失改动。")
   }
@@ -122,7 +118,7 @@ export async function revertCommitInternal(
   await writeSymbolicHead(fs, branch)
   await git.add({ fs, dir, gitdir, filepath: "." })
   try {
-    const checkoutMatrix = await git.statusMatrix({ fs, dir, gitdir })
+    const checkoutMatrix = await scanMutationMatrix({ git, fs, dir, gitdir }, "写操作撤销删除补偿")
     for (const row of checkoutMatrix as [string, number, number, number][]) {
       if (row[1] === 1 && row[2] === 0) {
         await git.remove({ fs, dir, gitdir, filepath: row[0] }).catch(() => undefined)
@@ -150,7 +146,7 @@ export async function resetToCommitInternal(
   const branch = await git.currentBranch({ fs, dir, gitdir, fullname: false })
   if (!branch) throw new Error("当前不在命名分支上，无法回滚")
 
-  const matrix = await git.statusMatrix({ fs, dir, gitdir })
+  const matrix = await scanMutationMatrix({ git, fs, dir, gitdir }, "写操作回滚前检查")
   if (!isStatusMatrixClean(matrix)) {
     throw new Error("工作区有未提交改动，回滚前请先提交或保存到 Stash，以免丢失改动。")
   }

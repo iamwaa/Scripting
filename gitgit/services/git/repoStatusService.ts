@@ -12,6 +12,7 @@ import { measureOperation } from "../../utils/performance"
 import { findRepo, resolveWorkdir } from "../repoStore"
 import { getCtx, resolveGitdir, type GitContext } from "./runtime"
 import { matrixToStatus } from "./statusQueryService"
+import { scanStatusMatrix } from "./statusScanService"
 
 async function readSymbolicHeadBranch(fs: any): Promise<string | null> {
   try {
@@ -125,7 +126,8 @@ export async function getSyncTopology(
 export async function getRepoListStatusInternal(
   bookmarkName: string,
   readMergeState: (bookmarkName: string) => Promise<MergeConflictState | null>,
-  knownUncommitted?: number
+  knownUncommitted?: number,
+  source = "状态查询"
 ): Promise<RepoListStatus> {
   try {
     const dir = resolveWorkdir(bookmarkName)
@@ -166,22 +168,10 @@ export async function getRepoListStatusInternal(
       Math.floor(knownUncommitted ?? 0) || 0
     )
     if (knownUncommitted == null) {
-      try {
-        const matrix = (await measureOperation(
-          "扫描列表仓库状态",
-          () => git.statusMatrix({
-            fs,
-            dir: workDir,
-            gitdir: contextGitdir,
-          }),
-          diagnosticName
-        )) as [string, number, number, number][]
-        for (const [, head, work, stage] of matrix) {
-          if (head === 1 && work === 1 && stage === 1) continue
-          if (matrixToStatus(head, work, stage) !== "unmodified") uncommitted++
-        }
-      } catch (_e) {
-        uncommitted = 0
+      const matrix = await scanStatusMatrix(bookmarkName, ctx, source)
+      for (const [, head, work, stage] of matrix) {
+        if (head === 1 && work === 1 && stage === 1) continue
+        if (matrixToStatus(head, work, stage) !== "unmodified") uncommitted++
       }
     }
 

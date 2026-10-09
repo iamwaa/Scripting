@@ -7,6 +7,7 @@ import {
   recordSlowOperation,
   SLOW_OPERATION_LIMIT,
 } from "../utils/performance"
+import { createScanDiagnostics, getScanDiagnostics } from "../utils/scanDiagnostics"
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error("断言失败: " + message)
@@ -48,7 +49,23 @@ function testPerformanceDiagnostics(): void {
   assert(report.includes("内部阶段"), "报告说明嵌套阶段不是重复扫描")
   assert(report.includes("历史缓存：2 / 4 个仓库"), "报告包含缓存统计")
   assert(report.includes("操作5"), "报告包含慢操作")
+
+  // 扫描详细记录与慢操作分开保存，但共用设置页清除入口
+  const scan = createScanDiagnostics({
+    scanId: "scan-1",
+    repoId: "repo-id",
+    repoName: "demo",
+    source: "repo-list",
+    queuedAt: 0,
+    startedAt: 0,
+    activeScans: 1,
+  })
+  scan.finish(3)
+  const scanReport = buildPerformanceReport()
+  assert(scanReport.includes("## 扫描明细") && scanReport.includes("rows 3"), "报告包含扫描明细")
+  assert(scanReport.includes("不等于墙钟耗时"), "报告注明 I/O 时间为累计值")
   clearSlowOperations()
+  assert(getScanDiagnostics().length === 0, "清除慢操作时扫描记录一并清空")
 }
 
 try {

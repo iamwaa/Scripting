@@ -1,3 +1,4 @@
+import { scanMutationMatrix } from "./matrixScanService"
 import { Script } from "scripting"
 import { createFS, loadGitEngine } from "../gitCore"
 import {
@@ -177,12 +178,7 @@ export async function assertWorktreeCleanForCheckout(
   dir: string,
   gitdir: string
 ): Promise<void> {
-  const matrix = (await git.statusMatrix({ fs, dir, gitdir })) as [
-    string,
-    number,
-    number,
-    number,
-  ][]
+  const matrix = await scanMutationMatrix({ git, fs, dir, gitdir }, "写操作切换前检查")
   if (!isStatusMatrixClean(matrix)) {
     throw new Error("请先提交、暂存到 Stash 或丢弃当前改动，再切换分支")
   }

@@ -327,6 +327,11 @@ export function createFS(
           mode: isDir ? 0o40000 : isLink ? 0o120000 : 0o100644,
           size: st.size || 0,
           ino: 0,
+          // 引擎的索引快路径要求磁盘 stat 与 index 条目的 dev/uid/gid 逐一相等；
+          // 缺失字段会规范化成 NaN 而永不相等，导致每次扫描重读全部文件内容重新哈希。
+          dev: 0,
+          uid: 0,
+          gid: 0,
           mtimeMs: dateToMillis(st.modificationDate),
           ctimeMs: dateToMillis(st.creationDate),
           isFile: () => isFile,
