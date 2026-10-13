@@ -8,6 +8,7 @@ import {
 import { compareCommitTrees } from "../services/gitService"
 import { resetToCommitAndPushInternal } from "../services/git/historyMutationService"
 import { normalizeRemoteBranches } from "../services/git/branchQueryService"
+import { resolveCurrentBranch } from "../services/git/runtime"
 import { lineDiff } from "../services/diffService"
 import {
   readGithubUser,
@@ -1704,6 +1705,10 @@ async function testRemoteProgressHelpers(): Promise<void> {
     "应本地化 Uploading"
   )
   assert(
+    localizeProgressPhase("Confirming") === "等待服务端确认",
+    "应本地化 Confirming"
+  )
+  assert(
     localizeProgressPhase("Downloading") === "下载中",
     "应本地化 Downloading"
   )
@@ -1727,8 +1732,17 @@ async function testRemoteProgressHelpers(): Promise<void> {
   assert(formatProgressBytes(0) === "", "零字节返回空串")
   assert(formatProgressBytes(-5) === "", "负数返回空串")
   assert(formatProgressBytes(512) === "512 B", "B 级")
-  assert(formatProgressBytes(2048) === "2.0 KB", "KB 级")
+  assert(
+    formatProgressBytes(2048) === "2.0 KB",
+    "KB 级"
+  )
   assert(formatProgressBytes(1572864) === "1.5 MB", "MB 级")
+
+  assert(
+    formatRemoteProgress({ phase: "Confirming", loaded: 0, total: 0 }) ===
+      "等待服务端确认",
+    "等待服务端确认阶段显示纯文案"
+  )
 
   // 字节传输阶段：总量未知仅计数器，已知附百分比
   assert(
@@ -1753,6 +1767,15 @@ async function testRemoteProgressHelpers(): Promise<void> {
     formatRemoteProgress({ phase: "Uploading", loaded: 2048, total: 0 }) ===
       "上传对象 2.0 KB",
     "上传总量未知时显示已上传字节"
+  )
+  assert(
+    formatRemoteProgress({ phase: "Preparing", loaded: 1572864, total: 0 }) ===
+      "打包对象 1.5 MB",
+    "打包阶段按字节显示已读取对象量"
+  )
+  assert(
+    localizeProgressPhase("Preparing") === "打包对象",
+    "应本地化 Preparing"
   )
   assert(
     formatBusyWithPercent("推送中", 50) === "推送中…（50%）",
@@ -2159,6 +2182,54 @@ async function testRollbackAndForcePushIntegration(): Promise<void> {
   }
 }
 
+async function testCurrentBranchResolution(): Promise<void> {
+  const root =
+    FileManager.appGroupDocumentsDirectory +
+    "/gitgit-tests/current-branch-" +
+    Date.now()
+  const workdir = root + "/work"
+  const gitdir = root + "/git-repos/repo"
+  try {
+    await FileManager.createDirectory(workdir, true)
+    await FileManager.createDirectory(gitdir, true)
+    const { git } = await loadGitEngine()
+    const fs = createFS(gitdir, workdir)
+    const options = { fs, dir: workdir, gitdir }
+
+    // 空仓：HEAD 已符号指向 main，但 refs/heads/main 尚不存在，仍必须解析出分支名
+    await fs.writeFile("HEAD", "ref: refs/heads/main\n")
+    assert(
+      (await resolveCurrentBranch(git, fs, workdir, gitdir)) === "main",
+      "空仓下也应解析出命名分支 main，不得误报不在命名分支"
+    )
+
+    await fs.writeFile("a.txt", "a\n")
+    await git.add({ ...options, filepath: "a.txt" })
+    await git.commit({
+      ...options,
+      message: "init",
+      author: { name: "t", email: "t@local" },
+    })
+    assert(
+      (await resolveCurrentBranch(git, fs, workdir, gitdir)) === "main",
+      "有提交后仍应返回同一命名分支"
+    )
+
+    // HEAD 丢失（仓库损坏/尚未物化）时必须返回 null，由上层提示而不能凭空编造分支名
+    await fs.unlink("HEAD")
+    assert(
+      (await resolveCurrentBranch(git, fs, workdir, gitdir)) == null,
+      "HEAD 缺失时应返回 null"
+    )
+  } finally {
+    try {
+      await FileManager.remove(root)
+    } catch (_e) {
+      /* 测试清理失败不阻断 */
+    }
+  }
+}
+
 function testRemoteBranchNormalization(): void {
   const branches = normalizeRemoteBranches(
     [
@@ -2337,6 +2408,7 @@ async function main(): Promise<void> {
   await testRemoteProgressHelpers()
   await testForceCheckoutCleansWorktree()
   await testRollbackAndForcePushIntegration()
+  await testCurrentBranchResolution()
   testCommitMessageParts()
   testSuggestedCommitTitle()
   console.log("✅ reliability tests passed")

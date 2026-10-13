@@ -42,7 +42,7 @@ export function RepoDetailDestination({
   onUploaded: (repo: RepoMeta) => void
   onRemotesChanged: () => void
   onConflictsChanged: (reason?: "updated" | "completed") => void
-  onRollbackSelect: (entry: CommitEntry) => void
+  onRollbackSelect: (entry: CommitEntry, branch: string) => void
 }) {
   if (showUpload) {
     return (

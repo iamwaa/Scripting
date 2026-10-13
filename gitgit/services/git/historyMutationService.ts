@@ -4,6 +4,7 @@ import {
   checkoutWithEmptyDirCleanup,
   ensureGitConfigAuthor,
   getCtx,
+  resolveCurrentBranch,
   writeSymbolicHead,
 } from "./runtime"
 import { isStatusMatrixClean } from "../../utils/stash"
@@ -25,12 +26,7 @@ async function assertHeadCanBeRewritten(
   headOid: string,
   action: "回退" | "重编"
 ): Promise<string> {
-  let branch: string | null = null
-  try {
-    branch = await git.currentBranch({ fs, dir, gitdir, fullname: false })
-  } catch (_e) {
-    branch = null
-  }
+  const branch = await resolveCurrentBranch(git, fs, dir, gitdir)
   if (!branch) throw new Error(`当前不在命名分支上，无法${action}`)
   try {
     const remoteOid = await git.resolveRef({
@@ -89,12 +85,7 @@ export async function revertCommitInternal(
   if (parents.length > 1) throw new Error("暂不支持撤销合并提交")
   const parentOid = parents[0]
   if (!parentOid) throw new Error("无法撤销初始提交（无父提交）")
-  let branch: string | null = null
-  try {
-    branch = await git.currentBranch({ fs, dir, gitdir, fullname: false })
-  } catch (_e) {
-    branch = null
-  }
+  const branch = await resolveCurrentBranch(git, fs, dir, gitdir)
   if (!branch) throw new Error("当前不在命名分支上，无法撤销")
   const matrix = await scanMutationMatrix({ git, fs, dir, gitdir }, "写操作撤销前检查")
   if (matrix.some((row) => !(row[1] === 1 && row[2] === 1 && row[3] === 1))) {
@@ -143,7 +134,7 @@ export async function resetToCommitInternal(
 ): Promise<string> {
   const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
   await git.readCommit({ fs, dir, gitdir, oid })
-  const branch = await git.currentBranch({ fs, dir, gitdir, fullname: false })
+  const branch = await resolveCurrentBranch(git, fs, dir, gitdir)
   if (!branch) throw new Error("当前不在命名分支上，无法回滚")
 
   const matrix = await scanMutationMatrix({ git, fs, dir, gitdir }, "写操作回滚前检查")

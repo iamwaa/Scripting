@@ -26,9 +26,9 @@ type UseRepoSyncActionsProps = {
   setPulledAt: (branch: string, timestamp: number) => void
   refreshSyncState: () => Promise<void>
   reloadRepo: () => Promise<void>
-  showAlert: (title: string, message: string) => void
   showToast: (message: string, type?: ToastType, duration?: number) => void
-  openConflictsPage: () => void
+  /** 合并冲突提醒：先在本页提示，关闭后再由详情页打开冲突页，避免提示被推入的页面遮住 */
+  showConflictNotice: (message: string) => void
 }
 
 export function useRepoSyncActions({
@@ -43,20 +43,30 @@ export function useRepoSyncActions({
   setPulledAt,
   refreshSyncState,
   reloadRepo,
-  showAlert,
   showToast,
-  openConflictsPage,
+  showConflictNotice,
 }: UseRepoSyncActionsProps) {
   async function handlePush() {
     const token = new RemoteCancelToken()
+    // 组装请求体阶段（Uploading）达到该字节数时提示一次，避免用户误判卡住
+    const LARGE_UPLOAD_THRESHOLD = 20 * 1024 * 1024
+    let largeUploadWarned = false
     const remoteOptions = {
       cancelToken: token,
       onProgress: async (info: RemoteProgressInfo) => {
+        if (
+          info.phase === "上传对象" &&
+          !largeUploadWarned &&
+          info.loaded >= LARGE_UPLOAD_THRESHOLD
+        ) {
+          largeUploadWarned = true
+          showToast("本次上传量较大，预计耗时较长", "warning", 4)
+        }
         await updateOpBusy("正在推送", info.label)
       },
     }
     try {
-      await beginOpBusy("正在推送", undefined, makeSyncCancel(token))
+      await beginOpBusy("正在推送", "正在打包对象…", makeSyncCancel(token))
       const branch = currentBranch
       if (!branch) throw new Error("当前没有可推送的分支")
       if (hasRemote && (await hasRemoteBranch(bookmarkName, branch, "origin"))) {
@@ -87,8 +97,7 @@ export function useRepoSyncActions({
         const code = String(error?.code || "")
         const message = String(error?.message || error)
         if (code === "MergeConflictError" || message.includes("合并冲突")) {
-          openConflictsPage()
-          showAlert("合并冲突", message)
+          showConflictNotice(message)
         } else {
           showToast(`推送失败：${message}`, "error")
           notifyError("push", displayName, message)
@@ -131,8 +140,7 @@ export function useRepoSyncActions({
         } catch (_e) {
           // 冲突页仍应允许打开
         }
-        openConflictsPage()
-        showAlert("合并冲突", message)
+        showConflictNotice(message)
       } else {
         showToast(`拉取失败：${message}`, "error")
         notifyError("pull", displayName, message)

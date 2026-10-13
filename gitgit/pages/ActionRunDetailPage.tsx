@@ -119,6 +119,12 @@ export function ActionRunDetailPage({
   // 工件下载
   const [downloadingId, setDownloadingId] = useState<number | null>(null)
   const [downloadProgress, setDownloadProgress] = useState<number>(0)
+  // 下载结果常驻在工件行内：下载可能在已推入的子页（日志查看器）打开时完成，toast 会被遮住
+  const [downloadResult, setDownloadResult] = useState<{
+    id: number
+    message: string
+    ok: boolean
+  } | null>(null)
   // 是否正在发起重跑（防重复提交）
   const [rerunning, setRerunning] = useState(false)
 
@@ -259,6 +265,7 @@ export function ActionRunDetailPage({
     if (downloadingId != null) return
     setDownloadingId(artifact.id)
     setDownloadProgress(0)
+    setDownloadResult(null)
     const tmpDir = FileManager.temporaryDirectory
     const safeName = artifact.name.replace(/[^A-Za-z0-9._-]/g, "_")
     const filepath = `${tmpDir}/${safeName}.zip`
@@ -286,9 +293,13 @@ export function ActionRunDetailPage({
       })
       // 弹出分享面板供用户保存
       await ShareSheet.present([filepath])
-      showToast("工件已下载", "success")
+      setDownloadResult({ id: artifact.id, message: "已下载", ok: true })
     } catch (e: any) {
-      showToast("下载失败：" + String(e?.message || e), "error")
+      setDownloadResult({
+        id: artifact.id,
+        message: "下载失败：" + String(e?.message || e),
+        ok: false,
+      })
     } finally {
       // 无论成功、失败或取消，都清理临时文件
       try {
@@ -591,6 +602,15 @@ export function ActionRunDetailPage({
                   {/* 下载进度条 */}
                   {downloadingId === artifact.id && !artifact.expired ? (
                     <ProgressView value={downloadProgress} />
+                  ) : null}
+                  {/* 下载结果：常驻在行内，从子页返回后仍可见 */}
+                  {downloadResult?.id === artifact.id ? (
+                    <Text
+                      font={12}
+                      foregroundStyle={downloadResult.ok ? COLOR_GREEN : COLOR_RED}
+                    >
+                      {downloadResult.message}
+                    </Text>
                   ) : null}
                 </VStack>
               ))}

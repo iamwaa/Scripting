@@ -115,6 +115,8 @@ export function GitHubWorkPage({
   const [loadingMore, setLoadingMore] = useState(false)
   const [creating, setCreating] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
+  // 新建 Issue 表单内的失败提示
+  const [createError, setCreateError] = useState<string | null>(null)
   const [selectedNumber, setSelectedNumber] = useState<number | null>(null)
   const { toastState, showToast, handleToastChanged, toastPresented } = useToast()
   const requestRef = useRef(0)
@@ -177,6 +179,7 @@ export function GitHubWorkPage({
   async function handleCreate(title: string, body: string) {
     if (creating) return
     setCreating(true)
+    setCreateError(null)
     try {
       const created = await createIssue(fullName, { title, body })
       pendingCreatedRef.current = [created, ...pendingCreatedRef.current]
@@ -186,7 +189,8 @@ export function GitHubWorkPage({
       setSelectedNumber(created.number)
       showToast("Issue 已创建：#" + created.number, "success")
     } catch (e: any) {
-      showToast("创建 Issue 失败：" + String(e?.message || e), "error")
+      // 表单仍开着，失败信息必须留在表单内（父页 toast 会被 sheet 遮住）
+      setCreateError("创建 Issue 失败：" + String(e?.message || e))
     } finally {
       setCreating(false)
     }
@@ -206,7 +210,10 @@ export function GitHubWorkPage({
           <Button
             title="新建 Issue"
             systemImage="plus"
-            action={() => setShowCreate(true)}
+            action={() => {
+              setCreateError(null)
+              setShowCreate(true)
+            }}
             disabled={creating}
           />
         ) : undefined,
@@ -226,10 +233,14 @@ export function GitHubWorkPage({
       }}
       sheet={{
         isPresented: showCreate,
-        onChanged: (presented: boolean) => setShowCreate(presented),
+        onChanged: (presented: boolean) => {
+          setShowCreate(presented)
+          if (!presented) setCreateError(null)
+        },
         content: (
           <CreateIssueSheet
             busy={creating}
+            error={createError}
             onCancel={() => setShowCreate(false)}
             onConfirm={handleCreate}
           />

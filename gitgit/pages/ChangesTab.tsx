@@ -28,6 +28,7 @@ export function ChangesTab({
   bookmarkName,
   changes,
   loading,
+  mergeInProgress,
   onOpenCommitForm,
   committing,
   stagingBusy,
@@ -40,6 +41,7 @@ export function ChangesTab({
   bookmarkName: string
   changes: FileChange[]
   loading: boolean
+  mergeInProgress: boolean
   committing: boolean
   stagingBusy: boolean
   onOpenCommitForm: () => void
@@ -52,9 +54,13 @@ export function ChangesTab({
   const hasUnstaged = changes.some((change) => change.unstaged)
   const hasStaged = changes.some((change) => change.staged)
   const worktreeBusy = stagingBusy
-  // 无改动时禁用，但仍显示「全部暂存」，避免提交清空后卡在「取消暂存」
+  // 无改动时禁用，但仍显示「全部暂存」，避免提交清空后卡在「取消暂存」；合并中只允许查看
   const bulkDisabled =
-    loading || worktreeBusy || committing || (!hasUnstaged && !hasStaged)
+    loading ||
+    worktreeBusy ||
+    committing ||
+    mergeInProgress ||
+    (!hasUnstaged && !hasStaged)
   // 有未暂存 → 全部暂存；仅已暂存 → 取消暂存；无改动默认全部暂存
   const canUnstageAll = hasStaged && !hasUnstaged
   const bulkAction = canUnstageAll ? onUnstageAll : onStageAll
@@ -103,6 +109,13 @@ export function ChangesTab({
             </Button>
           </HStack>
         }
+        footer={
+          mergeInProgress ? (
+            <Text font="footnote" foregroundStyle={COLOR_SECONDARY_LABEL}>
+              合并进行中：此处仅供查看合并带来的改动，请在「合并冲突」中完成或中止合并
+            </Text>
+          ) : undefined
+        }
       >
         {loading ? (
           <Text foregroundStyle={COLOR_SECONDARY_LABEL}>加载中…</Text>
@@ -128,14 +141,14 @@ export function ChangesTab({
                       systemImage={c.unstaged ? "plus.circle" : "minus.circle"}
                       tint={c.unstaged ? "systemBlue" : "systemRed"}
                       action={() => c.unstaged ? onStage(c.filepath) : onUnstage(c.filepath)}
-                      disabled={(!c.unstaged && !c.staged) || worktreeBusy}
+                      disabled={(!c.unstaged && !c.staged) || worktreeBusy || mergeInProgress}
                     />,
                     <Button
                       title="撤销"
                       systemImage="arrow.uturn.backward.circle"
                       tint="systemRed"
                       action={() => onRestore(c.filepath)}
-                      disabled={worktreeBusy}
+                      disabled={worktreeBusy || mergeInProgress}
                     />,
                   ],
                 }}
@@ -153,14 +166,14 @@ export function ChangesTab({
         )}
       </Section>
 
-      {/* 无可提交内容时隐藏，避免空操作占位 */}
+      {/* 无可提交内容时隐藏，避免空操作占位；合并中提交入口整体禁用 */}
       {hasStaged ? (
         <Section>
           <Button
             title={committing ? "提交中…" : "提交改动"}
             systemImage="checkmark.circle"
             action={onOpenCommitForm}
-            disabled={committing || worktreeBusy}
+            disabled={committing || worktreeBusy || mergeInProgress}
           />
         </Section>
       ) : null}

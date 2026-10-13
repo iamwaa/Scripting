@@ -2,6 +2,7 @@
  * pages/ActionsPage.tsx - GitHub Actions 工作流运行列表页
  *
  * 展示仓库最近的工作流运行，支持按工作流筛选、分页加载更多。
+ * 行内展示状态、工作流、分支、触发者与工件标识（有工件的运行在右侧显示托盘图标与数量）。
  * 右上角 toolbar 提供手动触发工作流入口。
  * 点击运行项进入 ActionRunDetailPage 查看 job 与日志。
  */
@@ -34,6 +35,7 @@ import {
 import { AvatarView } from "../components/AvatarView"
 import { toastContent } from "../components/Toast"
 import { useToast } from "../hooks/useToast"
+import { useRunArtifactCounts } from "../hooks/useRunArtifactCounts"
 import { ActionRunDetailPage } from "./ActionRunDetailPage"
 import { relativeTime } from "../utils/format"
 import {
@@ -79,11 +81,14 @@ function runStatusVisual(run: ActionRun): { icon: string; color: ShapeStyle; lab
 
 function ActionRunRow({
   run,
+  artifactCount,
   onSelect,
   onDelete,
   onRerun,
 }: {
   run: ActionRun
+  /** 该运行的工件数量，0 表示没有工件 */
+  artifactCount: number
   onSelect: () => void
   onDelete: () => void
   onRerun: () => void
@@ -151,6 +156,19 @@ function ActionRunRow({
             ) : null}
           </HStack>
         </VStack>
+        {artifactCount > 0 ? (
+          <HStack alignment="center" spacing={2}>
+            <Image
+              systemName="tray.full"
+              font={13}
+              imageScale="small"
+              foregroundStyle={COLOR_SECONDARY_LABEL}
+            />
+            <Text font={13} foregroundStyle={COLOR_SECONDARY_LABEL}>
+              {String(artifactCount)}
+            </Text>
+          </HStack>
+        ) : null}
         <Image systemName="chevron.right" font={12} foregroundStyle={COLOR_SECONDARY_LABEL} />
       </HStack>
     </Button>
@@ -166,6 +184,8 @@ export function ActionsPage({ fullName }: { fullName: string }) {
   const { toastState, showToast, handleToastChanged, toastPresented } = useToast()
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
   const requestRef = useRef(0)
+  // 本页是否在最前：后台自动刷新完成时页面可能已被运行详情页遮住，那时不能弹页面级提示
+  const visibleRef = useRef(true)
 
   // 工作流筛选
   const [workflows, setWorkflows] = useState<ActionWorkflow[]>([])
@@ -174,6 +194,8 @@ export function ActionsPage({ fullName }: { fullName: string }) {
   const [dispatching, setDispatching] = useState(false)
   // 是否正在发起重跑（防重复提交）
   const [rerunning, setRerunning] = useState(false)
+  // 各行是否有工件（会话级缓存 + 受限并发，见 hooks/useRunArtifactCounts）
+  const artifactCounts = useRunArtifactCounts(fullName, runs)
 
   async function load(reset = true) {
     const request = ++requestRef.current
@@ -186,7 +208,9 @@ export function ActionsPage({ fullName }: { fullName: string }) {
       setPage(nextPage)
       setHasMore(result.hasMore)
     } catch (e: any) {
-      if (request === requestRef.current) showToast("加载失败：" + String(e?.message || e), "error")
+      if (request === requestRef.current && visibleRef.current) {
+        showToast("加载失败：" + String(e?.message || e), "error")
+      }
     } finally {
       if (request === requestRef.current) {
         setLoading(false)
@@ -321,6 +345,12 @@ export function ActionsPage({ fullName }: { fullName: string }) {
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
       refreshable={handleRefresh}
+      onAppear={() => {
+        visibleRef.current = true
+      }}
+      onDisappear={() => {
+        visibleRef.current = false
+      }}
       navigationDestination={{
         isPresented: selectedRunId != null,
         onChanged: (presented: boolean) => {
@@ -409,6 +439,7 @@ export function ActionsPage({ fullName }: { fullName: string }) {
           <ActionRunRow
             key={run.id}
             run={run}
+            artifactCount={artifactCounts[run.id] || 0}
             onSelect={() => setSelectedRunId(run.id)}
             onDelete={() => handleDeleteRun(run)}
             onRerun={() => handleRerunRun(run)}

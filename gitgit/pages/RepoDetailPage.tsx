@@ -25,6 +25,7 @@ import { CommitMessageSheet } from "../components/CommitMessageSheet"
 import { useOpBusy } from "../hooks/useOpBusy"
 import { useRepoDetailData } from "../hooks/useRepoDetailData"
 import { useRepoDetailNavigation } from "../hooks/useRepoDetailNavigation"
+import type { RepoDetailPageKey } from "../hooks/useRepoDetailNavigation"
 import { useRepoWorktreeActions } from "../hooks/useRepoWorktreeActions"
 import { useRepoPendingActions } from "../hooks/useRepoPendingActions"
 import { useRepoBranchActions } from "../hooks/useRepoBranchActions"
@@ -36,6 +37,8 @@ import { getRepoPendingAlert } from "../utils/repoDetailAlerts"
 type AlertState = {
   title: string
   message: string
+  /** 关闭提示后要打开的子页（如合并冲突 → 冲突页），保证提示在跳转前可见 */
+  nextPage?: RepoDetailPageKey
 } | null
 
 export function RepoDetailPage({
@@ -48,8 +51,25 @@ export function RepoDetailPage({
   const [alertState, setAlertState] = useState<AlertState>(null)
   const { toastState, showToast, handleToastChanged, toastPresented } = useToast()
 
-  function showAlert(title: string, message: string) {
-    setAlertState({ title, message })
+  function showAlert(title: string, message: string, nextPage?: RepoDetailPageKey) {
+    setAlertState({ title, message, nextPage })
+  }
+
+  // 关闭提示后再跳转：提示挂在详情页，先跳转就会被推入的页面遮住
+  function handleAlertDismiss() {
+    const next = alertState?.nextPage
+    pendingActions.clearPending()
+    setAlertState(null)
+    if (next) setTimeout(() => nav.openPage(next), 350)
+  }
+
+  // 合并冲突：先在详情页提示，用户确认后再打开冲突页
+  function showConflictNotice(message: string) {
+    showAlert(
+      "合并冲突",
+      message + "\n关闭后将打开「合并冲突」页处理。",
+      "conflicts"
+    )
   }
 
   const data = useRepoDetailData({ bookmarkName, name, showToast })
@@ -61,6 +81,7 @@ export function RepoDetailPage({
     bookmarkName,
     displayName: data.displayName,
     changes: data.changes,
+    mergeInProgress: data.mergeInProgress,
     beginOpBusy,
     endOpBusy,
     clearChanges: () => data.setChanges([]),
@@ -77,6 +98,7 @@ export function RepoDetailPage({
     hasRemote: data.hasRemote,
     currentBranch: data.branchInfo.current,
     remoteOnlyBranches: data.remoteOnlyBranches,
+    mergeInProgress: data.mergeInProgress,
     beginOpBusy,
     updateOpBusy,
     endOpBusy,
@@ -115,7 +137,7 @@ export function RepoDetailPage({
     reloadRepo: data.loadAll,
     showAlert,
     showToast,
-    openConflictsPage: nav.openConflictsPage,
+    showConflictNotice,
   })
 
   const { handlePush, handlePull } = useRepoSyncActions({
@@ -133,9 +155,8 @@ export function RepoDetailPage({
     },
     refreshSyncState: data.refreshSyncState,
     reloadRepo: data.loadAll,
-    showAlert,
     showToast,
-    openConflictsPage: nav.openConflictsPage,
+    showConflictNotice,
   })
 
   async function handleRefresh() {
@@ -156,7 +177,7 @@ export function RepoDetailPage({
             title: alertState.title,
             message: alertState.message,
             isConfirm: false as const,
-            confirmButton: "好",
+            confirmButton: alertState.nextPage ? "去处理" : "好",
           }
         : null
 
@@ -282,6 +303,7 @@ export function RepoDetailPage({
             footer="确认后将改写最近一次提交。只能用于尚未推送的 HEAD，已推送会被拒绝。"
             initialTitle={pendingActions.amendDraft.title}
             initialDescription={pendingActions.amendDraft.description}
+            error={pendingActions.amendError}
             onCancel={worktree.closeCommitSheet}
             onConfirm={pendingActions.handleAmendFormConfirm}
           />
@@ -292,6 +314,7 @@ export function RepoDetailPage({
             initialTitle={suggestCommitTitle(data.changes)}
             initialDescription=""
             busy={worktree.committing}
+            error={worktree.commitError}
             onCancel={worktree.closeCommitSheet}
             onConfirm={worktree.handleCommit}
           />
@@ -321,7 +344,11 @@ export function RepoDetailPage({
             />
           </>
         ) : (
-          <Button title="好" role="cancel" action={() => setAlertState(null)} />
+          <Button
+            title={activeAlert?.confirmButton ?? "好"}
+            role={alertState?.nextPage ? undefined : "cancel"}
+            action={handleAlertDismiss}
+          />
         ),
       }}
     >
@@ -376,6 +403,7 @@ export function RepoDetailPage({
         log={data.log}
         trackedFiles={data.trackedFiles}
         loading={data.loading}
+        mergeInProgress={data.mergeInProgress}
         onOpenCommitForm={worktree.openCommitForm}
         committing={worktree.committing}
         stagingBusy={worktree.stagingBusy}

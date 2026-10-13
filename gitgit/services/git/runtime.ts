@@ -140,6 +140,27 @@ export async function readSymbolicHeadBranch(fs: any): Promise<string | null> {
   }
 }
 
+/**
+ * 解析当前命名分支名（当前分支判定的唯一入口）。
+ * 引擎解析不出时退回读 HEAD 符号引用（实测 unborn HEAD 引擎也能返回分支名，
+ * 这里兜的是 HEAD 异常或引擎报错），只有 HEAD 缺失才返回 null。
+ */
+export async function resolveCurrentBranch(
+  git: any,
+  fs: any,
+  dir: string,
+  gitdir: string
+): Promise<string | null> {
+  let branch: string | null = null
+  try {
+    branch = await git.currentBranch({ fs, dir, gitdir, fullname: false })
+  } catch (_e) {
+    branch = null
+  }
+  if (!branch) branch = await readSymbolicHeadBranch(fs)
+  return branch || null
+}
+
 /** 是否已有至少一次提交 */
 export async function hasAnyCommit(
   git: any,

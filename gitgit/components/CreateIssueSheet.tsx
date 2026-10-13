@@ -4,10 +4,13 @@ import { FormSheet } from "./FormSheet"
 
 export function CreateIssueSheet({
   busy,
+  error = null,
   onCancel,
   onConfirm,
 }: {
   busy: boolean
+  /** 创建失败信息，展示在表单内 */
+  error?: string | null
   onCancel: () => void
   onConfirm: (title: string, body: string) => void
 }) {
@@ -19,6 +22,7 @@ export function CreateIssueSheet({
       navigationTitle="新建 Issue"
       confirmTitle={busy ? "创建中…" : "创建"}
       confirmDisabled={busy || !title.value.trim()}
+      error={error}
       onCancel={onCancel}
       onConfirm={() => onConfirm(title.value, body.value)}
     >

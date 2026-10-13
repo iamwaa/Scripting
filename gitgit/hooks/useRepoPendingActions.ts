@@ -4,6 +4,7 @@
  * 丢弃改动、删除 Stash、删除本地/远端分支、撤销提交、soft 回退、重编、回滚强推
  * 统一进入 PendingAction，由详情页的声明式确认 alert 触发 runPending 执行。
  * 所有分支都走全屏遮罩，失败后仍刷新仓库状态，避免页面与实际不一致。
+ * 回滚的当前分支由选择页读取后传入，本 hook 不再自行推断分支名。
  */
 
 import { useState } from "scripting"
@@ -36,6 +37,8 @@ type UseRepoPendingActionsProps = {
   hasRemote: boolean
   currentBranch: string | null
   remoteOnlyBranches: string[]
+  /** 合并进行中：禁止改写历史与回滚，防止合并状态引用的 oid 失效 */
+  mergeInProgress: boolean
   beginOpBusy: (
     title: string,
     message?: string,
@@ -79,6 +82,7 @@ export function useRepoPendingActions({
   hasRemote,
   currentBranch,
   remoteOnlyBranches,
+  mergeInProgress,
   beginOpBusy,
   updateOpBusy,
   endOpBusy,
@@ -96,6 +100,8 @@ export function useRepoPendingActions({
   const [amendMessage, setAmendMessage] = useState("")
   // 打开重编表单时的初始草稿，由 sheet 内部 Observable 接管后续编辑
   const [amendDraft, setAmendDraft] = useState({ title: "", description: "" })
+  // 重编表单内的校验提示：弹窗打开时不能用父页 toast（会被 sheet 遮住）
+  const [amendError, setAmendError] = useState<string | null>(null)
 
   // 请求删除分支：本地分支与仅远端分支分别确认
   function requestDeleteBranch(branch: string) {
@@ -106,40 +112,49 @@ export function useRepoPendingActions({
     }
   }
 
+  // 合并进行中时改写历史会让状态文件里的 oursOid 失效（完成合并会造出孤儿提交），统一拦截
+  function guardMergeBusy(): boolean {
+    if (!mergeInProgress) return false
+    showToast("合并进行中：请先在「合并冲突」页完成或中止合并", "warning")
+    return true
+  }
+
   function handleRevertRequest(entry: CommitEntry) {
+    if (guardMergeBusy()) return
     setPending({ type: "revert", entry })
   }
 
   function handleSoftResetRequest(entry: CommitEntry) {
+    if (guardMergeBusy()) return
     setPending({ type: "softReset", entry })
   }
 
   function handleAmendRequest(entry: CommitEntry) {
+    if (guardMergeBusy()) return
     setAmendDraft({
       title: commitTitle(entry.message),
       description: commitBody(entry.message),
     })
+    setAmendError(null)
     openAmendSheet()
   }
 
   function handleAmendFormConfirm(titleText: string, descriptionText: string) {
     const title = titleText.trim()
     if (!title) {
-      showToast("提交信息不能为空", "warning")
+      setAmendError("提交信息不能为空")
       return
     }
+    setAmendError(null)
     setAmendMessage(buildCommitMessage(title, descriptionText))
     closeCommitSheet()
     // 等 sheet 收起后再弹确认，避免模态叠加导致 alert 不显示
     setTimeout(() => setPending({ type: "amend" }), 350)
   }
 
-  function handleRollbackSelect(entry: CommitEntry) {
-    const branch = currentBranch
-    if (!branch) {
-      showToast("当前没有命名分支，无法回滚", "error")
-      return
-    }
+  // 目标分支由回滚页以服务层读取为准后传入（详情页的 branchInfo 可能是页面打开时的旧值）
+  function handleRollbackSelect(entry: CommitEntry, branch: string) {
+    if (guardMergeBusy()) return
     // 关闭选择页，再弹确认
     closeRollbackPage()
     setTimeout(() => setPending({ type: "rollback", entry, branch }), 350)
@@ -310,6 +325,7 @@ export function useRepoPendingActions({
   return {
     pending,
     amendDraft,
+    amendError,
     setPending,
     clearPending: () => setPending(null),
     requestDeleteBranch,

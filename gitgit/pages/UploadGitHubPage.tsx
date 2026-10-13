@@ -3,6 +3,7 @@
  *
  * 输入行用 FormRow（左标签 + 右输入）。
  * Section：标题 + 备注 footer（title 与 footer 互斥，故用 header/footer）。
+ * 上传期间全屏 BusyOverlay 展示推送进度并支持取消，取消后可「重试推送」。
  */
 
 import {
@@ -15,6 +16,7 @@ import {
   useEffect,
 } from "scripting"
 import { FormRow } from "../components/FormRow"
+import { BusyOverlay } from "../components/BusyOverlay"
 import { toastContent } from "../components/Toast"
 import { useToast } from "../hooks/useToast"
 import type { RepoMeta } from "../types/git"
@@ -26,9 +28,12 @@ import {
   getLog,
   isInitialized,
   initRepo,
+  RemoteCancelToken,
+  isRemoteOperationCancelled,
 } from "../services/gitService"
 import { updateRepo, findRepo } from "../services/repoStore"
 import { notifySync, notifyError } from "../services/notifyService"
+import { yieldForUi } from "../utils/remoteProgress"
 import { DEFAULT_BRANCH } from "../constants/git"
 import { COLOR_SECONDARY_LABEL } from "../constants/colors"
 import {
@@ -58,6 +63,10 @@ export function UploadGitHubPage({
   const [homepage, setHomepage] = useState("")
   const [owner, setOwner] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
+  // 全屏遮罩进度与取消状态
+  const [uploadBusyLabel, setUploadBusyLabel] = useState<string | null>(null)
+  const [uploadCancelling, setUploadCancelling] = useState(false)
+  const [cancelToken, setCancelToken] = useState<RemoteCancelToken | null>(null)
   const { toastState, showToast, handleToastChanged, toastPresented } = useToast()
 
   useEffect(() => {
@@ -79,6 +88,10 @@ export function UploadGitHubPage({
       return
     }
 
+    const token = new RemoteCancelToken()
+    setCancelToken(token)
+    setUploadCancelling(false)
+    setUploadBusyLabel(null)
     setUploading(true)
     try {
       if (!(await isInitialized(bookmarkName))) {
@@ -118,7 +131,13 @@ export function UploadGitHubPage({
 
       const pushBranch =
         branches.current || remoteDefaultBranch || DEFAULT_BRANCH
-      await setOriginAndPush(bookmarkName, remoteUrl, pushBranch)
+      await setOriginAndPush(bookmarkName, remoteUrl, pushBranch, {
+        cancelToken: token,
+        onProgress: async (info) => {
+          setUploadBusyLabel(info.label)
+          await yieldForUi()
+        },
+      })
 
       const updated = updateRepo(
         bookmarkName,
@@ -136,11 +155,25 @@ export function UploadGitHubPage({
         onUploaded(finalRepo)
       }
     } catch (e: any) {
-      showToast("上传失败：" + String(e?.message || e), "error")
-      notifyError("push", repoName.trim() || defaultName, String(e?.message || e))
+      if (isRemoteOperationCancelled(e)) {
+        showToast("上传已取消，可稍后点「重试推送」继续", "warning")
+      } else {
+        showToast("上传失败：" + String(e?.message || e), "error")
+        notifyError("push", repoName.trim() || defaultName, String(e?.message || e))
+      }
     } finally {
       setUploading(false)
+      setUploadBusyLabel(null)
+      setUploadCancelling(false)
+      setCancelToken(null)
     }
+  }
+
+  // 取消上传：协作式取消，远端已创建时仍可「重试推送」
+  function handleCancelUpload() {
+    cancelToken?.cancel()
+    setUploadCancelling(true)
+    setUploadBusyLabel("取消中…")
   }
 
   return (
@@ -148,6 +181,21 @@ export function UploadGitHubPage({
       navigationTitle="上传到 GitHub"
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
+      overlay={
+        uploading
+          ? {
+              alignment: "center",
+              content: (
+                <BusyOverlay
+                  title="正在上传"
+                  message={uploadBusyLabel || "正在创建远端并推送当前分支…"}
+                  onCancel={handleCancelUpload}
+                  cancelling={uploadCancelling}
+                />
+              ),
+            }
+          : undefined
+      }
       toast={
         toastState
           ? {

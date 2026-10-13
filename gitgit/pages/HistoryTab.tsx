@@ -63,6 +63,7 @@ function HistoryRow({
   entry,
   githubAvatarUrl,
   checkState,
+  mergeInProgress,
   onCopy,
   onSelectOid,
   onRevert,
@@ -72,6 +73,8 @@ function HistoryRow({
   entry: CommitEntry
   githubAvatarUrl?: string
   checkState?: CommitCheckState
+  /** 合并进行中：改写历史会让合并状态引用的 oid 失效，重编/回退/撤销全部禁用 */
+  mergeInProgress: boolean
   onCopy: (entry: CommitEntry) => void
   /** 只回传 oid，避免 action 闭包持有错误 entry 引用 */
   onSelectOid: (oid: string) => void
@@ -93,12 +96,14 @@ function HistoryRow({
         title="重编"
         systemImage="pencil"
         action={() => onAmend(entry)}
+        disabled={mergeInProgress}
       />,
       <Button
         title="回退"
         systemImage="arrow.uturn.backward"
         tint="systemRed"
         action={() => onSoftReset(entry)}
+        disabled={mergeInProgress}
       />
     )
   }
@@ -109,6 +114,7 @@ function HistoryRow({
         systemImage="arrow.counterclockwise"
         tint="systemRed"
         action={() => onRevert(entry)}
+        disabled={mergeInProgress}
       />
     )
   }
@@ -231,6 +237,7 @@ function HistoryRow({
 export function HistoryTab({
   log,
   loading,
+  mergeInProgress,
   onCopy,
   onSelect,
   onRevert,
@@ -246,6 +253,7 @@ export function HistoryTab({
 }: {
   log: CommitEntry[]
   loading: boolean
+  mergeInProgress: boolean
   onCopy: (entry: CommitEntry) => void
   onSelect: (entry: CommitEntry) => void
   onRevert: (entry: CommitEntry) => void
@@ -373,6 +381,7 @@ export function HistoryTab({
             entry={entry}
             githubAvatarUrl={githubAvatars[entry.oid.toLowerCase()]}
             checkState={commitChecks[entry.oid.toLowerCase()]}
+            mergeInProgress={mergeInProgress}
             onCopy={onCopy}
             onSelectOid={handleSelectOid}
             onRevert={onRevert}

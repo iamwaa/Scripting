@@ -1,7 +1,7 @@
 /**
  * components/HistorySearchBar.tsx - 历史搜索框
  *
- * 标题始终保留；点击右侧搜索图标后，搜索框向左展开到标题边缘并自动聚焦。
+ * 标题始终保留（title 属性可自定义，默认「提交历史」）；点击右侧搜索图标后，搜索框向左展开到标题边缘并自动聚焦。
  * 点击关闭后搜索框立即隐藏，不播放收回动画。
  * 显式搜索由键盘 return 提交（submitLabel=search，回车键显示「搜索」）；
  * 清空 ✕ 即重置筛选、恢复默认分页。
@@ -20,9 +20,12 @@ import {
 import { COLOR_SECONDARY_LABEL } from "../constants/colors"
 
 export function HistorySearchBar({
+  title = "提交历史",
   searching,
   onSearch,
 }: {
+  /** 标题文案；默认「提交历史」 */
+  title?: string
   /** 搜索进行中：禁用清空按钮，避免搜索中途被重置 */
   searching: boolean
   /** 显式搜索；传空串表示清除筛选、恢复默认分页 */
@@ -52,7 +55,7 @@ export function HistorySearchBar({
 
   return (
     <HStack alignment="center" spacing={8} frame={{ maxWidth: "infinity" }}>
-      <Text>提交历史</Text>
+      <Text>{title}</Text>
       <Spacer />
       {expanded ? (
         <HStack

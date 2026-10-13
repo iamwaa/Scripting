@@ -405,8 +405,14 @@ async function reportHttpProgress(
  * 进度：透传 request.onProgress，上传按字节累计上报；下载流式读取响应体，
  *      每累计 256KB 上报一次已下载字节（服务端给 content-length 时附带总量，
  *      GitHub git 协议多为 chunked，总量未知则只报已下载字节）。
+ * confirmPhase：POST（有请求体）的“读取响应”阶段覆盖名——push 的 fetch 阶段
+ *      实际上是上传 + 等服务端 unpack，用 confirmPhase 避免显示成“下载中”。
  */
-export function createHttpTransport(username?: string, password?: string) {
+export function createHttpTransport(
+  username?: string,
+  password?: string,
+  options?: { confirmPhase?: string }
+) {
   return {
     async request({ url, method, headers, body, onProgress }: any) {
       const fetchHeaders: any = { ...headers }
@@ -414,6 +420,9 @@ export function createHttpTransport(username?: string, password?: string) {
         const auth = Buffer.from(`${username}:${password}`).toString("base64")
         fetchHeaders["Authorization"] = `Basic ${auth}`
       }
+
+      // POST（有请求体）的 fetch 阶段 = 真正上传 + 等待服务端处理，用覆盖名
+      const responsePhase = body ? options?.confirmPhase || "Downloading" : "Downloading"
 
       // 请求体：把异步可读流转为单个 Data 对象，边收集边上报上传进度
       let fetchBody: any = undefined
@@ -446,7 +455,7 @@ export function createHttpTransport(username?: string, password?: string) {
         }
       }
 
-      await reportHttpProgress(onProgress, "Downloading", 0, 0)
+      await reportHttpProgress(onProgress, responsePhase, 0, 0)
       const response = await fetch(url, {
         method: method || "GET",
         headers: fetchHeaders,
@@ -472,7 +481,7 @@ export function createHttpTransport(username?: string, password?: string) {
           // 节流：每累计 256KB 上报一次，避免过于频繁刷新 UI
           if (loaded - lastReport >= 262144) {
             lastReport = loaded
-            await reportHttpProgress(onProgress, "Downloading", loaded, total)
+            await reportHttpProgress(onProgress, responsePhase, loaded, total)
           }
         }
         const merged = new Uint8Array(loaded)
@@ -497,7 +506,7 @@ export function createHttpTransport(username?: string, password?: string) {
       if (byteLength > 0) {
         await reportHttpProgress(
           onProgress,
-          "Downloading",
+          responsePhase,
           byteLength,
           total > 0 ? total : byteLength
         )

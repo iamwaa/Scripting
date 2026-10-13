@@ -734,6 +734,17 @@ export async function listArtifacts(
   return Array.isArray(data.artifacts) ? data.artifacts.map(mapArtifact) : []
 }
 
+/** 统计某个运行的工件数量（列表页标识用：只取 total_count，不拉取明细） */
+export async function countRunArtifacts(
+  fullName: string,
+  runId: number
+): Promise<number> {
+  const data = await ghFetch(
+    `/repos/${encodeRepo(fullName)}/actions/runs/${Math.floor(runId)}/artifacts?per_page=1`
+  )
+  return Math.max(0, Number(data?.total_count || 0))
+}
+
 /** 获取工件下载 URL 和请求头（用于 BackgroundURLSession 下载） */
 export function getArtifactDownloadInfo(
   fullName: string,

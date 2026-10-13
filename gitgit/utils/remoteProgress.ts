@@ -39,7 +39,7 @@ export const REMOTE_OPERATION_CANCELLED = "RemoteOperationCancelled"
  * 按字节传输的 phase：其 loaded/total 是字节数（HTTP 传输层上报），
  * 展示时格式化为 KB/MB；其余 phase（如 Receiving objects）loaded 是对象数，仍用百分比。
  */
-const BYTE_PHASES = new Set(["Downloading", "Uploading"])
+const BYTE_PHASES = new Set(["Downloading", "Uploading", "Preparing"])
 
 /** 字节大小格式化（如 "1.2 MB"）；非法/零返回空串，交由上层退回纯 phase */
 export function formatProgressBytes(bytes: number): string {
@@ -67,10 +67,14 @@ const PHASE_LABELS: Record<string, string> = {
   "Writing objects": "写入对象",
   "Analyzing workdir": "分析工作区",
   "Downloading metadata": "下载元数据",
+  // 推送前对象收集/打包阶段（push 引擎读取全部可达对象，耗时最长且原先无反馈）
+  Preparing: "打包对象",
   // HTTP / 协作式检查点（isomorphic-git push 几乎不发 onProgress）
   Downloading: "下载中",
   Connecting: "连接远端",
   Uploading: "上传对象",
+  // push POST 阶段：上传已发出，等待服务端 unpack/确认（旧实现误显示为“下载中”）
+  Confirming: "等待服务端确认",
   Merging: "合并中",
   Finalizing: "收尾中",
 }

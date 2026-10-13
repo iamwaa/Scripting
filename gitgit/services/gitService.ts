@@ -18,6 +18,7 @@ import {
 import { compareWithUpstream } from "./git/compareService"
 import {
   getBranches,
+  getCurrentBranchName,
   getManagedBranches,
   getRemoteBranches,
 } from "./git/branchQueryService"
@@ -498,10 +499,13 @@ export async function amendHeadCommit(
 export async function setOriginAndPush(
   bookmarkName: string,
   remoteUrl: string,
-  ref?: string
+  ref?: string,
+  options?: RemoteOpOptions
 ): Promise<void> {
-  return runRepoMutation(bookmarkName, () =>
-    setOriginAndPushInternal(bookmarkName, remoteUrl, ref)
+  return runWithBackgroundKeepAlive(() =>
+    runRepoMutation(bookmarkName, () =>
+      setOriginAndPushInternal(bookmarkName, remoteUrl, ref, options)
+    )
   )
 }
 
@@ -513,6 +517,7 @@ export {
   getCommitDetail,
   compareWithUpstream,
   getBranches,
+  getCurrentBranchName,
   getManagedBranches,
   getRemoteBranches,
   getChanges,

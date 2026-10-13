@@ -25,6 +25,8 @@ type UseRepoWorktreeActionsProps = {
   bookmarkName: string
   displayName: string
   changes: FileChange[]
+  /** 合并进行中：禁止暂存/撤销/Stash/提交，防止破坏合并状态 */
+  mergeInProgress: boolean
   beginOpBusy: (title: string, message?: string) => Promise<void>
   endOpBusy: () => void
   clearChanges: () => void
@@ -40,6 +42,7 @@ export function useRepoWorktreeActions({
   bookmarkName,
   displayName,
   changes,
+  mergeInProgress,
   beginOpBusy,
   endOpBusy,
   clearChanges,
@@ -56,10 +59,19 @@ export function useRepoWorktreeActions({
   const [commitSheetMode, setCommitSheetMode] = useState<"commit" | "amend" | null>(
     null
   )
+  // 提交表单内的校验提示：弹窗打开时不能用父页 toast（会被 sheet 遮住）
+  const [commitError, setCommitError] = useState<string | null>(null)
+
+  // 合并进行中时这些操作会破坏自建合并状态（单亲提交丢 theirs 祖先、覆盖已解决内容等），统一拦截
+  function guardMergeBusy(): boolean {
+    if (!mergeInProgress) return false
+    showToast("合并进行中：请先在「合并冲突」页完成或中止合并", "warning")
+    return true
+  }
 
   // 暂存类操作统一走同一忙态与错误提示
   async function runStaging(label: string, task: () => Promise<void>) {
-    if (stagingBusy || stashBusy) return
+    if (stagingBusy || stashBusy || guardMergeBusy()) return
     setStagingBusy(true)
     try {
       await task()
@@ -88,12 +100,12 @@ export function useRepoWorktreeActions({
   }
 
   function handleRestore(filepath: string) {
-    if (stagingBusy || stashBusy) return
+    if (stagingBusy || stashBusy || guardMergeBusy()) return
     setPending({ type: "restore", filepath })
   }
 
   async function handleCreateStash() {
-    if (stashBusy || stagingBusy || changes.length === 0) return
+    if (stashBusy || stagingBusy || changes.length === 0 || guardMergeBusy()) return
     try {
       const message = await Dialog.prompt({
         title: "保存到 Stash",
@@ -115,7 +127,7 @@ export function useRepoWorktreeActions({
   }
 
   async function handleApplyStash(entry: StashEntry) {
-    if (stashBusy || stagingBusy) return
+    if (stashBusy || stagingBusy || guardMergeBusy()) return
     setStashBusy(true)
     try {
       await applyStash(bookmarkName, entry.index)
@@ -139,15 +151,17 @@ export function useRepoWorktreeActions({
   }
 
   async function handleCommit(titleText: string, descriptionText: string) {
+    if (guardMergeBusy()) return
     const title = titleText.trim()
     if (!title) {
-      showToast("请填写提交信息（标题）", "warning")
+      setCommitError("请填写提交信息（标题）")
       return
     }
     if (!changes.some((change) => change.staged)) {
-      showToast("没有暂存内容，请先暂存要提交的文件", "warning")
+      setCommitError("没有暂存内容，请先暂存要提交的文件")
       return
     }
+    setCommitError(null)
     setCommitSheetMode(null)
     setCommitting(true)
     try {
@@ -172,10 +186,18 @@ export function useRepoWorktreeActions({
     stagingBusy,
     stashBusy,
     commitSheetMode,
+    commitError,
     setStashBusy,
     setCommitSheetMode,
-    openCommitForm: () => setCommitSheetMode("commit"),
-    closeCommitSheet: () => setCommitSheetMode(null),
+    openCommitForm: () => {
+      if (guardMergeBusy()) return
+      setCommitError(null)
+      setCommitSheetMode("commit")
+    },
+    closeCommitSheet: () => {
+      setCommitError(null)
+      setCommitSheetMode(null)
+    },
     handleStage,
     handleUnstage,
     handleStageAll,

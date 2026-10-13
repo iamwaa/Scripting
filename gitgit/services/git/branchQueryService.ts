@@ -1,18 +1,17 @@
 import type { BranchInfo, ManagedBranches } from "../../types/git"
-import { getCtx } from "./runtime"
-
-async function readSymbolicHeadBranch(fs: any): Promise<string | null> {
-  try {
-    const head = await fs.readFile("HEAD", "utf8")
-    const match = String(head).match(/^ref:\s*refs\/heads\/(\S+)/m)
-    return match ? match[1].trim() : null
-  } catch (_e) {
-    return null
-  }
-}
+import { getCtx, resolveCurrentBranch } from "./runtime"
 
 async function hasHead(gitdir: string): Promise<boolean> {
   return FileManager.exists(gitdir + "/HEAD")
+}
+
+/** 当前命名分支名（解析失败返回 null，供 UI 判断是否可回滚/回退） */
+export async function getCurrentBranchName(
+  bookmarkName: string
+): Promise<string | null> {
+  const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
+  if (!(await hasHead(gitdir))) return null
+  return resolveCurrentBranch(git, fs, dir, gitdir)
 }
 
 export function normalizeRemoteBranches(
@@ -64,13 +63,7 @@ export async function getBranches(bookmarkName: string): Promise<BranchInfo> {
   remoteBranches = normalizeRemoteBranches(remoteBranches, "origin")
 
   const branchSet = new Set<string>([...localBranches, ...remoteBranches])
-  let current: string | null = null
-  try {
-    current = await git.currentBranch({ fs, dir, gitdir, fullname: false })
-  } catch (_e) {
-    current = null
-  }
-  if (!current) current = await readSymbolicHeadBranch(fs)
+  const current = await resolveCurrentBranch(git, fs, dir, gitdir)
   if (current) branchSet.add(current)
   const branches = Array.from(branchSet).sort((left, right) => {
     if (left === current) return -1
@@ -111,13 +104,7 @@ export async function getManagedBranches(
   }
   remoteBranches = normalizeRemoteBranches(remoteBranches, "origin")
 
-  let current: string | null = null
-  try {
-    current = await git.currentBranch({ fs, dir, gitdir, fullname: false })
-  } catch (_e) {
-    current = null
-  }
-  if (!current) current = await readSymbolicHeadBranch(fs)
+  const current = await resolveCurrentBranch(git, fs, dir, gitdir)
 
   const localSet = new Set<string>(locals)
   if (current) localSet.add(current)

@@ -97,6 +97,8 @@
 
 - [Python 会话模块缓存](memories/python-session-module-cache.md) — 连续 `python3` 可能仍复用旧 import；改模块后按依赖顺序 reload 再测。
 
+- [iCloud 冲突副本污染全项目诊断](memories/icloud-conflict-copies-pollute-diagnostics.md) — `文件名 2.扩展名` 旧副本会被 TypeScript 当真实文件参与全项目检查，报一堆假错误（Cannot redeclare / Property missing）；先隔离再诊断。
+
 - [预览外观与透明渐变](memories/preview-color-scheme.md) — `preferredColorScheme="dark"` 不保证静态截图切到暗色，须核对实图；视图 mask 的准确类型位置。
 
 - **`trailingSwipeActions` 的数组顺序与看到的左右顺序相反。** 数组第一项贴屏幕右缘（滑动起始侧），所以 `[A, B]` 在屏幕上从左到右显示为 `B A`；leading（右滑）同理镜像。想要视觉上“删除 排除”就得写 `actions: [排除, 删除]`。写完先按目标视觉顺序反向排列，不要按阅读顺序直接填。
@@ -136,6 +138,8 @@
 - **本机 ffmpeg 缺 `boxblur` / `eq` 滤镜。** 做模糊用 `avgblur` / `gblur`，做亮度对比度拉伸用 `lutrgb` / `lutyuv`（如 `lutyuv=y=clip((val-128)*8+128\,0\,255)`）；`filter_complex` 里表达式的逗号必须写成 `\,`，否则被当滤镜分隔符。另外这个构建没有 libx264/libx265，要编 H.264/HEVC 用 VideoToolbox。
 
 - **拉 GitHub 仓库快照走 `github.com/<owner>/<repo>/archive/<sha>.tar.gz`。** 实测 `codeload.github.com` 在本机不可达（`Bad hostname` / `Empty reply from server`），未认证的 `api.github.com`（含 `git/trees?recursive=1`）几下就 `API rate limit exceeded`；`raw.githubusercontent.com` 单文件正常，目录树和批量内容用 GitHub MCP（已认证）。GitHub 代码搜索 `search_code` 对未索引仓库返回 `total_count:0, incomplete_results:true`，别据此断定「仓库里没有」，改为下载快照本地检索。
+
+- **GitHub Actions 的运行（run）不带工件信息，别指望一个接口拿全。** REST 的 workflow run 对象只有 `artifacts_url`（每个运行都有，不能当「有工件」的判据），GraphQL schema（`https://docs.github.com/public/fpt/schema.docs.graphql`，全文 grep 无 artifact 字段）根本没有 Actions 工件类型。规避：要判断某次运行是否有工件只能逐运行查 `GET /repos/{o}/{r}/actions/runs/{id}/artifacts`，其响应 `total_count` 就是数量（加 `per_page=1` 可只取计数、不拉明细）；列表页要给每行加标识就得按行并发查询 + 会话级缓存，用 queued 无 Job 可跳过以省请求。
 
 - **`addScriptMessageHandler` 注册的消息桥跨页面导航存活，`evaluateJavaScript` 注入的脚本不存活。** 实测同域与跳到另一个域后，页内 `window.webkit.messageHandlers.<name>.postMessage(...)` 仍然回到最初注册的 handler（桥挂在 controller 上，全程有效，只需装一次）；而注入的函数、事件监听、`window.__flag` 都随旧文档销毁。规避：桥在创建 WebView 后只注册一次，注入脚本在每次导航后重新注入（如在 `shouldAllowRequest` 里排 300ms / 1200ms 两次），并用 `window.__xxx` 标记保证重复注入幂等。
 
@@ -178,4 +182,12 @@
   }
   ```
 
+- [theos Logos %orig 内联](memories/theos-logos-orig-inline.md) — `foo(%orig)` 写法展开会吞掉外层闭合括号报 `expected ')'`；先赋值 `Type *x = %orig;` 再包装。
+
+- [GitHub Actions job 日志要 admin](memories/github-actions-job-logs.md) — 日志 API 对非 admin 一律 403；用浏览器点开失败步骤后读 DOM，或让用户下载日志 zip。
+
 - **SF Symbol 图标与同字号文字放一行时，图标视觉上大一圈。** `<Image systemName=... font={N}>` 与 `font={N}` 的 Text 同处一个 HStack 时，符号包围盒按字体 point size 设计，填充类圆形符号（`checkmark.circle.fill`、`doc.on.doc` 等）明显高于文字字面。规避：加 `imageScale="small"` 并把 `font` 取得比目标文字小 1–2 号——探针实测（`tmp/tests/icon-size-probe.tsx`）：17 号标题配 `font={15} imageScale="small"` 最贴合，11 号小字配 `font={11} imageScale="small"` 即基本等高；只加 `imageScale` 不降字号仍偏大。`imageScale` 是相对缩放，可与 `fixedSize` 同用。
+
+- **父页面容器上的 `toast` 在子页面推入时不可见；子页面里的操作反馈必须挂在子页面自己的容器上。** 实测（gitgit 回滚页）：在受控 `navigationDestination` 推入的子页点行触发父页 `showToast`，toast 属于父页 `List`，用户在子页看不到任何提示，回退到父页后提示才弹出来（父页 toast 状态一直留着）。规避：子页自己 `useToast()` + 在自己根 `List` 上挂 `toast`；父页只负责它自己可见时的提示（例如子页已关闭后的失败）。**同类还要管住两种情形**：① 父页 `alert` 与跳转子页不要同时发生（先弹 alert，关闭后再 `openPage`，否则 alert 要么被遮住、要么退回来才弹）；② **半屏 sheet 里的失败/校验提示不要留给页面**（sheet 覆盖期间页面 toast 不可靠，拉到大 detent 时完全看不到），表单外壳自己提供 error 行展示；只有 sheet 已关闭后的成功提示才挂在页面上。
+
+- **推入的子页不要依赖父页异步加载的状态做判定（如详情页首屏的 `branchInfo.current`）：父页数据未就绪时子页已可打开，之后一直用旧值。** 实测（gitgit 回滚页）：大仓库详情页首屏 `loadAll` 可能几分钟未完成，而子页历史列表已可读、入口按钮也可点（父页 `hasCommits` 会被先完成的历史加载提前置真），此时行内回调里的 `currentBranch` 仍为 `null`，表现为「明明在 main 上却提示当前没有命名分支」。规避：子页自行向服务层读取所需状态（进页与关键动作各读一次），不要把父页的异步 state 透传给子页当守卫。

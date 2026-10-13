@@ -20,6 +20,7 @@ export function StashTab({
   committing,
   stagingBusy,
   stashBusy,
+  mergeInProgress,
   onCreateStash,
   onApplyStash,
   onDropStash,
@@ -31,14 +32,15 @@ export function StashTab({
   committing: boolean
   stagingBusy: boolean
   stashBusy: boolean
+  mergeInProgress: boolean
   onCreateStash: () => void
   onApplyStash: (entry: StashEntry) => void
   onDropStash: (entry: StashEntry) => void
 }) {
   const worktreeBusy = stagingBusy || stashBusy
-  // 无改动时禁用，但仍显示，与改动 Tab 的「全部暂存」一致
+  // 无改动时禁用，但仍显示，与改动 Tab 的「全部暂存」一致；合并中禁止保存/应用
   const saveDisabled =
-    loading || worktreeBusy || committing || changes.length === 0
+    loading || worktreeBusy || committing || mergeInProgress || changes.length === 0
   const saveTint = saveDisabled ? COLOR_SECONDARY_LABEL : COLOR_ACCENT
 
   return (
@@ -86,7 +88,7 @@ export function StashTab({
                     systemImage="arrow.down.to.line"
                     tint="systemBlue"
                     action={() => onApplyStash(entry)}
-                    disabled={worktreeBusy}
+                    disabled={worktreeBusy || mergeInProgress}
                   />,
                   <Button
                     title="删除"

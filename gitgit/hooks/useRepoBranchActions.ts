@@ -20,7 +20,8 @@ type UseRepoBranchActionsProps = {
   reloadRepo: () => Promise<void>
   showAlert: (title: string, message: string) => void
   showToast: (message: string, type?: ToastType, duration?: number) => void
-  openConflictsPage: () => void
+  /** 合并冲突提醒：先在本页提示，关闭后再由详情页打开冲突页，避免提示被推入的页面遮住 */
+  showConflictNotice: (message: string) => void
 }
 
 export function useRepoBranchActions({
@@ -35,7 +36,7 @@ export function useRepoBranchActions({
   reloadRepo,
   showAlert,
   showToast,
-  openConflictsPage,
+  showConflictNotice,
 }: UseRepoBranchActionsProps) {
   async function handleMergeIntoCurrent(source: string) {
     if (mutating || mergeInProgress) return
@@ -56,8 +57,7 @@ export function useRepoBranchActions({
         } catch (_e) {
           // 冲突页仍应允许打开
         }
-        openConflictsPage()
-        showAlert("合并冲突", message)
+        showConflictNotice(message)
       } else {
         showToast(`合并失败：${message}`, "error")
       }

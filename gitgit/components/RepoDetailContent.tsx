@@ -51,6 +51,7 @@ export function RepoDetailTabContent({
   log,
   trackedFiles,
   loading,
+  mergeInProgress,
   onOpenCommitForm,
   committing,
   stagingBusy,
@@ -85,6 +86,7 @@ export function RepoDetailTabContent({
   log: CommitEntry[]
   trackedFiles: string[]
   loading: boolean
+  mergeInProgress: boolean
   onOpenCommitForm: () => void
   committing: boolean
   stagingBusy: boolean
@@ -131,6 +133,7 @@ export function RepoDetailTabContent({
           bookmarkName={bookmarkName}
           changes={changes}
           loading={loading}
+          mergeInProgress={mergeInProgress}
           onOpenCommitForm={onOpenCommitForm}
           committing={committing}
           stagingBusy={stagingBusy}
@@ -149,6 +152,7 @@ export function RepoDetailTabContent({
           committing={committing}
           stagingBusy={stagingBusy}
           stashBusy={stashBusy}
+          mergeInProgress={mergeInProgress}
           onCreateStash={onCreateStash}
           onApplyStash={onApplyStash}
           onDropStash={onDropStash}
@@ -159,6 +163,7 @@ export function RepoDetailTabContent({
         <HistoryTab
           log={log}
           loading={historyLoading}
+          mergeInProgress={mergeInProgress}
           onCopy={onCopyCommit}
           onSelect={onSelectCommit}
           onRevert={onRevert}

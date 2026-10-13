@@ -11,10 +11,13 @@ import { COLOR_SECONDARY_LABEL } from "../constants/colors"
 
 export function AddRemoteSheet({
   busy = false,
+  error = null,
   onCancel,
   onConfirm,
 }: {
   busy?: boolean
+  /** 添加失败信息，展示在表单内 */
+  error?: string | null
   onCancel: () => void
   /** 确认时一次性回传远端名称与 URL */
   onConfirm: (name: string, url: string) => void
@@ -27,6 +30,7 @@ export function AddRemoteSheet({
       navigationTitle="添加远端"
       confirmTitle={busy ? "处理中…" : "添加"}
       confirmDisabled={busy || !name.value.trim() || !url.value.trim()}
+      error={error}
       onCancel={onCancel}
       onConfirm={() => onConfirm(name.value.trim(), url.value.trim())}
     >

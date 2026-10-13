@@ -4,6 +4,7 @@
  * 查看、添加、修改 URL、删除 remote；为当前分支设置 upstream。
  * 添加入口在右上角 toolbar，点击弹出半屏表单。
  * 写操作走 gitService 仓库级互斥与失败回滚。
+ * 获取远端分支期间用全屏 BusyOverlay 展示进度，可取消（回退本地缓存）。
  */
 
 import {
@@ -14,12 +15,12 @@ import {
   VStack,
   Button,
   Picker,
-  ProgressView,
   useState,
   useEffect,
   useRef,
 } from "scripting"
 import { AddRemoteSheet } from "../components/AddRemoteSheet"
+import { BusyOverlay } from "../components/BusyOverlay"
 import type { RemoteInfo } from "../services/gitService"
 import {
   listRemotes,
@@ -31,6 +32,8 @@ import {
   getBranches,
   getRemoteBranches,
   fetchRemote,
+  RemoteCancelToken,
+  isRemoteOperationCancelled,
 } from "../services/gitService"
 import { COLOR_SECONDARY_LABEL } from "../constants/colors"
 import { toastContent } from "../components/Toast"
@@ -57,10 +60,15 @@ export function RemotesPage({
 
   // 添加远端半屏弹窗；草稿由弹窗自持，本页只管开关
   const [showAddSheet, setShowAddSheet] = useState(false)
+  // 添加远端表单内的失败提示
+  const [addError, setAddError] = useState<string | null>(null)
 
   const [branchLoading, setBranchLoading] = useState(false)
   const [branchProgress, setBranchProgress] = useState<string | null>(null)
   const [branchLoadWarning, setBranchLoadWarning] = useState<string | null>(null)
+  // 全屏遮罩取消状态：取消后隐藏按钮，副标题冻结为「取消中…」
+  const [branchCancelling, setBranchCancelling] = useState(false)
+  const [branchCancelToken, setBranchCancelToken] = useState<RemoteCancelToken | null>(null)
   const branchRequestRef = useRef(0)
 
   const [pendingDelete, setPendingDelete] = useState<RemoteInfo | null>(null)
@@ -73,11 +81,15 @@ export function RemotesPage({
 
   async function refreshRemoteBranches(remote: string): Promise<void> {
     const request = ++branchRequestRef.current
+    const token = new RemoteCancelToken()
+    setBranchCancelToken(token)
+    setBranchCancelling(false)
     setBranchLoading(true)
     setBranchProgress(null)
     setBranchLoadWarning(null)
     try {
       await fetchRemote(bookmarkName, remote, undefined, true, {
+        cancelToken: token,
         onProgress: async (info) => {
           if (request === branchRequestRef.current) {
             setBranchProgress(info.label)
@@ -87,10 +99,18 @@ export function RemotesPage({
       })
     } catch (e: any) {
       if (request === branchRequestRef.current) {
-        setBranchLoadWarning(`自动获取失败，当前显示本地缓存：${String(e?.message || e)}`)
+        if (isRemoteOperationCancelled(e)) {
+          setBranchLoadWarning("已取消获取，当前显示本地缓存")
+        } else {
+          setBranchLoadWarning(`自动获取失败，当前显示本地缓存：${String(e?.message || e)}`)
+        }
       }
     } finally {
-      if (request === branchRequestRef.current) setBranchProgress(null)
+      if (request === branchRequestRef.current) {
+        setBranchProgress(null)
+        setBranchCancelling(false)
+        setBranchCancelToken(null)
+      }
     }
     try {
       const branches = await getRemoteBranches(bookmarkName, remote)
@@ -98,6 +118,13 @@ export function RemotesPage({
     } finally {
       if (request === branchRequestRef.current) setBranchLoading(false)
     }
+  }
+
+  // 取消获取远端分支：协作式取消，取消后仍回退展示本地缓存分支
+  function handleCancelFetch() {
+    branchCancelToken?.cancel()
+    setBranchCancelling(true)
+    setBranchProgress("取消中…")
   }
 
   async function loadAll() {
@@ -156,6 +183,7 @@ export function RemotesPage({
   async function handleAdd(name: string, url: string) {
     if (busy) return
     setBusy(true)
+    setAddError(null)
     try {
       await addRemote(bookmarkName, name, url)
       setShowAddSheet(false)
@@ -163,7 +191,8 @@ export function RemotesPage({
       notifyParent()
       showToast("已添加：远端已写入仓库配置", "success")
     } catch (e: any) {
-      showToast("添加失败：" + String(e?.message || e), "error")
+      // 表单仍开着，失败信息必须留在表单内（父页 toast 会被 sheet 遮住）
+      setAddError("添加失败：" + String(e?.message || e))
     } finally {
       setBusy(false)
     }
@@ -271,6 +300,21 @@ export function RemotesPage({
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
       refreshable={loadAll}
+      overlay={
+        branchLoading
+          ? {
+              alignment: "center",
+              content: (
+                <BusyOverlay
+                  title="正在获取远端分支"
+                  message={branchProgress || undefined}
+                  onCancel={branchCancelToken ? handleCancelFetch : undefined}
+                  cancelling={branchCancelling}
+                />
+              ),
+            }
+          : undefined
+      }
       toast={
         toastState
           ? {
@@ -287,7 +331,10 @@ export function RemotesPage({
           <Button
             title="添加远端"
             systemImage="plus"
-            action={() => setShowAddSheet(true)}
+            action={() => {
+              setAddError(null)
+              setShowAddSheet(true)
+            }}
             disabled={busy || loading}
           />
         ),
@@ -295,11 +342,15 @@ export function RemotesPage({
       sheet={{
         isPresented: showAddSheet,
         onChanged: (presented: boolean) => {
-          if (!presented) setShowAddSheet(false)
+          if (!presented) {
+            setAddError(null)
+            setShowAddSheet(false)
+          }
         },
         content: (
           <AddRemoteSheet
             busy={busy}
+            error={addError}
             onCancel={() => setShowAddSheet(false)}
             onConfirm={handleAdd}
           />
@@ -402,11 +453,7 @@ export function RemotesPage({
             </Picker>
             {branchOptions.length > 0 ? (
               <Picker
-                title={
-                  branchLoading
-                    ? branchProgress || "正在获取分支…"
-                    : "远端分支"
-                }
+                title="远端分支"
                 value={upstreamMerge}
                 onChanged={setUpstreamMerge}
                 disabled={branchLoading}
@@ -417,14 +464,6 @@ export function RemotesPage({
                   </Text>
                 ))}
               </Picker>
-            ) : null}
-            {branchLoading && branchOptions.length === 0 ? (
-              <HStack alignment="center" spacing={8}>
-                <ProgressView />
-                <Text font={13} foregroundStyle={COLOR_SECONDARY_LABEL}>
-                  {branchProgress || "正在获取分支…"}
-                </Text>
-              </HStack>
             ) : null}
             {branchLoadWarning ? (
               <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL}>

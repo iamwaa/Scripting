@@ -3,6 +3,8 @@
  *
  * 展示 pull/merge 产生的冲突文件；支持保留我方/对方、标记已解决、
  * 全部解决后完成合并提交，或中止合并。
+ * 检测/完成/中止等仓库级操作用全屏 BusyOverlay；单文件解决与复制清单保持行内。
+ * 冲突行可点入 DiffPage 查看工作区当前内容与 HEAD 的差异（含冲突标记）。
  */
 
 import {
@@ -14,9 +16,11 @@ import {
   Spacer,
   Button,
   Image,
+  NavigationLink,
   useState,
   useEffect,
 } from "scripting"
+import { DiffPage } from "./DiffPage"
 import type { ConflictFile, MergeConflictState } from "../types/git"
 import {
   getMergeConflictState,
@@ -32,6 +36,7 @@ import {
   formatAutoMarkSummary,
 } from "../utils/mergeConflict"
 import { toastContent } from "../components/Toast"
+import { BusyOverlay } from "../components/BusyOverlay"
 import { useToast } from "../hooks/useToast"
 import {
   COLOR_SECONDARY_LABEL,
@@ -52,6 +57,8 @@ export function ConflictsPage({
   const [state, setState] = useState<MergeConflictState | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  // 仓库级长操作的全屏遮罩标题（检测/完成/中止）；单文件解决与复制清单保持行内
+  const [busyOverlay, setBusyOverlay] = useState<string | null>(null)
   const [pendingAbort, setPendingAbort] = useState(false)
   const [alertState, setAlertState] = useState<AlertState>(null)
   const { toastState, showToast, handleToastChanged, toastPresented } = useToast()
@@ -112,6 +119,7 @@ export function ConflictsPage({
   async function handleAutoMark() {
     if (!state || busy || conflicts.length === 0) return
     setBusy(true)
+    setBusyOverlay("正在检测冲突")
     try {
       const result = await autoMarkResolvedConflicts(bookmarkName)
       await loadState()
@@ -122,12 +130,14 @@ export function ConflictsPage({
       showToast("检测失败：" + String(e?.message || e), "error")
     } finally {
       setBusy(false)
+      setBusyOverlay(null)
     }
   }
 
   async function handleComplete() {
     if (busy) return
     setBusy(true)
+    setBusyOverlay("正在完成合并")
     try {
       const oid = await completeMerge(bookmarkName)
       await loadState()
@@ -137,6 +147,7 @@ export function ConflictsPage({
       showToast("完成合并失败：" + String(e?.message || e), "error")
     } finally {
       setBusy(false)
+      setBusyOverlay(null)
     }
   }
 
@@ -174,6 +185,7 @@ export function ConflictsPage({
     setPendingAbort(false)
     if (busy) return
     setBusy(true)
+    setBusyOverlay("正在中止合并")
     try {
       await abortMerge(bookmarkName)
       await loadState()
@@ -183,6 +195,7 @@ export function ConflictsPage({
       showToast("中止失败：" + String(e?.message || e), "error")
     } finally {
       setBusy(false)
+      setBusyOverlay(null)
     }
   }
 
@@ -209,6 +222,14 @@ export function ConflictsPage({
       navigationBarTitleDisplayMode="inline"
       tabBarVisibility="hidden"
       refreshable={loadState}
+      overlay={
+        busyOverlay
+          ? {
+              alignment: "center",
+              content: <BusyOverlay title={busyOverlay} />,
+            }
+          : undefined
+      }
       toast={
         toastState
           ? {
@@ -368,7 +389,7 @@ export function ConflictsPage({
           }
           footer={
             <Text font="footnote" foregroundStyle={COLOR_SECONDARY_LABEL}>
-              左滑：保留我方 / 保留对方 / 标记已解决（工作区已是最终内容时）。
+              点行可查看当前内容与 HEAD 的差异；左滑：保留我方 / 保留对方 / 标记已解决（工作区已是最终内容时）。
             </Text>
           }
         >
@@ -403,12 +424,18 @@ export function ConflictsPage({
                 ],
               }}
             >
-              <VStack alignment="leading" spacing={2}>
-                <Text>{file.filepath}</Text>
-                <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
-                  {conflictKindLabel(file.kind)}
-                </Text>
-              </VStack>
+              <NavigationLink
+                destination={
+                  <DiffPage bookmarkName={bookmarkName} filepath={file.filepath} />
+                }
+              >
+                <VStack alignment="leading" spacing={2}>
+                  <Text>{file.filepath}</Text>
+                  <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
+                    {conflictKindLabel(file.kind)}
+                  </Text>
+                </VStack>
+              </NavigationLink>
             </HStack>
           ))}
         </Section>

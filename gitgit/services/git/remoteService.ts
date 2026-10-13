@@ -27,6 +27,82 @@ function requireAuth(): { username: string; password: string } {
   return auth
 }
 
+/**
+ * 推送前的对象收集/打包阶段没有原生进度事件（引擎会读取全部可达对象再过滤），
+ * 用 Proxy 包装 fs.readFile 统计 gitdir objects/ 下的读取字节数，
+ * 按节流回调上报，让 BusyOverlay 在最长耗时阶段也能看到实时反馈。
+ */
+function createPushProgressFs(
+  fs: any,
+  gitdir: string,
+  onRead: (totalBytes: number) => void
+): any {
+  const objectPrefix = gitdir.replace(/\/+$/, "") + "/objects/"
+  const proxy = new Proxy(fs, {
+    get(target, prop) {
+      if (prop === "readFile") {
+        return async (filepath: string, opts?: any) => {
+          const p = String(filepath || "")
+          const result = await target.readFile(p, opts)
+          try {
+            if (
+              p.startsWith(objectPrefix) ||
+              p.startsWith("/objects/") ||
+              p.includes("/objects/")
+            ) {
+              const size =
+                result && typeof (result as any).length === "number"
+                  ? (result as any).length
+                  : 0
+              if (size > 0) onRead(size)
+            }
+          } catch (_e) {
+            /* 统计失败不影响推送 */
+          }
+          return result
+        }
+      }
+      const value = target[prop]
+      return typeof value === "function" ? value.bind(target) : value
+    },
+  })
+  return proxy
+}
+
+/** 推送进度检查点：上报“打包对象”阶段并节流回调打包读取字节 */
+async function emitPushPreparing(
+  options: RemoteOpOptions | null | undefined,
+  emit: typeof emitRemoteProgress
+): Promise<
+  | { prepare: (bytes: number) => void; done: () => void }
+  | { prepare: undefined; done: undefined }
+> {
+  // 未接进度回调时不做任何统计包装，保持原行为
+  if (!options?.onProgress) return { prepare: undefined, done: undefined }
+  await emit(options, "Preparing")
+  let total = 0
+  let lastReport = 0
+  let lastTs = 0
+  // 串行上报：前一次 emit 未完成时不叠加新上报，避免 UI 收到乱序事件
+  let pending: Promise<void> | null = null
+  const report = (bytes: number, force: boolean) => {
+    total += bytes
+    const now = Date.now()
+    if (!force && total - lastReport < 262144 && now - lastTs < 400) return
+    lastReport = total
+    lastTs = now
+    if (pending) return
+    pending = Promise.resolve(emit(options, "Preparing", total, 0)).finally(() => {
+      pending = null
+    })
+    void pending
+  }
+  return {
+    prepare: (bytes: number) => report(bytes, false),
+    done: () => report(0, true),
+  }
+}
+
 async function updateRemoteTrackingRef(
   git: any,
   fs: any,
@@ -86,10 +162,15 @@ export async function pushInternal(
   checkRemoteCancelled(options)
   await emitRemoteProgress(options, "Connecting")
   const auth = requireAuth()
-  const http = createHttpTransport(auth.username, auth.password)
-  await emitRemoteProgress(options, "Uploading")
+  const http = createHttpTransport(auth.username, auth.password, {
+    confirmPhase: "Confirming",
+  })
+  const preparing = await emitPushPreparing(options, emitRemoteProgress)
+  const pushFs = preparing.prepare
+    ? createPushProgressFs(fs, gitdir, preparing.prepare)
+    : fs
   await git.push({
-    fs,
+    fs: pushFs,
     dir,
     gitdir,
     http,
@@ -100,6 +181,7 @@ export async function pushInternal(
     force,
     onProgress: createGitOnProgress(options),
   })
+  preparing.done?.()
   checkRemoteCancelled(options)
   await emitRemoteProgress(options, "Finalizing")
   await updateRemoteTrackingRef(git, fs, dir, gitdir, remote, ref)
@@ -191,7 +273,8 @@ export async function cloneInternal(
 export async function setOriginAndPushInternal(
   bookmarkName: string,
   remoteUrl: string,
-  ref?: string
+  ref?: string,
+  options?: RemoteOpOptions
 ): Promise<void> {
   const { git, fs, dir, gitdir } = await getCtx(bookmarkName)
   const remotes = await git.listRemotes({ fs, dir, gitdir })
@@ -226,15 +309,25 @@ export async function setOriginAndPushInternal(
     }
 
     const auth = requireAuth()
+    checkRemoteCancelled(options)
+    const preparing = await emitPushPreparing(options, emitRemoteProgress)
+    const pushFs = preparing.prepare
+      ? createPushProgressFs(fs, gitdir, preparing.prepare)
+      : fs
     await git.push({
-      fs,
+      fs: pushFs,
       dir,
       gitdir,
-      http: createHttpTransport(auth.username, auth.password),
+      http: createHttpTransport(auth.username, auth.password, {
+        confirmPhase: "Confirming",
+      }),
       onAuth: () => auth,
       remote: "origin",
       ref: branch,
+      onProgress: createGitOnProgress(options),
     })
+    preparing.done?.()
+    checkRemoteCancelled(options)
     await updateRemoteTrackingRef(git, fs, dir, gitdir, "origin", branch)
     try {
       await git.setConfig({
