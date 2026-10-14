@@ -6,13 +6,15 @@ import {
 // 状态 setter 类型，支持直接值和函数式更新
 export type StateSetter<T> = (value: T | ((prev: T) => T)) => void
 import {
-  AccountItem, BookmarkItem, WebDAVConfig, CustomField, GroupItem,
+  AccountItem, BookmarkItem, WebDAVConfig, CustomField, GroupItem, BackupSettings, SyncBackupPayload,
   generateId, getGroupLetter, processUrl, fetchSiteInfo, loadFilePassword, saveFilePassword, clearWebDAVConfigFile,
   encryptPayload, decryptPayload, normalizeSyncPayload, uploadToWebDAV, downloadFromWebDAV, testWebDAVConnection, saveWebDAVConfig, isEncryptedFormat,
   maskPassword, maskApiKey, sortByDisplayTitle, saveLaunchBiometricsEnabled
 } from "./utils"
 
 import { AvatarIcon, FormRow, AccountRow, BookmarkRow, TagPicker } from "./components"
+import { IconLibraryPage, IconPickerPage } from "./IconLibraryPages"
+import { formatBytes, getIconCacheInfo, loadIconLibraries, normalizeIconLibraries, saveIconLibraries } from "./icons"
 
 // --- 页面 Props 类型定义 ---
 export type AccountEditorPageProps = { initialAccount?: AccountItem; onSave: (account: AccountItem) => void; groups?: GroupItem[]; allTags?: string[] }
@@ -94,6 +96,13 @@ export const AccountEditorPage = ({ initialAccount, onSave, groups, allTags }: A
     else showToast("无法从网址获取头像", true)
   }
 
+  // 从订阅的图标库中选择头像
+  const openIconPicker = async () => {
+    await Navigation.present(
+      <IconPickerPage currentUrl={avatarUrl} onPick={(picked: string) => { setAvatarUrl(picked); showToast("已选择图标") }} />
+    )
+  }
+
   // 手动获取名称（覆盖当前值）
   const handleFetchName = async () => {
     const info = await fetchSiteInfo(url)
@@ -157,6 +166,7 @@ export const AccountEditorPage = ({ initialAccount, onSave, groups, allTags }: A
           <HStack alignment="center" spacing={12} padding={{ vertical: 4 }}>
             <Text frame={{ width: 75, alignment: "leading" }} foregroundStyle="#333333">图标链接</Text>
             <TextField label={<Text>{"l"}</Text>} value={avatarUrl} onChanged={setAvatarUrl} prompt="填写网址后自动获取（可选）" />
+            <Button buttonStyle="plain" action={openIconPicker}><Image systemName="square.grid.2x2" foregroundStyle="#007AFF" font={15} /></Button>
             <Button buttonStyle="plain" action={handleFetchAvatar}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="subheadline" /></Button>
             {avatarUrl.length > 0 ? <Button buttonStyle="plain" action={() => setAvatarUrl("")}><Image systemName="xmark.circle.fill" foregroundStyle="#C7C7CC" font="subheadline" /></Button> : undefined}
           </HStack>
@@ -620,6 +630,13 @@ export const BookmarkEditorPage = ({ initialBookmark, onSave, groups, allTags }:
     else showToast("无法从链接获取图标", true)
   }
 
+  // 从订阅的图标库中选择图标
+  const openIconPicker = async () => {
+    await Navigation.present(
+      <IconPickerPage currentUrl={iconUrl} onPick={(picked: string) => { setIconUrl(picked); showToast("已选择图标") }} />
+    )
+  }
+
   // 手动获取名称（覆盖当前值）
   const handleFetchTitle = async () => {
     const info = await fetchSiteInfo(url)
@@ -680,6 +697,7 @@ export const BookmarkEditorPage = ({ initialBookmark, onSave, groups, allTags }:
           <HStack alignment="center" spacing={12} padding={{ vertical: 4 }}>
             <Text frame={{ width: 75, alignment: "leading" }} foregroundStyle="#333333">图标链接</Text>
             <TextField label={<Text>{"l"}</Text>} value={iconUrl} onChanged={setIconUrl} prompt="填写链接后自动获取（可选）" />
+            <Button buttonStyle="plain" action={openIconPicker}><Image systemName="square.grid.2x2" foregroundStyle="#007AFF" font={15} /></Button>
             <Button buttonStyle="plain" action={handleFetchIcon}><Image systemName="arrow.clockwise.circle.fill" foregroundStyle="#007AFF" font="subheadline" /></Button>
             {iconUrl.length > 0 ? <Button buttonStyle="plain" action={() => setIconUrl("")}><Image systemName="xmark.circle.fill" foregroundStyle="#C7C7CC" font="subheadline" /></Button> : undefined}
           </HStack>
@@ -1449,7 +1467,25 @@ export const SearchPage = ({ accounts, setAccounts, bookmarks, setBookmarks, acc
 
 export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, webdavConfig, setWebdavConfig, launchBiometricsEnabled, setLaunchBiometricsEnabled }: SettingsPageProps) => {
   const [toast, setToast] = useState({ msg: "", isError: false, isPresented: false })
+  const [iconSummary, setIconSummary] = useState<{ libraries: number; icons: number; bytes: number } | null>(null)
   const showToast = useCallback((msg: string, isError = false) => { setToast(prev => ({ ...prev, isPresented: false })); setTimeout(() => setToast({ msg, isError, isPresented: true }), 150) }, [])
+
+  // 图标库订阅与缓存总量，用于入口副标题
+  const loadIconSummary = useCallback(async () => {
+    try {
+      const [libraries, cache] = await Promise.all([loadIconLibraries(), getIconCacheInfo()])
+      setIconSummary({ libraries: libraries.length, icons: libraries.reduce((sum, lib) => sum + lib.icons.length, 0), bytes: cache.bytes })
+    } catch {
+      // 副标题统计失败不影响设置页其他功能
+    }
+  }, [])
+
+  useEffect(() => { loadIconSummary() }, [loadIconSummary])
+
+  const openIconLibraryPage = async () => {
+    await Navigation.present(<IconLibraryPage />)
+    await loadIconSummary()
+  }
 
   const handleLaunchBiometricsChanged = async (enabled: boolean) => {
     if (!LocalAuth.isBiometricsAvailable || LocalAuth.biometryType !== "faceID") {
@@ -1535,24 +1571,74 @@ export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, w
     }
   }
 
+  // 备份负载：账号、书签 + 设置项（安全设置、WebDAV 配置、图标库订阅）
+  const buildBackupPayload = async (): Promise<SyncBackupPayload> => ({
+    accounts,
+    bookmarks,
+    settings: {
+      launchBiometricsEnabled,
+      webdavConfig: webdavConfig ?? undefined,
+      iconLibraries: await loadIconLibraries(),
+    },
+  })
+
+  // 备份内容描述，供确认框展示
+  const describePayload = (payload: SyncBackupPayload): string => {
+    const parts = [`${payload.accounts.length} 个账号`, `${payload.bookmarks.length} 个书签`]
+    const libraries = payload.settings?.iconLibraries?.length || 0
+    if (libraries > 0) parts.push(`${libraries} 个图标库订阅`)
+    if (payload.settings?.webdavConfig) parts.push("WebDAV 配置")
+    if (payload.settings?.launchBiometricsEnabled) parts.push("启动验证设置")
+    return parts.join("、")
+  }
+
+  // 应用备份中的设置项，返回已应用的说明列表
+  const applyBackupSettings = async (settings?: BackupSettings): Promise<string[]> => {
+    if (!settings) return []
+    const applied: string[] = []
+    const libraries = normalizeIconLibraries(settings.iconLibraries)
+    if (libraries.length > 0) {
+      await saveIconLibraries(libraries)
+      applied.push(`${libraries.length} 个图标库订阅`)
+    }
+    if (settings.webdavConfig) {
+      await saveWebDAVConfig(settings.webdavConfig)
+      setWebdavConfig(settings.webdavConfig)
+      applied.push("WebDAV 配置")
+    }
+    if (settings.launchBiometricsEnabled === true) {
+      // 本机不支持 Face ID 时不能开启，否则下次启动会被挡在外面
+      if (!LocalAuth.isBiometricsAvailable || LocalAuth.biometryType !== "faceID") {
+        showToast("本机不支持 Face ID，已跳过启动验证设置", true)
+      } else {
+        await saveLaunchBiometricsEnabled(true)
+        setLaunchBiometricsEnabled(true)
+        applied.push("启动验证设置")
+      }
+    }
+    return applied
+  }
+
   const handleWebDAVSync = async (isUpload: boolean) => {
     if (!webdavConfig) return showToast("请先配置 WebDAV", true)
     try {
       if (isUpload) {
         const filePwd = await ensureFilePassword("upload")
         if (!filePwd) return
-        const encryptedData = encryptPayload({ accounts, bookmarks }, filePwd)
+        const encryptedData = encryptPayload(await buildBackupPayload(), filePwd)
         await uploadToWebDAV(webdavConfig, encryptedData)
-        showToast(`已上传到 WebDAV：${accounts.length} 个账号，${bookmarks.length} 个书签`)
+        showToast(`已上传到 WebDAV：${accounts.length} 个账号、${bookmarks.length} 个书签及设置项`)
       } else {
         const rawData = await downloadFromWebDAV(webdavConfig)
         const filePwd = await promptForPassword("验证备份文件密码", "文件下载完成，请输入该备份文件绑定的密码以继续导入。")
         if (!filePwd) return
         const payload = normalizeSyncPayload(decryptPayload<unknown>(rawData, filePwd))
-        if (await Dialog.confirm({ title: "确认覆盖本地数据", message: `已成功读取 WebDAV 备份，包含 ${payload.accounts.length} 个账号、${payload.bookmarks.length} 个书签。是否覆盖当前本地数据？` })) {
+        if (await Dialog.confirm({ title: "确认覆盖本地数据", message: `已成功读取 WebDAV 备份，包含 ${describePayload(payload)}。是否覆盖当前本地数据？` })) {
           setAccounts(payload.accounts)
           setBookmarks(payload.bookmarks)
-          showToast(`已从 WebDAV 导入 ${payload.accounts.length} 个账号和 ${payload.bookmarks.length} 个书签`)
+          const applied = await applyBackupSettings(payload.settings)
+          await loadIconSummary()
+          showToast(`已从 WebDAV 导入 ${payload.accounts.length} 个账号和 ${payload.bookmarks.length} 个书签${applied.length > 0 ? `，并恢复 ${applied.join("、")}` : ""}`)
         }
       }
     } catch { showToast("同步失败：可能是连接异常、密码错误或文件损坏", true) }
@@ -1570,18 +1656,33 @@ export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, w
         importedData = decryptPayload<unknown>(rawStr, pwd)
       } else importedData = JSON.parse(rawStr)
       const payload = normalizeSyncPayload(importedData)
-      if (payload.accounts.length + payload.bookmarks.length > 0) {
-        const mode = await Dialog.actionSheet({ title: "选择导入方式", actions: [{ label: "追加到当前列表" }, { label: "覆盖当前列表", destructive: true }] })
-        if (mode === 0) {
-          setAccounts([...accounts, ...payload.accounts.map((acc: AccountItem) => ({ ...acc, id: generateId() }))])
-          setBookmarks([...bookmarks, ...payload.bookmarks.map((bookmark: BookmarkItem) => ({ ...bookmark, id: generateId() }))])
-          showToast(`已追加导入 ${payload.accounts.length} 个账号和 ${payload.bookmarks.length} 个书签`)
-        } else if (mode === 1) {
-          setAccounts(payload.accounts)
-          setBookmarks(payload.bookmarks)
-          showToast(`已覆盖导入 ${payload.accounts.length} 个账号和 ${payload.bookmarks.length} 个书签`)
+      const hasLists = payload.accounts.length + payload.bookmarks.length > 0
+      const hasSettings = !!payload.settings && ((payload.settings.iconLibraries?.length || 0) > 0 || !!payload.settings.webdavConfig || payload.settings.launchBiometricsEnabled === true)
+      if (!hasLists && !hasSettings) throw new Error("格式错误")
+
+      // 仅含设置项的备份：直接确认后恢复
+      if (!hasLists) {
+        if (await Dialog.confirm({ title: "恢复设置项", message: `备份包含 ${describePayload(payload)}，将覆盖本机同名设置，是否继续？` })) {
+          const applied = await applyBackupSettings(payload.settings)
+          await loadIconSummary()
+          showToast(applied.length > 0 ? `已恢复 ${applied.join("、")}` : "备份中没有可恢复的设置项")
         }
-      } else throw new Error("格式错误")
+        return
+      }
+
+      const mode = await Dialog.actionSheet({ title: "选择导入方式", actions: [{ label: "追加到当前列表" }, { label: "覆盖当前列表", destructive: true }] })
+      if (mode === 0) {
+        setAccounts([...accounts, ...payload.accounts.map((acc: AccountItem) => ({ ...acc, id: generateId() }))])
+        setBookmarks([...bookmarks, ...payload.bookmarks.map((bookmark: BookmarkItem) => ({ ...bookmark, id: generateId() }))])
+        showToast(`已追加导入 ${payload.accounts.length} 个账号和 ${payload.bookmarks.length} 个书签`)
+      } else if (mode === 1) {
+        setAccounts(payload.accounts)
+        setBookmarks(payload.bookmarks)
+        // 覆盖导入时一并恢复设置项（追加导入只合并列表内容，不动本机设置）
+        const applied = await applyBackupSettings(payload.settings)
+        await loadIconSummary()
+        showToast(`已覆盖导入 ${payload.accounts.length} 个账号和 ${payload.bookmarks.length} 个书签${applied.length > 0 ? `，并恢复 ${applied.join("、")}` : ""}`)
+      }
     } catch { showToast("导入失败：密码错误、文件损坏或格式不正确", true) }
   }
 
@@ -1591,9 +1692,9 @@ export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, w
     const exportPwd = await promptForPassword("设置导出文件密码", "请为本次导出的备份文件设置一个独立密码。")
     if (!exportPwd) return
     try {
-      const encryptedData = encryptPayload({ accounts, bookmarks }, exportPwd)
+      const encryptedData = encryptPayload(await buildBackupPayload(), exportPwd)
       await DocumentPicker.exportFiles({ files: [{ data: Data.fromRawString(encryptedData)!, name: `Accounts_Backup_${Date.now()}.txt` }] })
-      showToast("本地加密备份已导出")
+      showToast("本地加密备份已导出（含设置项）")
     } catch (error) { showToast(`导出失败：${error}`, true) }
   }
 
@@ -1612,6 +1713,21 @@ export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, w
               <Text>启动时 Face ID 验证</Text>
             </HStack>
           </Toggle>
+        </Section>
+        <Section header={<Text>信息图标</Text>} footer={<Text font={12} foregroundStyle="#8E8E93">订阅图标库后，可在新增或编辑账号、书签时直接从图标库选择图标；图标会缓存在本地，避免重复下载。</Text>}>
+          <Button action={openIconLibraryPage}>
+            <HStack padding={{ vertical: 6 }} alignment="center" spacing={12}>
+              <Image systemName="square.grid.2x2" foregroundStyle="#007AFF" />
+              <VStack alignment="leading" spacing={4}>
+                <Text>图标库订阅</Text>
+                <Text font={12} foregroundStyle="#8E8E93">
+                  {iconSummary ? `${iconSummary.libraries} 个图标库 · ${iconSummary.icons} 个图标 · 缓存 ${formatBytes(iconSummary.bytes)}` : "加载中…"}
+                </Text>
+              </VStack>
+              <Spacer />
+              <Image systemName="chevron.right" foregroundStyle="#C7C7CC" font={12} />
+            </HStack>
+          </Button>
         </Section>
         <Section header={<Text>WebDAV 云端同步</Text>} footer={<Text font="footnote" foregroundStyle="#8E8E93">配置您的云端服务以确保数据安全不丢失，所有数据均经过严格端到端加密。</Text>}>
           <HStack padding={{ vertical: 8 }} alignment="center">
@@ -1633,7 +1749,7 @@ export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, w
             </>
           )}
         </Section>
-        <Section header={<Text>文件与导出</Text>} footer={<Text font="footnote" foregroundStyle="#8E8E93">您可以手动导出或导入离线加密备份文件，务必牢记您的加密密码。</Text>}>
+        <Section header={<Text>文件与导出</Text>} footer={<Text font="footnote" foregroundStyle="#8E8E93">备份包含账号、书签与设置项（安全设置、WebDAV 配置、图标库订阅）；覆盖导入会一并恢复设置项，追加导入只合并账号与书签。务必牢记您的加密密码。</Text>}>
           <Button action={importFile}><Text>导入本地备份文件</Text></Button>
           <Button action={exportFile}><Text>导出本地备份文件</Text></Button>
         </Section>

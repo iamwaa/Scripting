@@ -8,13 +8,16 @@ declare const FileManager: any
 export type CustomField = { id: string; key: string; value: string }
 export type AccountItem = { id: string; name: string; createdAt: string; apiKey?: string; username?: string; password?: string; email?: string; notes?: string; url?: string; tags?: string[]; avatarUrl?: string; customFields?: CustomField[]; isPinned?: boolean; groupId?: string }
 export type BookmarkItem = { id: string; title: string; createdAt: string; url: string; tags?: string[]; notes?: string; iconUrl?: string; customFields?: CustomField[]; isPinned?: boolean; groupId?: string }
-export type SyncBackupPayload = { accounts: AccountItem[]; bookmarks: BookmarkItem[] }
+export type SyncBackupPayload = { accounts: AccountItem[]; bookmarks: BookmarkItem[]; settings?: BackupSettings }
 export type WebDAVConfig = { url: string; username: string; password: string }
+// 备份携带的项目设置项：安全设置、WebDAV 配置、图标库订阅
+// 图标库订阅保持原始数据，恢复时由 icons 模块的 normalizeIconLibraries 校验
+export type BackupSettings = { launchBiometricsEnabled?: boolean; webdavConfig?: WebDAVConfig; iconLibraries?: unknown[] }
 // 分组数据结构
 export type GroupItem = { id: string; name: string; createdAt: string; isCollapsed?: boolean }
 
 // --- 存储路径 ---
-const DATA_DIR = Path.join(Path.dirname(Path.dirname(Script.directory)), 'configs', '账号管理数据')
+export const DATA_DIR = Path.join(Path.dirname(Path.dirname(Script.directory)), 'configs', '账号管理数据')
 const ACCOUNTS_FILE = Path.join(DATA_DIR, 'accounts.json')
 const BOOKMARKS_FILE = Path.join(DATA_DIR, 'bookmarks.json')
 const WEBDAV_FILE = Path.join(DATA_DIR, 'webdav.json')
@@ -24,7 +27,7 @@ const ACCOUNT_GROUPS_FILE = Path.join(DATA_DIR, 'account_groups.json')
 const BOOKMARK_GROUPS_FILE = Path.join(DATA_DIR, 'bookmark_groups.json')
 const SECURITY_SETTINGS_FILE = Path.join(DATA_DIR, 'security_settings.json')
 
-const LOCAL_APP_SECRET = "Scripting_App_Local_Shield_2024!@#"
+export const LOCAL_APP_SECRET = "Scripting_App_Local_Shield_2024!@#"
 const PAYLOAD_SIGNATURE = "SCRIPTING_SECURE_PAYLOAD_V1"
 
 // --- 确保数据目录存在 ---
@@ -205,6 +208,20 @@ export const saveLaunchBiometricsEnabled = async (enabled: boolean): Promise<voi
 }
 
 // --- 基础工具函数 ---
+// 校验备份中的设置项，丢弃结构不正确的部分
+export const normalizeBackupSettings = (value: unknown): BackupSettings | undefined => {
+  if (!value || typeof value !== "object") return undefined
+  const settings = value as BackupSettings
+  const webdav = settings.webdavConfig
+  return {
+    launchBiometricsEnabled: settings.launchBiometricsEnabled === true,
+    webdavConfig: webdav && typeof webdav.url === "string" && typeof webdav.username === "string" && typeof webdav.password === "string" ? webdav : undefined,
+    iconLibraries: Array.isArray(settings.iconLibraries)
+      ? settings.iconLibraries.filter((lib): boolean => !!lib && typeof lib === "object" && typeof (lib as { url?: unknown }).url === "string")
+      : [],
+  }
+}
+
 export const normalizeSyncPayload = (data: unknown): SyncBackupPayload => {
   if (Array.isArray(data)) return { accounts: data as AccountItem[], bookmarks: [] }
   if (data && typeof data === "object") {
@@ -212,6 +229,7 @@ export const normalizeSyncPayload = (data: unknown): SyncBackupPayload => {
     return {
       accounts: Array.isArray(payload.accounts) ? payload.accounts : [],
       bookmarks: Array.isArray(payload.bookmarks) ? payload.bookmarks : [],
+      settings: normalizeBackupSettings(payload.settings),
     }
   }
   throw new Error("格式错误")

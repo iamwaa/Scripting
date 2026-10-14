@@ -1,6 +1,7 @@
-import { useState, useMemo, VStack, HStack, Text, Button, Spacer, Image, TextField, Link, Menu, ScrollView } from "scripting"
+import { useState, useEffect, useMemo, VStack, HStack, Text, Button, Spacer, Image, TextField, Link, Menu, ScrollView } from "scripting"
 
 import { AccountItem, BookmarkItem, GroupItem, maskPassword, maskApiKey, processUrl } from "./utils"
+import { getCachedIconPath, resolveIconPath } from "./icons"
 
 declare const Pasteboard: any;
 declare const Dialog: any;
@@ -21,15 +22,35 @@ export const LetterIcon = ({ name, size = 36 }: { name: string, size?: number })
 
 export const AvatarIcon = ({ url, name, size = 36 }: { url?: string; name: string, size?: number }) => {
   const [hasError, setHasError] = useState<boolean>(false)
-  const [prevUrl, setPrevUrl] = useState<string | undefined>(url)
-  // url 变化时重置错误状态，使组件能重新尝试加载新图片
-  if (url !== prevUrl) { setPrevUrl(url); setHasError(false) }
+  // undefined 表示正在检查/下载缓存，null 表示无本地缓存（回退远程加载）
+  const [localPath, setLocalPath] = useState<string | null | undefined>(() => getCachedIconPath(url) ?? undefined)
+
+  // 优先使用本地缓存，未命中时下载一次并缓存，避免每次列表渲染都发起请求
+  useEffect(() => {
+    setHasError(false)
+    const key = (url || "").trim()
+    if (!/^https?:\/\//i.test(key)) { setLocalPath(null); return }
+    const cached = getCachedIconPath(key)
+    if (cached) { setLocalPath(cached); return }
+    let alive = true
+    setLocalPath(undefined)
+    resolveIconPath(key).then(path => { if (alive) setLocalPath(path) })
+    return () => { alive = false }
+  }, [url])
+
+  // 只按本地路径解码一次，避免列表滚动时重复读盘
+  const cachedImage = useMemo(() => (localPath ? UIImage.fromFile(localPath) : null), [localPath])
+
   if (!url?.trim() || hasError) return <LetterIcon name={name} size={size} />
   const ShapeVStack = VStack as any
 
   return (
     <ShapeVStack frame={{ width: size, height: size }} clipShape={{ type: "rect", cornerRadius: size / 3 }}>
-      <Image imageUrl={url} resizable={true} scaleToFill={true} placeholder={<LetterIcon name={name} size={size} />} onError={() => setHasError(true)} />
+      {cachedImage
+        ? <Image image={cachedImage} resizable={true} scaleToFill={true} />
+        : localPath === undefined
+          ? <LetterIcon name={name} size={size} />
+          : <Image imageUrl={url} resizable={true} scaleToFill={true} placeholder={<LetterIcon name={name} size={size} />} onError={() => setHasError(true)} />}
     </ShapeVStack>
   )
 }
