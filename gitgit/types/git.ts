@@ -56,6 +56,8 @@ export interface RepoListStatus {
   conflictCount: number
   /** 是否存在 gitgit-merge-state（含冲突已清但待完成提交） */
   mergeInProgress: boolean
+  /** origin 远端地址（无远端为 null），供列表行解析 GitHub 仓库 */
+  originUrl?: string | null
   error?: string
 }
 

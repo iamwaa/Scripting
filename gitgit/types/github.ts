@@ -44,6 +44,9 @@ export interface GitHubIssuePage {
 
 export type GitHubCommitAvatarMap = Record<string, string>
 
+/** GitHub 仓库可见性（组织内部仓库 internal 归入 private） */
+export type GitHubRepoVisibility = "public" | "private"
+
 export interface CreateGitHubIssueInput {
   title: string
   body?: string

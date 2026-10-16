@@ -15,6 +15,7 @@ import type {
   GitHubIssueItem,
   GitHubIssuePage,
   GitHubCommitAvatarMap,
+  GitHubRepoVisibility,
   CommitCheckState,
   CommitCheckStatusMap,
   ActionRun,
@@ -360,6 +361,18 @@ export async function listMyRepos(
 /** 获取仓库详情；fork 仓库包含 parent/source 信息 */
 export async function getRepo(fullName: string): Promise<GitHubRepo> {
   return mapRepo(await ghFetch(`/repos/${encodeRepo(fullName)}`))
+}
+
+/**
+ * 读取仓库可见性（列表行的公开/私有标识用）。
+ * REST 接口不支持字段裁剪，只从完整响应里取 private/visibility。
+ */
+export async function getRepoVisibility(
+  fullName: string
+): Promise<GitHubRepoVisibility> {
+  const data = await ghFetch(`/repos/${encodeRepo(fullName)}`)
+  // 组织内部仓库 visibility 为 internal，同样属于非公开
+  return data?.private || data?.visibility === "internal" ? "private" : "public"
 }
 
 /** 在 GitHub 上为当前用户创建仓库 */

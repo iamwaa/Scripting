@@ -1,7 +1,8 @@
 /**
  * pages/RepoListPage.tsx - 仓库列表页
  *
- * 展示仓库来源（本地/克隆）与改动/待推送/待拉取/合并冲突摘要。
+ * 展示仓库来源（本地/克隆）、GitHub 仓库公开/私有标识，
+ * 与改动/待推送/待拉取/合并冲突摘要。
  * 待处理仓库置顶，待处理组与普通组内分别按名称 A→Z 展示。
  * 状态优先显示上次快照，再由实时查询逐行覆盖；未有快照的行显示加载图标。
  * 移除仓库时会清理 gitdir 缓存与访问书签（见 repoStore.removeRepo）。
@@ -29,6 +30,7 @@ import type {
   RepoMeta,
   RepoSnapshot,
 } from "../types/git"
+import type { GitHubRepoVisibility } from "../types/github"
 import {
   listRepos,
   addRepoByPicker,
@@ -47,9 +49,11 @@ import {
   COLOR_RED,
 } from "../constants/colors"
 import { formatRepoListMergeSummary } from "../utils/mergeConflict"
+import { githubRepoFromRemoteUrl } from "../utils/github"
 import { yieldForUi } from "../utils/remoteProgress"
 import { sortReposForList } from "../utils/repoSort"
 import { useRepoListStatus } from "../hooks/useRepoListStatus"
+import { useRepoVisibilities } from "../hooks/useRepoVisibilities"
 
 export function RepoListPage() {
   // 关闭 present 的根界面（设置已独立为 Tab）
@@ -143,6 +147,15 @@ export function RepoListPage() {
   const showRemovingOverlay = removingName != null
   // 仅影响展示顺序，持久化的仓库数组仍保持添加顺序
   const sortedRepos = sortReposForList(repos, statusMap, snapshotMap)
+  // GitHub 仓库行显示公开/私有标识（本地无 GitHub 远端的仓库不显示）
+  const visibilities = useRepoVisibilities(
+    sortedRepos.map((repo) => ({
+      key: repo.bookmarkName,
+      fullName: githubRepoFromRemoteUrl(
+        statusMap[repo.bookmarkName]?.originUrl ?? repo.remoteUrl
+      ),
+    }))
+  )
 
   return (
     <List
@@ -259,6 +272,7 @@ export function RepoListPage() {
                   repo={repo}
                   status={statusMap[repo.bookmarkName]}
                   snapshot={snapshotMap[repo.bookmarkName]}
+                  visibility={visibilities[repo.bookmarkName]}
                 />
               </NavigationLink>
             </HStack>
@@ -274,10 +288,12 @@ function RepoRow({
   repo,
   status,
   snapshot,
+  visibility,
 }: {
   repo: RepoMeta
   status?: RepoListStatus
   snapshot?: RepoSnapshot
+  visibility?: GitHubRepoVisibility
 }) {
   const source = sourceLabel(repo)
   const isClone = source === "克隆"
@@ -327,10 +343,25 @@ function RepoRow({
         <Text font="headline" foregroundStyle={COLOR_LABEL}>
           {repo.name}
         </Text>
-        <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
-          {source}
-          {branch ? ` · ${branch}` : ""}
-        </Text>
+        <HStack alignment="center" spacing={4}>
+          <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
+            {source}
+            {branch ? ` · ${branch}` : ""}
+          </Text>
+          {visibility ? (
+            <HStack alignment="center" spacing={3}>
+              <Image
+                systemName={visibility === "private" ? "lock.fill" : "globe"}
+                font={11}
+                imageScale="small"
+                foregroundStyle={COLOR_SECONDARY_LABEL}
+              />
+              <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
+                {visibility === "private" ? "私有" : "公开"}
+              </Text>
+            </HStack>
+          ) : null}
+        </HStack>
       </VStack>
       <Spacer />
       {/* 放在 NavigationLink 自带 > 的左侧，整行垂直居中 */}

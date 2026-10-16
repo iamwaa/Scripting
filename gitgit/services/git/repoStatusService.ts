@@ -142,6 +142,7 @@ export async function getRepoListStatusInternal(
         workdirOk: false,
         conflictCount: 0,
         mergeInProgress: false,
+        originUrl: null,
         error: "工作区不可访问",
       }
     }
@@ -157,6 +158,7 @@ export async function getRepoListStatusInternal(
         workdirOk: true,
         conflictCount: 0,
         mergeInProgress: false,
+        originUrl: null,
       }
     }
 
@@ -189,6 +191,7 @@ export async function getRepoListStatusInternal(
     if (!current) current = await readSymbolicHeadBranch(fs)
 
     let hasRemote = false
+    let originUrl: string | null = null
     try {
       const remotes = (await git.listRemotes({
         fs,
@@ -196,6 +199,11 @@ export async function getRepoListStatusInternal(
         gitdir: contextGitdir,
       })) as { remote: string; url: string }[]
       hasRemote = remotes.length > 0
+      // 列表行据此解析 GitHub 仓库来源仓库（公开/私有标识），不额外读取配置
+      originUrl =
+        remotes.find((item) => item.remote === "origin")?.url ??
+        remotes[0]?.url ??
+        null
     } catch (_e) {
       hasRemote = false
     }
@@ -228,6 +236,7 @@ export async function getRepoListStatusInternal(
       workdirOk: true,
       conflictCount,
       mergeInProgress,
+      originUrl,
     }
   } catch (error: any) {
     return {
@@ -240,6 +249,7 @@ export async function getRepoListStatusInternal(
       workdirOk: false,
       conflictCount: 0,
       mergeInProgress: false,
+      originUrl: null,
       error: String(error?.message || error),
     }
   }

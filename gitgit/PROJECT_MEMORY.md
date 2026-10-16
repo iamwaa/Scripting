@@ -230,6 +230,11 @@
   - **为什么不能一次问全**：REST run 对象只有 `artifacts_url`（恒存在），GraphQL 里根本没有 Actions 工件类型/字段，只能逐运行查。新增 `api/githubApi.ts::countRunArtifacts(fullName, runId)`：`/actions/runs/{id}/artifacts?per_page=1` 只取 `total_count`（不拉明细，`_` 兼容旧响应）。
   - **`hooks/useRunArtifactCounts.ts`**：会话级 `Map<fullName#runId, number>` 缓存（失败写 -1，本次会话不重试）+ 受限并发 4 + 逐个回填；结果只写缓存，用版本号 state 触发按缓存重算返回的 `runId -> 数量`（避免“已在途结果”被下一次 effect 的初始化丢掉）。`queued`（含 waiting/requested，`mapRunStatus` 都归 queued）不查询；`stopped` 只阻止取新任务，刷新/卸载时已在途请求仍写缓存。翻页、返回列表页复用缓存。
   - 全项目 TypeScript 诊断 0 错误；行内排版用工作区探针核对（图标与数字等高、长标题两行截断、不挤压）。备份：`gitgit_Actions列表行加工件标识_20261013_165651`。
+- **P2.81 仓库列表行公开/私有标识（2026-10-16）**：`RepoRow` 副信息行（来源 · 分支）右侧加 GitHub 可见性标识：`lock.fill` 私有 / `globe` 公开，图标 `font={11} imageScale="small"`（配 `caption` 文字，遵循图标降 1–2 号规则），文字与图标均 `COLOR_SECONDARY_LABEL`；非 GitHub 仓库（`githubRepoFromRemoteUrl` 返回 null）与无 Token 不渲染。
+  - **远端地址来源**：`RepoListStatus` 新增可选 `originUrl`（`origin` 优先、否则首个远端、无远端 null），由 `getRepoListStatusInternal` 里**已有**的 `listRemotes` 结果直接带出，不额外读配置；列表页用 `statusMap[key].originUrl ?? meta.remoteUrl` 兜底，状态未扫描完的克隆仓库也能尽早显示标识。
+  - **`api/githubApi.ts::getRepoVisibility(fullName)`**：`GET /repos/{o}/{r}` 只取 `private`/`visibility`（REST 无法字段裁剪，响应体与 `getRepo` 相同）；组织内部仓库 `visibility: "internal"` 归入 `"private"`。类型 `types/github.ts::GitHubRepoVisibility`。
+  - **`hooks/useRepoVisibilities.ts`**：会话级 `Map<owner/repo（小写）, public|private>` 只缓存成功结果（失败/权限不足不缓存，下次刷新可重试），受限并发 3，逐行回填（依赖字符串签名而非数组本身，避免每次渲染重跑 effect）；同一远端被多个仓库复用时只查一次。
+  - 验证：临时探针（项目内 `intent.tsx`，已删）用真实 Token 跑全部 7 个仓库，`originUrl` 与 meta 完全一致，可见性结果正确（Tweak/test/tg-checkin=私有，Scripting/orange-cloud/ProxyHub_Emby/DYYY=公开）；全项目 TypeScript 诊断 0 错误；`repoSort`、`statusScanService`、`repoStatusRead` 三个测试通过。备份：`gitgit_仓库列表行加公开私有标识_20261016_141246`。
 - 待做：
   - Tag 创建/查看/删除；仓库健康检查（HEAD/index/objects/config/工作区访问性）
   - 可选：iCloud 协调失败与 index 一致性故障注入
