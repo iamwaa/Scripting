@@ -22,7 +22,7 @@
 
 修改 `scripts/<项目名>/` 下的项目文件时，按需依次使用技能（各自细节读其 SKILL.md）：
 
-1. `project-auto-backup`：编辑前备份。
+1. `project-auto-backup`：编辑前备份——同一任务内**每批改动前**各备份一次，不要整轮任务只在开头备份一次（否则中间的成功状态会被跳过，这才是真正会丢版本的地方）。备份是回滚点，只能在改动前取；除用户明确要里程碑存档外不传 `phase`。
 2. `karpathy-guidelines`：先明确约束、假设与最窄成功标准，再做局部改动。
 3. `project-file-organization`：新建文件、扩展结构、重组项目，或本次修改的源文件达到 `300+` 行时，按其目录规范与单文件行数分档做结构审查（可运行该技能目录下的 `scripts/check.py`，注意不是项目根 `scripts/`；结果仅作审查输入）。
 4. `project-code-cleanup`：源码修改后、交付前清理并执行最窄有效检查。
@@ -95,6 +95,14 @@
 
 ## 已知坑
 
+- [AFC 走 RSD 时是二进制协议](memories/afc-over-rsd-binary-protocol.md) — `com.apple.afc.shim.remote` 签到后不再说 plist，发 plist 帧必报 `RSD_PEER_RESET`；改用 `CFA6LPAA` 40 字节包头。
+
+- [AirTraffic 同步（com.apple.atc）走 RSD 的线协议](memories/atc-airtraffic-over-rsd.md) — 小端 4 字节帧 + `{Command,Session,Params}`；`HostInfo` 用 session 0、其余用 1，缺 Grappa token 会被静默忽略。
+
+- [RSD 连接的 read 是单飞的](memories/rsd-connection-read-single-flight.md) — 用 `Promise.race` 给 `read` 加超时会留下悬空读，之后全报 `RSD_BUSY`；改成一条常驻读循环 + 取队列超时。
+
+- [FileManager / Path 是运行时全局](memories/scripting-runtime-globals-not-exports.md) — 从 `"scripting"` 具名导入得到 `undefined`，症状是 `run_intent` 整段超时无日志；`Path` 另有一层坑，拼路径干脆自己写。
+
 - [Python 会话模块缓存](memories/python-session-module-cache.md) — 连续 `python3` 可能仍复用旧 import；改模块后按依赖顺序 reload 再测。
 
 - [iCloud 冲突副本污染全项目诊断](memories/icloud-conflict-copies-pollute-diagnostics.md) — `文件名 2.扩展名` 旧副本会被 TypeScript 当真实文件参与全项目检查，报一堆假错误（Cannot redeclare / Property missing）；先隔离再诊断。
@@ -132,6 +140,12 @@
 - **`webView.getCookies(url)` 按 domain + path 双重匹配，路径受限的 cookie 用站点根地址取不到。** 实测（ephemeral WebView + 假域名）：`Path=/api/user/auth` 的 cookie 在 `getCookies("https://host")` 结果里不出现，URL 写成 `https://host/api/user/auth/refresh` 才返回；`getAllCookies()` 无视路径全部返回（含 HttpOnly）。要完整回收登录态就用 `getAllCookies()` 自己按域名过滤，别把 `getCookies(baseUrl)` 当成「这个站的全部 cookie」。
 
 - **Agent shell 不能 chdir：`cd`、`tar -C`、以及 tar 解压到子目录全部失败。** 实测 `cd tmp/downloads` 报 `can't cd to`（路径存在也一样），`tar x -C <dir>` 报 `could not chdir`，不带 `-C` 解压时每个条目都报 `Could not chdir <entry>`——是沙箱禁用 chdir，不是路径写错。规避：命令始终用相对工作区的路径直接读写，不要试图切目录；需要解包时用 Python `tarfile` / `zipfile` 遍历成员并 `open(dst,"wb")` 落盘（`os.makedirs` 可用，也可直接在内存里 grep），或用 `tar xzOf pkg.tgz <member>` 流式取单个文件。包进 `sh -c 'cd … && …'` 也没用（dash 同样报 `can't cd`）。
+
+  同级坑：**`exec` 的 `cwd` 参数被静默忽略。** 传 `cwd: <某目录>` 后 `pwd` 仍返回工作区根，命令实际在根目录执行——症状是「命令报成功但目标文件毫无变化」（`rm -f x` 在错的目录里执行照样返回 0），看起来像脚本自己静默退出了。要让脚本真正跑在目标目录里，必须在 Python 内部 `os.chdir()` 再调起：`runpy.run_path("<绝对路径>/main.py", run_name="__main__")`——`run_name` 不能省，否则 `if __name__ == "__main__"` 不成立，脚本什么都不做就退出。
+
+- [File Provider 目录 shell 挂死](memories/file-provider-storage-shell-hangs.md) — GitHub 等挂在 File Provider 下的仓库，shell `ls`/`cp` 必超时；改用 file_tool read/copy。
+
+- **telethon ≥ 1.45 把按钮种类摞到了 `.type` 字段上，旧写法全部失效。** 实测本机 1.45.0：`KeyboardButton(text, type=ButtonTypeDefault())` / `KeyboardInlineButton(text, type=InlineButtonTypeCallback(data))`，判类型只能写 `isinstance(button.button.type, ...)`；旧版（layer 229 之前）是 `KeyboardButtonCallback(text, data)` 那套、`KeyboardButton` 根本没有 `.type`，同一段代码会 `AttributeError`（或一直判为「不可点击」）。所以 `requirements` 写 `telethon>=1.36` 是危险的：要么下界卡到 `>=1.45`，要么用 `getattr(button.button, "type", None)` + 旧类名回退。**同一条还得记住：`await button.click()` 的返回值必须收着，bot 的结果常常只在那里。** 实测 1.45.0：inline 回调按钮返回 `messages.BotCallbackAnswer`（`.message` 就是弹窗/toast 文字，签到、领取这类 bot 的结果经常只在这里出现，既不发新消息也不改原消息，用 `iter_messages` 永远读不到），键盘按钮返回我们自己刚发出去的那条 `Message`（不是 bot 的反馈），URL 按钮返回 `str`。类路径是 `telethon.tl.types.messages.BotCallbackAnswer`——**顶层 `telethon.tl.types` 下没有 `BotCallbackAnswer`**（写 `tl_types.BotCallbackAnswer` 拿到 None），要用 `getattr(tl_types.messages, "BotCallbackAnswer", None) or getattr(tl_types, "BotCallbackAnswer", None)` 兼容。
 
 - **简单命令不过 shell：`>`、`|`、`;` 会被当成普通参数。** 实测 `python3 x.py … > out.json` 报 `unrecognized arguments: > out.json`，`… | head` 同理，`;` 被当文件名。需要重定向 / 管道 / 多命令串联时整条包进 `sh -c '…'`（内层用双引号包带空格的路径，实测正常），或让程序自己写文件（如 `--report <path>`）再用 file_tool 读。
 
@@ -181,6 +195,22 @@
     try { return decodeURIComponent(p) } catch { return p }
   }
   ```
+
+- **`FileManager.readDirectory(path)` 返回的是条目名（basename），不是完整路径。** 文档只写 “a list of string for the directories, files, and links”，实测 `readDirectorySync(dir)` 得到 `["abc123", ...]`，把其中一项直接丢给 `statSync` 会报「未能打开文件…因为它不存在」（在 `try/catch` 里静默吞掉时表现为文件数正常、总字节恒为 0）。规避：拼回目录再操作——`const files = (await FileManager.readDirectory(dir)).map(n => Path.join(dir, n))`。
+
+- **`UIImage` 没有 `size`，尺寸属性是 `width` / `height`。** 写 `image.size.width` 抛 `TypeError: undefined is not an object`；另外 `UIImage.fromData` / `fromFile` 对 SVG 一律返回 `null`（要拿尺寸用 `image.width` / `image.height`）。
+
+- **`List` 是否渲染屏幕外的行不可预测；只有 `onAppear` 可靠地「仅对可见行触发」。** 实测（`tmp/tests/list-lazy-probe*.tsx`、`list-row-appear-probe.tsx`）：300 行纯 `Text` 行、行数据在首帧就存在时，300 行的 `useEffect` **全部执行**；行内容更重、行数据由异步 `setState` 插入的场景（图标选择器，837 个图标）2 秒内只挂载了可见的 32 个单元格；NavigationStack 内 60 行嵌套结构挂载 52/60。反过来 `onAppear` 三次实测都只落在可见行（300 行里只出现 16~47 次，而且会重复触发）。规避：不要拿「屏幕外的行不会挂载」当作「不会执行副作用」的保证——涉及下载/请求的副作用要么加并发上限与优先级队列，要么按可见性做（`onAppear` 里触发，且必须幂等）；也不要靠挂载顺序推断可见性。
+
+- [Loon MITM 打断 Python TLS](memories/loon-mitm-breaks-python-tls.md) — 开着 Loon 解密时 Python 访问该域名必报 CERTIFICATE_VERIFY_FAILED；用 `openssl s_client -showcerts` 看 issuer 是否 `LOON CA`。
+
+- [iOS 上 pip 装 sdist 包必失败](memories/pip-sdist-manual-unpack-ios.md) — 报 `Errno 45 ios does not support processes`；纯 Python 包手动解包到用户级 site-packages（App bundle 内不可写）。
+
+- [后台 HTTP 服务在 App 切换后被回收](memories/background-http-server-dies-on-appswitch.md) — 交互式任务必须拆成分步 batch + 状态落盘：常驻服务会被回收，且 `mode: interactive` 对 Python 本就不可用。
+
+- [QRCode 模块不可用 / 二维码替代方案](memories/qr-on-ios-runtime-and-python.md) — `scripting` 的 `QRCode` 整个是 `undefined`（文档超前）；生成用本机 `segno`，校验用 `api.qrserver.com` 的 read 接口。
+
+- [urllib 关校验必须重置 opener](memories/python-urllib-unverified-context-trap.md) — 只改 `ssl._create_default_https_context` 无效；本机启动阶段已建好 `urllib.request._opener`，必须同时置 `None`。
 
 - [theos Logos %orig 内联](memories/theos-logos-orig-inline.md) — `foo(%orig)` 写法展开会吞掉外层闭合括号报 `expected ')'`；先赋值 `Type *x = %orig;` 再包装。
 

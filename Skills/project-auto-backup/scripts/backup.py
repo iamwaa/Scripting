@@ -12,6 +12,10 @@ DEFAULT_BACKUP_ROOT = Path(
     "/var/mobile/Library/Mobile Documents/iCloud~com~thomfang~Scripting/Documents/backup"
 )
 
+# 快照对应「改动前」还是「改动后」，默认 before（改动前才是回滚点）
+BEFORE_ALIASES = {"before", "pre", "前"}
+AFTER_ALIASES = {"after", "post", "后"}
+
 DEFAULT_EXCLUDES = {
     "node_modules",
     ".next",
@@ -117,10 +121,20 @@ def main() -> int:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_root = Path(params.get("backup_root") or DEFAULT_BACKUP_ROOT).expanduser().resolve()
 
-        if description:
-            folder_name = f"{project_name}_{description}_{timestamp}"
+        phase = str(params.get("phase", "before") or "before").strip().lower()
+        if phase in BEFORE_ALIASES:
+            phase = "before"
+        elif phase in AFTER_ALIASES:
+            phase = "after"
         else:
-            folder_name = f"{project_name}_{timestamp}"
+            raise ValueError('phase must be "before" (default) or "after"')
+
+        # 名字里显式标注快照是改动前还是改动后，避免把「改动前」的状态误读成改动后的结果
+        if description:
+            state_segment = f"{description}_{'前' if phase == 'before' else '后'}"
+        else:
+            state_segment = "改动前" if phase == "before" else "改动后"
+        folder_name = f"{project_name}_{state_segment}_{timestamp}"
         destination = backup_root / project_name / folder_name
 
         include_hidden = bool(params.get("include_hidden", True))
@@ -142,6 +156,7 @@ def main() -> int:
             "ok": True,
             "projectName": project_name,
             "description": description or None,
+            "phase": phase,
             "source": str(source),
             "destination": str(destination),
             "filesCopied": files_copied,

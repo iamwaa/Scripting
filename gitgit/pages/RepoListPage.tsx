@@ -340,28 +340,29 @@ function RepoRow({
         foregroundStyle={isClone ? COLOR_ACCENT : COLOR_GREEN}
       />
       <VStack alignment="leading" spacing={2}>
-        <Text font="headline" foregroundStyle={COLOR_LABEL}>
-          {repo.name}
-        </Text>
-        <HStack alignment="center" spacing={4}>
-          <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
-            {source}
-            {branch ? ` · ${branch}` : ""}
+        {/* 公开/私有标识紧跟仓库名，基线与标题首行对齐 */}
+        <HStack alignment="firstTextBaseline" spacing={6}>
+          <Text font="headline" foregroundStyle={COLOR_LABEL}>
+            {repo.name}
           </Text>
           {visibility ? (
             <HStack alignment="center" spacing={3}>
               <Image
                 systemName={visibility === "private" ? "lock.fill" : "globe"}
-                font={11}
+                font={12}
                 imageScale="small"
                 foregroundStyle={COLOR_SECONDARY_LABEL}
               />
-              <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
+              <Text font={12} foregroundStyle={COLOR_SECONDARY_LABEL}>
                 {visibility === "private" ? "私有" : "公开"}
               </Text>
             </HStack>
           ) : null}
         </HStack>
+        <Text font="caption" foregroundStyle={COLOR_SECONDARY_LABEL}>
+          {source}
+          {branch ? ` · ${branch}` : ""}
+        </Text>
       </VStack>
       <Spacer />
       {/* 放在 NavigationLink 自带 > 的左侧，整行垂直居中 */}
