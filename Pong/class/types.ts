@@ -3,15 +3,16 @@
 // S: Single Purpose — only types, no logic.
 // P: Ports over Implementation — every other module talks through these shapes.
 //
-// The app's UI is written against this CANONICAL model and supports TWO probe
-// backends: Komari and 哪吒 (Nezha) Monitor v1. Each backend has its own
-// adapter (class/komari.ts, class/nezha.ts) that converts its raw JSON into
-// these shapes, selected at runtime via class/backend.ts. The views never need
-// to know which probe produced the data.
+// The app's UI is written against this CANONICAL model and supports THREE
+// probe backends: Komari, 哪吒 (Nezha) Monitor v1 and CF-Server-Monitor (a
+// Cloudflare Workers panel). Each backend has its own adapter
+// (class/komari.ts, class/nezha.ts, class/cfsm.ts) that converts its raw JSON
+// into these shapes, selected at runtime via class/backend.ts. The views never
+// need to know which probe produced the data.
 // ============================================================================
 
 /** Which probe software a saved endpoint speaks. */
-export type BackendKind = "komari" | "nezha";
+export type BackendKind = "komari" | "nezha" | "cfsm";
 
 /**
  * Canonical static node information. Komari fills it from `GET /api/nodes`;
@@ -565,4 +566,195 @@ export type ServiceOverview = {
   dailyUp: number[];
   /** Per-day "down" check counts (oldest→newest), parallel to dailyUp. */
   dailyDown: number[];
+};
+
+// ----------------------------------------------------------------------------
+// Raw CF-Server-Monitor wire shapes (Cloudflare Workers panel). These mirror
+// the JSON documented in its API.md; class/cfsm.ts converts them into the
+// canonical model above.
+// IMPORTANT UNITS: RAM / swap / disk sizes arrive in MB, network speeds in B/s,
+// counters in bytes; the adapter converts MB -> bytes for the canonical model.
+// ----------------------------------------------------------------------------
+
+/** One GPU entry. `info` is the utilisation percent in current reports. */
+export type CfsmGpuInfo = {
+  id?: string;
+  name?: string;
+  info?: number;
+  mem_used?: number;
+  mem_total?: number;
+  sm_clock?: number;
+  power?: number;
+};
+
+/**
+ * A server item from `GET /api/servers` (metrics merged in) or
+ * `GET /api/server?id=`. Numeric metric fields may arrive as strings.
+ */
+export type CfsmServer = {
+  id: string;
+  name?: string;
+  server_group?: string;
+  tags?: string; // 逗号分隔
+  note?: string;
+  price?: string;
+  billing_cycle?: string;
+  auto_renewal?: string;
+  currency?: string;
+  expire_date?: string;
+  traffic_limit?: string;
+  traffic_calc_type?: string;
+  interface?: string;
+  reset_day?: number;
+  collect_interval?: number;
+  report_interval?: number;
+  wss_report_interval?: number;
+  connection_mode?: string;
+  ping_mode?: string;
+  auto_update?: string;
+  is_hidden?: string;
+  offline_notify_disabled?: string;
+  sort_order?: number;
+  /** 服务器级测速节点 `host[:port]`；空表示用站点设置。 */
+  custom_ct?: string;
+  custom_cu?: string;
+  custom_cm?: string;
+  custom_bd?: string;
+  node_1?: string;
+  node_2?: string;
+  node_3?: string;
+  node_4?: string;
+  /** 待下发给探针的一次性流量修正值。 */
+  rx_correction?: number | null;
+  tx_correction?: number | null;
+  traffic_alert_percent?: number | string;
+  // --- latest metrics ---
+  cpu?: number | string;
+  load_avg?: string;
+  net_in_speed?: number | string;
+  net_out_speed?: number | string;
+  net_rx?: number | string;
+  net_tx?: number | string;
+  net_rx_monthly?: number | string;
+  net_tx_monthly?: number | string;
+  processes?: number | string;
+  tcp_conn?: number | string;
+  udp_conn?: number | string;
+  ram_total?: number | string; // MB
+  ram_used?: number | string; // MB
+  swap_total?: number | string; // MB
+  swap_used?: number | string; // MB
+  disk_total?: number | string; // MB
+  disk_used?: number | string; // MB
+  cpu_cores?: number | string;
+  cpu_info?: string;
+  gpu_info?: CfsmGpuInfo[] | string | null;
+  arch?: string;
+  os?: string;
+  kernel_version?: string;
+  region?: string; // ISO-3166 alpha-2，来自 CF 的 cf-ipcountry
+  ip_v4?: string; // "0" / "1"（公共接口不暴露真实地址）
+  ip_v6?: string;
+  agent_version?: string;
+  boot_time?: string; // 毫秒时间戳字符串
+  last_updated?: number | string; // 最近一次指标时间（毫秒）
+  timestamp?: number | string; // 服务器配置记录创建时间（毫秒）
+  // --- 三网 + 自定义节点时延/丢包；false = 未配置，null = 本轮超时 ---
+  ping_ct?: number | null | false;
+  ping_cu?: number | null | false;
+  ping_cm?: number | null | false;
+  ping_bd?: number | null | false;
+  loss_ct?: number | null | false;
+  loss_cu?: number | null | false;
+  loss_cm?: number | null | false;
+  loss_bd?: number | null | false;
+  ping_node_1?: number | null | false;
+  ping_node_2?: number | null | false;
+  ping_node_3?: number | null | false;
+  ping_node_4?: number | null | false;
+  loss_node_1?: number | null | false;
+  loss_node_2?: number | null | false;
+  loss_node_3?: number | null | false;
+  loss_node_4?: number | null | false;
+};
+
+/** `GET /api/servers` response. */
+export type CfsmServersResponse = {
+  servers?: CfsmServer[];
+  stats?: {
+    total?: number;
+    online?: number;
+    offline?: number;
+    globalSpeedIn?: number;
+    globalSpeedOut?: number;
+    globalNetTx?: number;
+    globalNetRx?: number;
+  };
+  regionStats?: { [code: string]: number };
+  sysConfig?: { [key: string]: any };
+};
+
+/** One row of `GET /api/history/all`. Timestamps are epoch ms. */
+export type CfsmHistoryRow = {
+  timestamp: number;
+  cpu?: number | string;
+  ram_total?: number | string; // MB
+  ram_used?: number | string; // MB
+  swap_total?: number | string; // MB
+  swap_used?: number | string; // MB
+  disk_total?: number | string; // MB
+  disk_used?: number | string; // MB
+  processes?: number | string;
+  net_in_speed?: number | string;
+  net_out_speed?: number | string;
+  tcp_conn?: number | string;
+  udp_conn?: number | string;
+  load_avg?: string;
+  region?: string;
+  gpu_info?: CfsmGpuInfo[] | string | null;
+  ping_ct?: number | null;
+  ping_cu?: number | null;
+  ping_cm?: number | null;
+  ping_bd?: number | null;
+  loss_ct?: number | null;
+  loss_cu?: number | null;
+  loss_cm?: number | null;
+  loss_bd?: number | null;
+  ping_node_1?: number | null;
+  ping_node_2?: number | null;
+  ping_node_3?: number | null;
+  ping_node_4?: number | null;
+  loss_node_1?: number | null;
+  loss_node_2?: number | null;
+  loss_node_3?: number | null;
+  loss_node_4?: number | null;
+};
+
+/** `GET /api/config` — the subset Pong reads. */
+export type CfsmConfig = {
+  version?: string;
+  site_title?: string;
+  is_public?: boolean;
+  turnstile_enabled?: boolean;
+  turnstile_login_enabled?: boolean;
+  custom_ct_name?: string;
+  custom_cu_name?: string;
+  custom_cm_name?: string;
+  custom_bd_name?: string;
+  node_1_name?: string;
+  node_2_name?: string;
+  node_3_name?: string;
+  node_4_name?: string;
+};
+
+/** One sample inside a WS `batchUpdate` (`data` carries partial server fields). */
+export type CfsmSample = { ts: number; data: Partial<CfsmServer> };
+
+/** Frames pushed by `GET /api/ws`. */
+export type CfsmWsFrame = {
+  type?: string; // hello / subscribed / batchUpdate / pong
+  ts?: number;
+  subscribed?: string;
+  count?: number;
+  updates?: { serverId: string; samples?: CfsmSample[] }[];
 };

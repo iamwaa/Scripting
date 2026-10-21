@@ -89,7 +89,7 @@ export function View() {
           header={<Text>探针面板</Text>}
           footer={
             <Text>
-              支持 Komari 与哪吒（Nezha）两种探针。填写面板地址（如 https://status.example.com）并选择类型；
+              支持 Komari、哪吒（Nezha）与 CF-Server-Monitor 三种探针。填写面板地址（如 https://status.example.com）并选择类型；
               公开 / 游客面板可直接读取，私有面板在编辑页设置 Token 或账号密码登录。
             </Text>
           }
@@ -247,6 +247,13 @@ function EditorView({
     } else if (authMode === "token" && !apiKey.trim()) {
       setTestResult(`请填写 ${getBackend(kind).caps.tokenLabel}`);
       return;
+    } else if (authMode === "token") {
+      // 形状明显不对时不保存，避免存进去后每次加载都 401。
+      const shapeErr = getBackend(kind).validateToken?.(apiKey.trim());
+      if (shapeErr) {
+        setTestResult(shapeErr);
+        return;
+      }
     }
     upsertInstance({ id: instance?.id, name, kind, baseUrl, auth: currentAuth(sessionToken) });
     dismiss();
@@ -274,6 +281,12 @@ function EditorView({
       if (!apiKey.trim()) {
         setTesting(false);
         setTestResult(`请填写 ${backend.caps.tokenLabel}`);
+        return;
+      }
+      const shapeErr = backend.validateToken?.(apiKey.trim());
+      if (shapeErr) {
+        setTesting(false);
+        setTestResult(shapeErr);
         return;
       }
       const r = await backend.verifyAuth(baseUrl, { mode: "token", apiKey: apiKey.trim() });
@@ -360,7 +373,9 @@ function EditorView({
             <Text>
               {kind === "nezha"
                 ? "开启游客访问的面板无需登录。私有面板可用 Access Token（系统设置 → API Token）或账号密码访问；账号密码会换取 JWT 会话凭证。凭证以明文保存在本机。"
-                : "公开面板无需登录。私有面板可用 API Key 或账号密码访问；账号密码会换取会话凭证。凭证以明文保存在本机。"}
+                : kind === "cfsm"
+                  ? "公开站点无需登录；私有站点（is_public = false）必须用管理员账号密码登录换取 JWT，或粘贴现有 JWT。JWT 形如 eyJhbGciOi… 三段用 . 分隔（约 200 字符，7 天有效）；面板里的 API_SECRET / jwt_secret 是密钥，不能当令牌。Turnstile 开启时脚本无法直连。凭证以明文保存在本机。"
+                  : "公开面板无需登录。私有面板可用 API Key 或账号密码访问；账号密码会换取会话凭证。凭证以明文保存在本机。"}
             </Text>
           }
         >

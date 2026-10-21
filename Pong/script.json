@@ -29,8 +29,8 @@
   "runInApp" : false,
   "localizedDescriptions" : {
     "de" : "",
-    "en" : "Komari & Nezha probe dashboard on a 3D map — live node status, metrics and geo distribution.",
-    "zh" : "在 3D 地图上查看 Komari 与哪吒探针：节点实时状态、负载指标与地理分布。",
+    "en" : "Komari, Nezha & CF-Server-Monitor probe dashboard on a 3D map — live node status, metrics and geo distribution.",
+    "zh" : "在 3D 地图上查看 Komari、哪吒与 CF-Server-Monitor 探针：节点实时状态、负载指标与地理分布。",
     "fr" : "",
     "ru" : "",
     "it" : "",
@@ -45,5 +45,5 @@
       "homepage" : "https:\/\/github.com\/iamwaa"
     }
   ],
-  "description" : "Komari & Nezha probe dashboard — live server monitoring on a 3D world map."
+  "description" : "Komari / Nezha / CF-Server-Monitor probe dashboard — live server monitoring on a 3D world map."
 }

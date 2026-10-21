@@ -605,6 +605,50 @@ async function patchSiteSettings(baseUrl: string, patch: SiteSettings, auth?: Au
 // 「连上后只收到一帧，之后一直显示离线」。
 // ----------------------------------------------------------------------------
 
+// ----------------------------------------------------------------------------
+// 私有站点下的实时连接凭证。
+// 开启「私有站点」后，Komari 的 PrivateSiteMiddleware 会拦截所有未登录的 /api 请求；
+// 而 /api/clients 这个 WebSocket 端点不在白名单里（白名单只有 "/api/clients/" 带尾斜杠），
+// 因此游客握手被 401 拒绝。Scripting 的 WebSocket 只能传 URL，无法附加 Cookie/
+// Authorization 头，所以只能走查询参数：服务端会用 ?token= 识别 agent 令牌，
+// 该身份既通过私有站点拦截，也满足 WS 的来源（Origin）校验。
+// 令牌通过管理接口按节点读取，并按 baseUrl 缓存，避免每次重连都多两次请求。
+// ----------------------------------------------------------------------------
+
+const liveTokenCache = new Map<string, string>();
+
+/** 取一个可用于 WS 握手的节点令牌；无凭证或非管理员时返回空串（公开站点无需令牌）。 */
+async function resolveLiveToken(baseUrl: string, auth?: AuthConfig): Promise<string> {
+  if (!baseUrl || !auth || auth.mode === "none") return "";
+  const cached = liveTokenCache.get(baseUrl);
+  if (cached) return cached;
+  try {
+    const nodes = await fetchNodes(baseUrl, auth);
+    const uuid = nodes[0]?.uuid;
+    if (!uuid) return "";
+    const res = await fetch(`${baseUrl}/api/admin/client/${encodeURIComponent(uuid)}/token`, {
+      method: "GET",
+      headers: headersFor(auth),
+      timeout: 12000,
+    });
+    if (!res.ok) return "";
+    const body = (await res.json()) as any;
+    const token = body?.token ?? body?.data?.token;
+    if (typeof token === "string" && token) {
+      liveTokenCache.set(baseUrl, token);
+      return token;
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+/** 丢弃缓存的令牌（令牌被重置 / 节点被删 / 服务端判定无效时调用）。 */
+function clearLiveToken(baseUrl: string): void {
+  liveTokenCache.delete(baseUrl);
+}
+
 // 断线后重连的退避间隔（毫秒）
 const RECONNECT_MS = 2500;
 
@@ -619,6 +663,16 @@ class KomariLiveClient implements LiveSession {
   private nextConnectAt = 0;
   // 最近一次收到帧的时间戳（0 表示本次连接还没收到过）
   private lastFrameAt = 0;
+  // 是否已经收到过有效帧；只在这之后才向外报 connected，避免 401 握手闪一下「已连接」
+  private connected = false;
+  // 私有站点所需的 WS 令牌与解析状态
+  private wsToken = "";
+  private tokenReady = false;
+  private tokenResolving = false;
+  // 连续失败次数；达到阈值时作废缓存令牌并重新解析
+  private failures = 0;
+  // 本次连接是否已经收到过帧（用来区分「握手失败」和「正常断线」）
+  private hadFrame = false;
 
   private intervalMs: number;
 
@@ -626,22 +680,43 @@ class KomariLiveClient implements LiveSession {
     private baseUrl: string,
     private handlers: LiveHandlers,
     intervalMs: number,
+    private getAuth?: () => AuthConfig | undefined,
   ) {
     this.intervalMs = intervalMs || 2000;
   }
 
   private wsUrl(): string {
     const u = this.baseUrl.replace(/^http/i, "ws");
-    return `${u}/api/clients`;
+    // 私有站点下必须带令牌，否则握手被服务端 401 拒绝
+    const q = this.wsToken ? `?token=${encodeURIComponent(this.wsToken)}` : "";
+    return `${u}/api/clients${q}`;
   }
 
   start(): void {
     if (this.timer) return; // 已在运行，避免重复建定时器/重复连线
     this.closed = false;
     this.nextConnectAt = 0;
-    this.connect();
+    // 先解析令牌再建连：私有站点下无票直接连会白白失败一轮
+    void this.prepare();
     // 定时器必须在这里创建（不能在 WS 回调里）：它同时承担心跳与重连。
     this.timer = setInterval(() => this.tick(), this.intervalMs);
+  }
+
+  // 解析 WS 令牌；无论成败都会置 tokenReady，后续由 tick() 负责建连
+  private async prepare(): Promise<void> {
+    if (this.tokenResolving) return;
+    this.tokenResolving = true;
+    try {
+      this.wsToken = await resolveLiveToken(this.baseUrl, this.getAuth?.());
+    } catch {
+      this.wsToken = "";
+    } finally {
+      this.tokenResolving = false;
+      this.tokenReady = true;
+      // 拿到新令牌后重新计数，否则上一次的失败会立刻把新令牌也作废
+      this.failures = 0;
+    }
+    if (!this.closed && !this.ws && Date.now() >= this.nextConnectAt) this.connect();
   }
 
   // 心跳/重连都由这个定时器驱动：已连接就发 get，断开则按退避重连
@@ -654,6 +729,8 @@ class KomariLiveClient implements LiveSession {
         return;
       }
       this.poll();
+    } else if (!this.tokenReady) {
+      void this.prepare();
     } else if (Date.now() >= this.nextConnectAt) {
       this.connect();
     }
@@ -664,10 +741,11 @@ class KomariLiveClient implements LiveSession {
     try {
       const ws = new WebSocket(this.wsUrl());
       this.ws = ws;
+      this.connected = false;
+      this.hadFrame = false;
 
       ws.onopen = () => {
         this.lastFrameAt = Date.now();
-        this.handlers.onStatus("connected");
         this.poll();
       };
 
@@ -678,6 +756,13 @@ class KomariLiveClient implements LiveSession {
           const parsed = JSON.parse(text) as { status: string; data: LiveData };
           if (parsed?.status === "success" && parsed.data) {
             this.lastFrameAt = Date.now();
+            this.failures = 0;
+            this.hadFrame = true;
+            // 收到首个有效帧才算真连上（否则 401 握手也会先触发 onopen）
+            if (!this.connected) {
+              this.connected = true;
+              this.handlers.onStatus("connected");
+            }
             // The server's `data.online` is the authoritative list of UUIDs
             // with active agent connections. The app trusts it directly.
             this.handlers.onData([], enrichLiveData(parsed.data));
@@ -696,8 +781,22 @@ class KomariLiveClient implements LiveSession {
 
   // 连接根本没建起来（构造失败，没有 socket 可清理）：报错并安排重连
   private failConnect(): void {
+    this.noteFailure();
     this.nextConnectAt = Date.now() + RECONNECT_MS;
     if (!this.closed) this.handlers.onStatus("error");
+  }
+
+  /**
+   * 记一次失败；连续失败达到 2 次且本地持有令牌时，作废缓存并重新解析。
+   * 私有站点下令牌会被重置（节点重建 / token 轮换），旧令牌会持续被拒。
+   */
+  private noteFailure(): void {
+    this.failures += 1;
+    if (this.failures >= 2 && this.wsToken) {
+      clearLiveToken(this.baseUrl);
+      this.wsToken = "";
+      this.tokenReady = false;
+    }
   }
 
   private poll(): void {
@@ -714,6 +813,11 @@ class KomariLiveClient implements LiveSession {
     if (!this.ws) return; // onerror / onclose 会成对触发，只处理第一次
     this.ws = null;
     this.lastFrameAt = 0;
+    this.connected = false;
+    // 还没收到过任何帧就断开 → 视为握手/认证失败，累加失败计数；
+    // 正常跑过一阵再断线不算失败，避免把好令牌误判成无效。
+    if (!this.hadFrame) this.noteFailure();
+    this.hadFrame = false;
     this.nextConnectAt = Date.now() + RECONNECT_MS;
     if (!this.closed) this.handlers.onStatus(status);
   }
@@ -770,8 +874,9 @@ export const KomariBackend: Backend = {
   // `startLive` 按端口约定返回「已经在跑」的会话（同 nezha），因此这里必须
   // 主动 start：否则上层 LiveClient 只拿到一个没连线的空壳，实时数据永远不来，
   // 节点会一直显示离线。
-  startLive(baseUrl, handlers, _getAuth, _getUuids) {
-    const client = new KomariLiveClient(baseUrl, handlers, 2000);
+  // `getAuth` 用于解析私有站点下的 WS 凭证（见 resolveLiveToken）。
+  startLive(baseUrl, handlers, getAuth, _getUuids) {
+    const client = new KomariLiveClient(baseUrl, handlers, 2000, getAuth);
     client.start();
     return client;
   },

@@ -70,11 +70,15 @@ export function formatPrice(price: number, billingCycle: number): string {
   const cycle =
     billingCycle >= 365
       ? "/年"
-      : billingCycle >= 30
-        ? "/月"
-        : billingCycle > 0
-          ? `/${billingCycle}天`
-          : "";
+      : billingCycle >= 180
+        ? "/半年"
+        : billingCycle >= 90
+          ? "/季"
+          : billingCycle >= 30
+            ? "/月"
+            : billingCycle > 0
+              ? `/${billingCycle}天`
+              : "";
   return `$${price.toFixed(2)}${cycle}`;
 }
 

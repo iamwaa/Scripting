@@ -80,6 +80,14 @@ export type Backend = {
     auth?: AuthConfig,
   ): Promise<{ ok: boolean; username?: string; error?: string }>;
 
+  /**
+   * Optional pre-flight check for a pasted token (shape only, no network).
+   * Returns an error message when the value clearly can't work, or null when it
+   * looks plausible. Lets the settings form reject, say, a signing secret pasted
+   * into a JWT field before the user ever hits 401.
+   */
+  validateToken?(token: string): string | null;
+
   /** Exchange account credentials for a session credential. */
   login(
     baseUrl: string,
@@ -292,9 +300,43 @@ export const NEZHA_CAPS: BackendCaps = {
   hasSiteSettings: true,
 };
 
+/**
+ * CF-Server-Monitor（Cloudflare Workers + D1 + Durable Object）——只有 1 套
+ * JWT 管理鉴权，没有告警/通知/定时/用户/令牌/会话这些管理资源；历史窗口受
+ * 面板白名单限制，且未登录只能查 ≤24 小时，所以只提供短窗口。
+ */
+export const CFSM_CAPS: BackendCaps = {
+  kind: "cfsm",
+  label: "CF-Server-Monitor",
+  tokenLabel: "JWT",
+  ranges: [
+    { label: "1小时", hours: 1 },
+    { label: "6小时", hours: 6 },
+    { label: "1天", hours: 24 },
+  ],
+  hasIpCard: false, // 公共接口只暴露 v4/v6 可达性，不返回真实地址
+  canCreateNode: true,
+  canDeleteNode: true,
+  hasTags: true,
+  hasBilling: true,
+  liveProvidesNodes: false,
+  hasServiceOverview: false,
+  canEditNode: true,
+  hasAlertRules: false,
+  hasNotifications: false,
+  hasCronTasks: false,
+  hasCommandExec: false,
+  hasUserMgmt: false,
+  hasApiTokens: false,
+  hasSessionMgmt: false,
+  hasSiteSettings: true,
+};
+
 /** Look up the capability descriptor for a backend kind. */
 export function capsFor(kind: BackendKind): BackendCaps {
-  return kind === "nezha" ? NEZHA_CAPS : KOMARI_CAPS;
+  if (kind === "nezha") return NEZHA_CAPS;
+  if (kind === "cfsm") return CFSM_CAPS;
+  return KOMARI_CAPS;
 }
 
 // ----------------------------------------------------------------------------

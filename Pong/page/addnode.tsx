@@ -258,7 +258,7 @@ function InstallView({
             header={<Text>新建节点</Text>}
             footer={
               <Text>
-                创建后会返回该节点的 Agent Token，下方命令会自动填入。需要当前凭证具备管理员权限。
+                创建后会取到该服务器的接入凭证（Agent Token / Worker API_SECRET），下方命令会自动填入。需要当前凭证具备管理员权限。
               </Text>
             }
           >
@@ -266,7 +266,7 @@ function InstallView({
             <Button action={createNode}>
               <HStack spacing={6}>
                 <Image systemName={creating ? "arrow.triangle.2.circlepath" : "plus.circle.fill"} />
-                <Text>{creating ? "创建中…" : "创建并获取 Token"}</Text>
+                <Text>{creating ? "创建中…" : "创建并获取凭证"}</Text>
               </HStack>
             </Button>
             {err ? (
@@ -395,8 +395,11 @@ function EditNodeView({
       patch.group = group.trim();
       if (caps.hasTags) patch.tags = tags.trim();
       patch.note = note.trim();
-      const w = parseInt(weight, 10);
-      if (!isNaN(w)) patch.weight = w;
+      // 排序：Komari 可直接改权重；CF-Server-Monitor 只能整表重排，忽略。
+      if (caps.kind !== "cfsm") {
+        const w = parseInt(weight, 10);
+        if (!isNaN(w)) patch.weight = w;
+      }
       if (caps.hasBilling) {
         const p = parseFloat(price);
         if (!isNaN(p)) patch.price = p;
@@ -427,29 +430,29 @@ function EditNodeView({
         <Section header={<Text>基本信息</Text>}>
           <TextField title={"名称"} prompt={"节点名称"} value={name} onChanged={setName} />
           <TextField title={"备注"} prompt={"公开备注 / 备注"} value={note} onChanged={setNote} />
-          <TextField
-            title={caps.kind === "nezha" ? "排序值" : "权重"}
-            prompt={"数字，越大越靠前"}
-            value={weight}
-            onChanged={setWeight}
-          />
+          {caps.kind === "cfsm" ? null : (
+            <TextField
+              title={caps.kind === "nezha" ? "排序值" : "权重"}
+              prompt={"数字，越大越靠前"}
+              value={weight}
+              onChanged={setWeight}
+            />
+          )}
         </Section>
 
-        {caps.kind === "komari" ? (
+        {caps.hasTags ? (
           <Section header={<Text>分类</Text>}>
             <TextField title={"分组"} prompt={"分组名"} value={group} onChanged={setGroup} />
-            {caps.hasTags ? (
-              <TextField
-                title={"标签"}
-                prompt={"用 ; 分隔多个标签"}
-                value={tags}
-                onChanged={setTags}
-              />
-            ) : null}
+            <TextField
+              title={"标签"}
+              prompt={"用 ; 分隔多个标签"}
+              value={tags}
+              onChanged={setTags}
+            />
           </Section>
         ) : null}
 
-        {caps.kind === "komari" && caps.hasBilling ? (
+        {caps.hasBilling ? (
           <Section header={<Text>计费</Text>} footer={<Text>价格按节点的计费周期计算。</Text>}>
             <TextField title={"价格"} prompt={"0 表示免费"} value={price} onChanged={setPrice} />
           </Section>
@@ -468,7 +471,9 @@ function EditNodeView({
             <Text font={"caption2"} foregroundStyle={"tertiaryLabel"}>
               {caps.kind === "nezha"
                 ? "哪吒的分组 / 标签在面板侧管理，此处不提供。"
-                : "保存将直接写入面板，需要管理员凭证。"}
+                : caps.kind === "cfsm"
+                  ? "CF-Server-Monitor 的排序需在面板侧拖拽调整，此处只提供名称 / 分组 / 标签 / 备注 / 价格。"
+                  : "保存将直接写入面板，需要管理员凭证。"}
             </Text>
           }
         >

@@ -383,7 +383,7 @@ function LoadChartSection({
       title={"历史负载"}
       footer={
         <Text font={"caption2"} foregroundStyle={"secondaryLabel"}>
-          来自探针历史记录（哪吒需启用 TSDB），按所选时间范围聚合。
+          来自探针历史记录（哪吒需启用 TSDB，CF 面板读 D1），按所选时间范围聚合。
         </Text>
       }
     >
@@ -423,6 +423,10 @@ function LoadChartSection({
           {activeInst?.kind === "nezha" ? (
             <Text font={"caption2"} foregroundStyle={"tertiaryLabel"}>
               哪吒需在面板「设置 → 监控」开启历史数据存储（TSDB），否则不返回历史曲线。
+            </Text>
+          ) : activeInst?.kind === "cfsm" ? (
+            <Text font={"caption2"} foregroundStyle={"tertiaryLabel"}>
+              CF 面板的历史数据存在 D1，只有探针持续上报后才会有曲线；未登录只能查 24 小时以内。
             </Text>
           ) : null}
         </VStack>

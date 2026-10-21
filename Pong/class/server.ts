@@ -1,8 +1,9 @@
 // ============================================================================
 // Backend facade. The UI imports everything probe-related from here; this file
-// owns NOTHING backend-specific — it dispatches to the Komari / Nezha adapters
-// (class/komari.ts, class/nezha.ts) registered in class/backend.ts, and keeps
-// the small set of BACKEND-NEUTRAL helpers (map pins, load colour).
+// owns NOTHING backend-specific — it dispatches to the Komari / Nezha / CF-Server-
+// Monitor adapters (class/komari.ts, class/nezha.ts, class/cfsm.ts) registered in
+// class/backend.ts, and keeps the small set of BACKEND-NEUTRAL helpers (map pins,
+// load colour).
 // S: Single Purpose — dispatch + neutral view helpers.
 // U: Unidirectional — UI -> facade -> backend adapter. Never the reverse.
 // P: Ports over Implementation — callers depend on these functions, not fetch.
@@ -45,6 +46,7 @@ import {
 } from "./backend";
 import { KomariBackend } from "./komari";
 import { NezhaBackend } from "./nezha";
+import { CfsmBackend } from "./cfsm";
 
 export type { NodeBasicInfo, LiveData, Pin, LoginResult };
 export type { Backend, LiveHandlers, LiveSession } from "./backend";
@@ -54,6 +56,7 @@ export type { Backend, LiveHandlers, LiveSession } from "./backend";
 // then resolves a kind -> Backend at runtime.
 registerBackend(KomariBackend);
 registerBackend(NezhaBackend);
+registerBackend(CfsmBackend);
 
 /** Resolve the Backend for a kind (defaults to Komari for legacy instances). */
 export function getBackend(kind?: BackendKind): Backend {
@@ -61,7 +64,7 @@ export function getBackend(kind?: BackendKind): Backend {
 }
 
 /** All registered backends, for selection UIs (settings picker). */
-export const ALL_BACKENDS: Backend[] = [KomariBackend, NezhaBackend];
+export const ALL_BACKENDS: Backend[] = [KomariBackend, NezhaBackend, CfsmBackend];
 
 /** Resolve the Backend for a whole instance. */
 export function backendFor(inst?: Instance | null): Backend {
