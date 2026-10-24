@@ -21,6 +21,7 @@ import {
 import { ScheduleTab } from "./pages/ScheduleTab"
 import { FinishedTab } from "./pages/FinishedTab"
 import { SubscriptionsTab } from "./pages/SubscriptionsTab"
+import { HupuTab } from "./pages/HupuTab"
 import { SettingsTab } from "./pages/SettingsTab"
 import { DEFAULT_FILTERS } from "./utils/filter"
 import type { Match, Settings, Subscription, MatchFilters } from "./types"
@@ -264,7 +265,8 @@ function App() {
     }
   }
 
-  const openSettingsTab = () => setTabIndex(3)
+  // 设置页是第 5 个 Tab(虎扑评分插入到订阅之前)
+  const openSettingsTab = () => setTabIndex(4)
 
   return (
     <TabView
@@ -323,9 +325,10 @@ function App() {
         onOpenSettings={openSettingsTab}
         onClose={dismissApp}
       />
+      <HupuTab tabItem={<Label title="虎扑评分" systemImage="star.bubble" />} tag={2} onClose={dismissApp} />
       <SubscriptionsTab
         tabItem={<Label title="订阅" systemImage="bell.fill" />}
-        tag={2}
+        tag={3}
         matches={matches}
         subscriptions={subscriptions}
         onToggleSub={handleToggleSub}
@@ -334,7 +337,7 @@ function App() {
       />
       <SettingsTab
         tabItem={<Label title="设置" systemImage="gearshape.fill" />}
-        tag={3}
+        tag={4}
         settings={settings}
         usage={usage}
         onSave={handleSaveSettings}

@@ -209,13 +209,17 @@ export function MatchRow({ match, subscribed, onToggle, showSubscribe = true }: 
           </Text>
           <Spacer minLength={0} />
           {showSubscribe && canSubscribe ? (
-            <Button action={() => onToggle(match)}>
+            // 必须显式 borderless：List 行内 automatic 样式会跟整行共享点击区域，
+            // 导致点比赛行任意位置都会订阅/取消订阅。
+            // 内边距放在 label 内部，既扩大铃铛可点区域又保持铃铛贴右边缘位置不变
+            <Button buttonStyle="borderless" action={() => onToggle(match)}>
               <Image
                 systemName={subscribed ? "bell.fill" : "bell"}
                 resizable
                 scaleToFit
                 frame={{ width: 18, height: 18 }}
                 foregroundStyle={subscribed ? "orange" : "secondaryLabel"}
+                padding={{ vertical: 4, leading: 8 }}
               />
             </Button>
           ) : null}
