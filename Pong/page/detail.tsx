@@ -12,6 +12,7 @@ import {
   LineCategoryChart,
   List,
   Navigation,
+  NavigationLink,
   NavigationStack,
   Pasteboard,
   Picker,
@@ -28,6 +29,9 @@ import { useMonitor } from "../context/Monitor";
 import { regionToName, regionToCode, codeToFlag } from "../class/geo";
 import { fetchPingRecords, fetchLoadRecords, fetchClientDetail, getBackend } from "../class/server";
 import { getActiveInstance } from "../class/config";
+import { View as UpdateView } from "./update";
+import { View as UpdateNodeView } from "./update_node";
+import { getNodeUpdateConfig, isUpdatable } from "../class/update";
 import { chartHeight } from "../class/ui";
 type Obs<T> = { value: T; setValue: (v: T) => void };
 
@@ -65,6 +69,13 @@ export function View({ uuid }: { uuid: string }) {
   const dismiss = Navigation.useDismiss();
   const monitor = useMonitor();
   const node = monitor.nodeIndex.value[uuid];
+  const inst = monitor.instance.value;
+  // 该节点自己的更新配置（面板下可能有多台 VPS，各管各的）
+  const instId = inst?.id ?? "";
+  const cfg = isUpdatable(getNodeUpdateConfig(instId, uuid)) ? getNodeUpdateConfig(instId, uuid) : undefined;
+  const updatePresented = useObservable<boolean>(false);
+  const configPresented = useObservable<boolean>(false);
+  const configured = useObservable<boolean>(!!cfg);
 
   return (
     <NavigationStack>
@@ -75,15 +86,63 @@ export function View({ uuid }: { uuid: string }) {
           cancellationAction: [
             <Button title="关闭" systemImage="xmark" action={dismiss} />,
           ],
+          topBarTrailing: configured.value
+            ? [
+                <Button
+                  action={() => updatePresented.setValue(true)}
+                  sheet={{
+                    isPresented: updatePresented,
+                    content: (
+                    <UpdateView
+                      uuid={uuid}
+                      presentationDetents={["large"]}
+                      onClose={() => updatePresented.setValue(false)}
+                    />
+                  ),
+                  }}
+                >
+                  <Image systemName={"arrow.triangle.2.circlepath"} />
+                </Button>,
+              ]
+            : [],
+        }}
+        sheet={{
+          isPresented: configPresented,
+          content: (
+            <UpdateNodeView
+              instanceId={instId}
+              nodeUuid={uuid}
+              nodeName={node?.name ?? "节点"}
+              presentationDetents={["large"]}
+              onSaved={(saved) => configured.setValue(!!saved)}
+              onClose={() => configPresented.setValue(false)}
+            />
+          ),
         }}
       >
-        {node ? <Body uuid={uuid} /> : <Section><Text>节点不存在</Text></Section>}
+        {node ? (
+          <Body
+            uuid={uuid}
+            configured={configured.value}
+            onConfigureUpdate={() => configPresented.setValue(true)}
+          />
+        ) : (
+          <Section><Text>节点不存在</Text></Section>
+        )}
       </List>
     </NavigationStack>
   );
 }
 
-function Body({ uuid }: { uuid: string }) {
+function Body({
+  uuid,
+  configured,
+  onConfigureUpdate,
+}: {
+  uuid: string;
+  configured: boolean;
+  onConfigureUpdate: () => void;
+}) {
   const monitor = useMonitor();
   const node = monitor.nodeIndex.value[uuid]!;
   const inst = monitor.instance.value;
@@ -129,6 +188,9 @@ function Body({ uuid }: { uuid: string }) {
       {/* Server IP addresses (admin-only; long-press to copy) */}
       <IPSection uuid={uuid} region={node.region} instance={inst} />
 
+      {/* 运维：给这台 VPS 配服务器更新（面板下可能有多台 VPS，各管各的） */}
+      <UpdateConfigRow configured={configured} onTap={onConfigureUpdate} />
+
       {/* Billing (only when meaningful) */}
       {node.price > 0 || expDays != null ? (
         <Section title={"计费信息"}>
@@ -145,6 +207,31 @@ function Body({ uuid }: { uuid: string }) {
         </Section>
       ) : null}
     </>
+  );
+}
+
+function UpdateConfigRow({ configured, onTap }: { configured: boolean; onTap: () => void }) {
+  return (
+    <Section
+      header={<Text font={13}>运维</Text>}
+      footer={
+        <Text font={12} foregroundStyle={"secondaryLabel"}>
+          {configured
+            ? "已配置服务器更新，右上角可以直接检查/升级 magpie 与探针。"
+            : "填写这台 VPS 的 SSH 信息后，右上角会出现更新入口，可一键升级 magpie / cf-probe。"}
+        </Text>
+      }
+    >
+      <Button action={onTap} buttonStyle={"plain"}>
+        <HStack>
+          <Image systemName={"arrow.triangle.2.circlepath"} foregroundStyle={"accentColor"} />
+          <Text font={16}>{configured ? "服务器更新设置" : "为此节点配置服务器更新"}</Text>
+          <Spacer />
+          <Text font={14} foregroundStyle={"secondaryLabel"}>{configured ? "已开启" : "未配置"}</Text>
+          <Image systemName={"chevron.right"} foregroundStyle={"tertiaryLabel"} />
+        </HStack>
+      </Button>
+    </Section>
   );
 }
 

@@ -255,7 +255,13 @@ function EditorView({
         return;
       }
     }
-    upsertInstance({ id: instance?.id, name, kind, baseUrl, auth: currentAuth(sessionToken) });
+    upsertInstance({
+      id: instance?.id,
+      name,
+      kind,
+      baseUrl,
+      auth: currentAuth(sessionToken),
+    });
     dismiss();
     await onSaved();
   }

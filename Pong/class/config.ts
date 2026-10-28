@@ -5,7 +5,7 @@
 // P: a small Port surface (get/save/add/remove/setActive) over Storage.
 // ============================================================================
 import { Script } from "scripting";
-import type { Instance, MonitorConfig, AuthConfig, BackendKind } from "./types";
+import type { Instance, MonitorConfig, AuthConfig, BackendKind, UpdateConfig } from "./types";
 
 const KEY = `${Script.name}.config`;
 
@@ -72,6 +72,8 @@ export function upsertInstance(input: {
   kind: BackendKind;
   baseUrl: string;
   auth?: AuthConfig;
+  /** null 表示清除更新配置 */
+  update?: UpdateConfig | null;
 }): Instance {
   const cfg = loadConfig();
   const baseUrl = normalizeBaseUrl(input.baseUrl);
@@ -82,13 +84,21 @@ export function upsertInstance(input: {
   if (input.id) {
     const idx = cfg.instances.findIndex((i) => i.id === input.id);
     if (idx >= 0) {
-      cfg.instances[idx] = { ...cfg.instances[idx], name, kind, baseUrl, auth };
+      cfg.instances[idx] = {
+        ...cfg.instances[idx],
+        name,
+        kind,
+        baseUrl,
+        auth,
+        // update === undefined 表示不动原值；传 null 时才清除
+        update: input.update === null ? undefined : (input.update ?? cfg.instances[idx].update),
+      };
       persist(cfg);
       return cfg.instances[idx];
     }
   }
 
-  const inst: Instance = { id: uid(), name, kind, baseUrl, auth };
+  const inst: Instance = { id: uid(), name, kind, baseUrl, auth, update: input.update ?? undefined };
   cfg.instances.push(inst);
   if (!cfg.activeId) cfg.activeId = inst.id;
   persist(cfg);

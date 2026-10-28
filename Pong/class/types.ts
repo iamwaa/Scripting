@@ -217,6 +217,23 @@ export type AuthConfig = {
   sessionToken?: string;
 };
 
+/**
+ * 节点级的服务器更新配置：同一探针面板下可能有多台机器，每台各自一套连接信息。
+ * 配了之后，该节点的状态页右上角会出现更新入口。
+ */
+export type UpdateConfig = {
+  /** SSH 主机（IP 或域名） */
+  host: string;
+  /** SSH 端口，默认 22 */
+  port?: number;
+  /** SSH 账号，默认 root */
+  user?: string;
+  /** 私钥路径，相对 Documents 目录，如 .ssh/id_ed12345 */
+  keyPath?: string;
+  /** 没有私钥时用的密码 */
+  password?: string;
+};
+
 /** A single saved dashboard endpoint (Komari or Nezha). */
 export type Instance = {
   id: string;
@@ -227,6 +244,8 @@ export type Instance = {
   baseUrl: string;
   /** Optional authentication. Absent / mode "none" = anonymous access. */
   auth?: AuthConfig;
+  /** 兼容旧版：早期把更新配置存在实例上，该字段仅用于迁移读取 */
+  update?: UpdateConfig;
 };
 
 /**

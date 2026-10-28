@@ -1,0 +1,10 @@
+[Unit]
+Description=Wake Pong updater every five minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+Unit=sg-update.service
+
+[Install]
+WantedBy=timers.target
