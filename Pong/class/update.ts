@@ -42,6 +42,11 @@ export type UpdateState = {
   hostname?: string;
   aliases?: string;
   rollback_version?: string;
+  /** danmu-api（弹幕接口）代码版本：本地 HEAD 短 sha */
+  danmu_version?: string;
+  danmu_latest?: string;
+  danmu_update_available?: string;
+  danmu_target?: string;
 };
 
 /** 服务器侧的更新设置（存在服务器上，不跟节点走） */
@@ -304,7 +309,7 @@ export async function readSettings(cfg: UpdateConfig): Promise<ServerSettings | 
   }
 }
 
-/** 升级：目标为空表示升到各自最新 */
+/** 升级：目标为空表示升到各自最新（danmu 不参与 upgrade，它走 danmu 子命令） */
 export async function upgrade(
   cfg: UpdateConfig,
   targets: { magpie?: string; probe?: string },
@@ -314,6 +319,11 @@ export async function upgrade(
     args.push(targets.magpie || "-", targets.probe || "-");
   }
   return await runLong(cfg, `${SG} ${args.join(" ")}`, { timeoutMs: 10 * 60 * 1000 });
+}
+
+/** 只升级 danmu-api：服务器侧走 rebuild.sh 拉取构建，耗时可到数分钟 */
+export async function upgradeDanmu(cfg: UpdateConfig): Promise<UpdateResult> {
+  return await runLong(cfg, `${SG} danmu`, { timeoutMs: 10 * 60 * 1000 });
 }
 
 /** 只升级探针：先查最新版再显式指定 */

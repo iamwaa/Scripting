@@ -18,7 +18,7 @@ import {
 } from "scripting";
 import type { Color, PresentationDetent } from "scripting";
 import { getActiveInstance } from "../class/config";
-import { checkUpdates, getNodeUpdateConfig, isUpdatable, rollbackMagpie, setOption, upgrade, upgradeProbeOnly, type UpdateState } from "../class/update";
+import { checkUpdates, getNodeUpdateConfig, isUpdatable, rollbackMagpie, setOption, upgrade, upgradeDanmu, upgradeProbeOnly, type UpdateState } from "../class/update";
 import { View as LogView } from "./update_log";
 
 const OK: Color = "systemGreen";
@@ -151,10 +151,14 @@ function Panel({
   const s = state.value;
   const magpieTarget = s.magpie_update_available || s.magpie_target;
   const probeTarget = s.probe_update_available || s.probe_target;
-  const hasUpdate = !!magpieTarget || !!probeTarget;
+  const danmuTarget = s.danmu_update_available || s.danmu_target;
+  const hasUpdate = !!magpieTarget || !!probeTarget || !!danmuTarget;
   const magpieTint: Color = magpieTarget ? WARN : s.container_state === "running" ? OK : BAD;
   const probeTint: Color = probeTarget ? WARN : s.probe_service === "active" ? OK : BAD;
-  const pendingLabel = [magpieTarget && "magpie", probeTarget && "cf-probe"].filter(Boolean).join(" + ");
+  const danmuTint: Color = danmuTarget ? WARN : OK;
+  const pendingLabel = [magpieTarget && "magpie", probeTarget && "cf-probe", danmuTarget && "danmu-api"]
+    .filter(Boolean)
+    .join(" + ");
   const busyAny = working.value || loading.value;
 
   return (
@@ -221,6 +225,27 @@ function Panel({
             label="服务状态"
             value={probeTarget ? `可升级到 v${probeTarget}` : s.probe_service === "active" ? "运行中" : s.probe_service || "未知"}
             tint={probeTint}
+          />
+        </Section>
+
+        <Section
+          header={<Text font={13}>danmu-api 弹幕接口</Text>}
+          footer={
+            <Footer
+              text={
+                s.danmu_version
+                  ? `跟随上游仓库提交自动重建；当前 ${s.danmu_version}`
+                  : "尚未部署 danmu-api（服务器上无 /opt/danmu-api）"
+              }
+            />
+          }
+        >
+          <Row label="运行版本" value={s.danmu_version ? `#${s.danmu_version}` : "—"} />
+          <Row label="上游最新" value={s.danmu_latest ? `#${s.danmu_latest}` : "—"} />
+          <Row
+            label="状态"
+            value={danmuTarget ? `可更新到 #${danmuTarget}` : s.danmu_version ? "已是最新" : "未部署"}
+            tint={danmuTint}
           />
         </Section>
 
@@ -315,6 +340,27 @@ function Panel({
                 working.setValue(false);
                 await refresh();
                 message.setValue(res.ok ? "cf-probe 升级完成" : `升级失败：${(res.error ?? res.output).slice(-160)}`);
+              }}
+              disabled={busyAny || !!problem}
+            />
+          ) : null}
+          {danmuTarget ? (
+            <Button
+              title={busyAny ? "处理中…" : `只更新 danmu-api → #${danmuTarget}`}
+              systemImage={"arrow.triangle.2.circlepath"}
+              action={async () => {
+                if (!cfg) return;
+                working.setValue(true);
+                message.setValue("正在更新 danmu-api（拉取并重建镜像），请勿关闭页面…");
+                try {
+                  const res = await upgradeDanmu(cfg);
+                  await refresh();
+                  message.setValue(res.ok ? "danmu-api 更新完成" : `更新失败：${(res.error ?? res.output).slice(-160)}`);
+                } catch (e) {
+                  message.setValue(`更新失败：${e}`);
+                } finally {
+                  working.setValue(false);
+                }
               }}
               disabled={busyAny || !!problem}
             />
