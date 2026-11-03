@@ -31,7 +31,9 @@ import { fetchPingRecords, fetchLoadRecords, fetchClientDetail, getBackend } fro
 import { getActiveInstance } from "../class/config";
 import { View as UpdateView } from "./update";
 import { View as UpdateNodeView } from "./update_node";
+import { View as NotifyView } from "./notify";
 import { getNodeUpdateConfig, isUpdatable } from "../class/update";
+import type { UpdateConfig } from "../class/update";
 import { chartHeight } from "../class/ui";
 type Obs<T> = { value: T; setValue: (v: T) => void };
 
@@ -74,8 +76,16 @@ export function View({ uuid }: { uuid: string }) {
   const instId = inst?.id ?? "";
   const cfg = isUpdatable(getNodeUpdateConfig(instId, uuid)) ? getNodeUpdateConfig(instId, uuid) : undefined;
   const updatePresented = useObservable<boolean>(false);
-  const configPresented = useObservable<boolean>(false);
+  /** 列表上只挂一个 sheet（同层多个 sheet 只有最后一个生效），用模式区分内容 */
+  const sheetPresented = useObservable<boolean>(false);
+  const sheetMode = useObservable<string>("config");
   const configured = useObservable<boolean>(!!cfg);
+
+  /** 打开指定模式的 sheet：先定模式再弹，避免内容闪一下上一个模式 */
+  function openSheet(mode: "config" | "notify") {
+    sheetMode.setValue(mode);
+    sheetPresented.setValue(true);
+  }
 
   return (
     <NavigationStack>
@@ -107,15 +117,15 @@ export function View({ uuid }: { uuid: string }) {
             : [],
         }}
         sheet={{
-          isPresented: configPresented,
+          isPresented: sheetPresented,
           content: (
-            <UpdateNodeView
-              instanceId={instId}
-              nodeUuid={uuid}
+            <SheetHost
+              mode={sheetMode.value}
+              instId={instId}
+              uuid={uuid}
               nodeName={node?.name ?? "节点"}
-              presentationDetents={["large"]}
               onSaved={(saved) => configured.setValue(!!saved)}
-              onClose={() => configPresented.setValue(false)}
+              onClose={() => sheetPresented.setValue(false)}
             />
           ),
         }}
@@ -124,7 +134,8 @@ export function View({ uuid }: { uuid: string }) {
           <Body
             uuid={uuid}
             configured={configured.value}
-            onConfigureUpdate={() => configPresented.setValue(true)}
+            onConfigureUpdate={() => openSheet("config")}
+            onConfigureNotify={() => openSheet("notify")}
           />
         ) : (
           <Section><Text>节点不存在</Text></Section>
@@ -134,14 +145,55 @@ export function View({ uuid }: { uuid: string }) {
   );
 }
 
+function SheetHost({
+  mode,
+  instId,
+  uuid,
+  nodeName,
+  onSaved,
+  onClose,
+}: {
+  mode: string;
+  instId: string;
+  uuid: string;
+  nodeName: string;
+  onSaved: (cfg: UpdateConfig | null) => void;
+  onClose: () => void;
+}) {
+  // 同一个 sheet 槽位根据模式切换内容（SwiftUI 同层只能挂一个 sheet）
+  if (mode === "notify") {
+    return (
+      <NotifyView
+        instanceId={instId}
+        nodeUuid={uuid}
+        nodeName={nodeName}
+        presentationDetents={["large"]}
+        onClose={onClose}
+      />
+    );
+  }
+  return (
+    <UpdateNodeView
+      instanceId={instId}
+      nodeUuid={uuid}
+      nodeName={nodeName}
+      presentationDetents={["large"]}
+      onSaved={onSaved}
+      onClose={onClose}
+    />
+  );
+}
+
 function Body({
   uuid,
   configured,
   onConfigureUpdate,
+  onConfigureNotify,
 }: {
   uuid: string;
   configured: boolean;
   onConfigureUpdate: () => void;
+  onConfigureNotify: () => void;
 }) {
   const monitor = useMonitor();
   const node = monitor.nodeIndex.value[uuid]!;
@@ -188,8 +240,12 @@ function Body({
       {/* Server IP addresses (admin-only; long-press to copy) */}
       <IPSection uuid={uuid} region={node.region} instance={inst} />
 
-      {/* 运维：给这台 VPS 配服务器更新（面板下可能有多台 VPS，各管各的） */}
-      <UpdateConfigRow configured={configured} onTap={onConfigureUpdate} />
+      {/* 运维：给这台 VPS 配服务器更新与 Telegram 通知（面板下可能有多台 VPS，各管各的） */}
+      <OpsSection
+        configured={configured}
+        onConfigureUpdate={onConfigureUpdate}
+        onConfigureNotify={onConfigureNotify}
+      />
 
       {/* Billing (only when meaningful) */}
       {node.price > 0 || expDays != null ? (
@@ -210,24 +266,41 @@ function Body({
   );
 }
 
-function UpdateConfigRow({ configured, onTap }: { configured: boolean; onTap: () => void }) {
+function OpsSection({
+  configured,
+  onConfigureUpdate,
+  onConfigureNotify,
+}: {
+  configured: boolean;
+  onConfigureUpdate: () => void;
+  onConfigureNotify: () => void;
+}) {
   return (
     <Section
       header={<Text font={13}>运维</Text>}
       footer={
         <Text font={12} foregroundStyle={"secondaryLabel"}>
           {configured
-            ? "已配置服务器更新，右上角可以直接检查/升级 magpie 与探针。"
+            ? "已配置服务器更新，右上角可以直接检查/升级 magpie 与探针。通知按机器存，同机的多个节点共用一份。"
             : "填写这台 VPS 的 SSH 信息后，右上角会出现更新入口，可一键升级 magpie / cf-probe。"}
         </Text>
       }
     >
-      <Button action={onTap} buttonStyle={"plain"}>
+      <Button action={onConfigureUpdate} buttonStyle={"plain"}>
         <HStack>
           <Image systemName={"arrow.triangle.2.circlepath"} foregroundStyle={"accentColor"} />
           <Text font={16}>{configured ? "服务器更新设置" : "为此节点配置服务器更新"}</Text>
           <Spacer />
           <Text font={14} foregroundStyle={"secondaryLabel"}>{configured ? "已开启" : "未配置"}</Text>
+          <Image systemName={"chevron.right"} foregroundStyle={"tertiaryLabel"} />
+        </HStack>
+      </Button>
+      <Button action={onConfigureNotify} buttonStyle={"plain"}>
+        <HStack>
+          <Image systemName={"bell.badge"} foregroundStyle={"accentColor"} />
+          <Text font={16}>Telegram 通知</Text>
+          <Spacer />
+          <Text font={14} foregroundStyle={"secondaryLabel"}>{configured ? "按机器" : "需先配 SSH"}</Text>
           <Image systemName={"chevron.right"} foregroundStyle={"tertiaryLabel"} />
         </HStack>
       </Button>

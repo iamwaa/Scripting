@@ -1,13 +1,23 @@
 // ============================================================================
-// 服务器更新助手 — SSH 调用服务器上的 /root/bin/sg-update，检查/升级
+// 服务器更新助手 — 调用服务器上的 /root/bin/sg-update，检查/升级
 // magpie 与 cf-probe。
 // 配置按「节点」保存（同一个探针面板下可以有多台 VPS，每台各自一套连接信息）。
-// S: 只做传输与解析，不碰 UI。
+// 传输层（两条 SSH 通道、归一化、退出码解析）在 class/update_transport.ts。
+// S: 只做配置存取 + 业务动作，不碰 UI。
 // ============================================================================
 import { Script } from "scripting";
 import type { UpdateConfig } from "./types";
+import {
+  runLong,
+  runRemote,
+  keyFileExists,
+  normalizeHost,
+  normalizeUser,
+  type UpdateResult,
+} from "./update_transport";
 
-export type { UpdateConfig };
+export type { UpdateConfig, UpdateResult };
+export { keyFileExists, normalizeHost, normalizeUser };
 
 /** sg-update check 输出的状态（字段名与服务器一致） */
 export type UpdateState = {
@@ -21,9 +31,9 @@ export type UpdateState = {
   probe_target?: string;
   probe_service?: string;
   container_state?: string;
-  gateway?: string;
   usage?: string;
   last_check?: string;
+  gateway?: string;
   last_magpie_upgrade?: string;
   last_magpie_from?: string;
   last_probe_upgrade?: string;
@@ -64,23 +74,12 @@ export type ServerSettings = {
   tg_ready: boolean;
 };
 
-export type UpdateResult = {
-  ok: boolean;
-  /** 远端退出码（连接层失败时为 null） */
-  code: number | null;
-  output: string;
-  error?: string;
-};
-
 const SG = "/root/bin/sg-update";
 
 // ---------- 按节点保存的配置 --------------------------------------------------
 
 /** 配置存储键：${Script.name}.update_configs */
 const KEY = () => `${Script.name}.update_configs`;
-/** 全局默认 SSH 凭据（同一台手机连多台服务器通常共用一把私钥） */
-const KC_DEFAULT_KEY = "sg_default_key_path";
-const KC_DEFAULT_USER = "sg_default_user";
 
 type UpdateConfigMap = Record<string, UpdateConfig>;
 
@@ -126,147 +125,74 @@ export function clearInstanceUpdateConfigs(instId: string): void {
   if (changed) Storage.set(KEY(), all);
 }
 
-/** 全局默认私钥路径（新节点预填用） */
+/**
+ * 新建节点时的默认私钥路径。
+ * 不沿用「上一次保存的值」——那会让所有 VPS 都被预填成同一台机器的私钥，
+ * 而实际每台服务器（甚至每个网关）用的密钥可能完全不同。
+ * 这里只探测本机真实存在的密钥文件，找不到就留一个常见占位。
+ */
 export function getDefaultKeyPath(): string {
-  return Keychain.get(KC_DEFAULT_KEY) || ".ssh/id_ed12345";
+  return detectKeyPath();
 }
 
+/**
+ * 自动探测可用的私钥：按 ed25519 → RSA 的常见文件名依次找，找不到才回退占位路径。
+ * 硬编码单一文件名会导致默认值指向一个不存在的文件（旧值 `.ssh/id_ed12345` 就是典型）。
+ */
+function detectKeyPath(): string {
+  const candidates = [
+    ".ssh/id_ed25519",
+    ".ssh/ssh_manager_ed25519",
+    ".ssh/id_rsa",
+    ".ssh/id_ecdsa",
+  ];
+  for (const rel of candidates) {
+    try {
+      if (FileManager.existsSync(`${FileManager.documentsDirectory}/${rel}`)) return rel;
+    } catch {
+      // 读不到就当不存在，继续试下一个
+    }
+  }
+  return ".ssh/id_ed25519";
+}
+
+/** 新建节点时的默认账号。不跟上一台走：不同 VPS 的登录名常常不同。 */
 export function getDefaultUser(): string {
-  return Keychain.get(KC_DEFAULT_USER) || "root";
+  return "root";
 }
-
-export function setDefaultKeyPath(path: string): void {
-  Keychain.set(KC_DEFAULT_KEY, path.trim());
-}
-
-export function setDefaultUser(user: string): void {
-  Keychain.set(KC_DEFAULT_USER, user.trim());
-}
-
-/** 已配置更新的节点键集合（用于列表页标出哪些节点可升级） */
-export function configuredNodeKeys(): Set<string> {
-  return new Set(Object.keys(loadAll()));
-}
-
-// ---------- 连接 --------------------------------------------------------------
 
 /** 该节点的配置是否完整（有主机 + 私钥或密码） */
 export function isUpdatable(cfg: UpdateConfig | undefined): boolean {
-  return !!cfg && !!cfg.host?.trim() && !!(cfg.password || cfg.keyPath?.trim());
+  if (!cfg || !cfg.host?.trim()) return false;
+  // cli 通道靠系统 ssh 的无密钥网关（服务端 none 认证），不需要密钥或密码
+  if (cfg.transport === "cli") return true;
+  return !!(cfg.password || cfg.keyPath?.trim());
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+// ---------- Telegram 通知预设（手机侧共享，真正生效在服务器） -----------------
+// 服务器上的 tg_* 是按「机器」存的（每台 VPS 各自一份 state.json），手机侧只留一份
+// 预设用来回填表单，避免每台服务器都重新敲一遍 token / chat id。
+
+const KC_TG_TOKEN = "sg_tg_token";
+const KEY_TG_PRESET = () => `${Script.name}.tg_preset`;
+
+/** 手机侧保存的 Telegram 预设（token 存 Keychain，其余存 Storage） */
+export type TgPreset = { bot: string; chat: string; tokenSet: boolean };
+
+export function getTgPreset(): TgPreset {
+  const raw = Storage.get<{ bot?: string; chat?: string }>(KEY_TG_PRESET()) || {};
+  return {
+    bot: String(raw.bot ?? ""),
+    chat: String(raw.chat ?? ""),
+    tokenSet: !!Keychain.get(KC_TG_TOKEN),
+  };
 }
 
-// 私钥解析：先试 ed25519，再试 RSA（旧版 API 拼写为 ras）
-const KEY_PARSERS: ((user: string, data: Data) => SSHAuthenticationMethod | null)[] = [
-  (u, d) => SSHAuthenticationMethod.ed25519(u, d),
-  (u, d) => (SSHAuthenticationMethod as any).ras?.(u, d) ?? null,
-];
-
-async function readKey(keyPath: string): Promise<string | null> {
-  const rel = keyPath.trim();
-  if (!rel) return null;
-  const full = rel.startsWith("/") ? rel : `${FileManager.documentsDirectory}/${rel}`;
-  try {
-    if (!(await FileManager.exists(full))) return null;
-    const key = await FileManager.readAsString(full);
-    return key && key.includes("PRIVATE KEY") ? key : null;
-  } catch {
-    return null;
-  }
-}
-
-/** 私钥文件是否存在（用于设置页给出「找不到私钥」提示） */
-export async function keyFileExists(keyPath: string): Promise<boolean> {
-  return (await readKey(keyPath)) !== null;
-}
-
-async function connect(cfg: UpdateConfig): Promise<SSHClient> {
-  const user = (cfg.user || "root").trim();
-  let auth: SSHAuthenticationMethod | null = null;
-  const key = await readKey(cfg.keyPath || "");
-  if (key) {
-    const data = Data.fromString(key);
-    if (data) {
-      for (const parse of KEY_PARSERS) {
-        auth = parse(user, data);
-        if (auth) break;
-      }
-    }
-  }
-  if (!auth) {
-    if (!cfg.password) throw new Error("没有可用的 SSH 私钥或密码，请检查该节点的更新配置");
-    auth = SSHAuthenticationMethod.passwordBased(user, cfg.password);
-  }
-  return await SSHClient.connect({
-    host: cfg.host.trim(),
-    port: Number(cfg.port) || 22,
-    authenticationMethod: auth,
-  });
-}
-
-/** 执行一条远程命令（带超时与退出码哨兵） */
-export async function runRemote(cfg: UpdateConfig, command: string, timeoutSec = 90): Promise<UpdateResult> {
-  let client: SSHClient | null = null;
-  const wrapped = `timeout ${timeoutSec} bash -c ${shellQuote(command)}; echo "__EXIT__$?"`;
-  try {
-    client = await connect(cfg);
-    const text = await client.executeCommand(wrapped, { includeStderr: true });
-    return parseResult(text);
-  } catch (e) {
-    return { ok: false, code: null, output: "", error: String(e) };
-  } finally {
-    if (client) await client.close().catch(() => {});
-  }
-}
-
-/** 轮询型执行：用 setsid 脱离会话跑，避开 iOS 侧的命令超时 */
-export async function runLong(
-  cfg: UpdateConfig,
-  command: string,
-  opts: { timeoutMs?: number; pollMs?: number } = {},
-): Promise<UpdateResult> {
-  const marker = `/tmp/.sg-job-${Date.now()}`;
-  const timeoutMs = opts.timeoutMs ?? 8 * 60 * 1000;
-  const pollMs = opts.pollMs ?? 3000;
-
-  const detach = `setsid bash -c ${shellQuote(`(${command}) > ${marker}.out 2>&1; echo $? > ${marker}.code`)} >/dev/null 2>&1 </dev/null & sleep 0.5; echo started`;
-  const start = await runRemote(cfg, detach, 45);
-  if (start.code !== 0) return start;
-
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await sleep(pollMs);
-    const poll = await runRemote(
-      cfg,
-      `if [ -f ${marker}.code ]; then echo DONE=$(cat ${marker}.code); tail -c 4000 ${marker}.out; rm -f ${marker}.out ${marker}.code; else echo RUNNING; fi`,
-      45,
-    );
-    if (poll.code === null) continue; // 网络抖动，继续轮询
-    if (poll.code !== 0) return poll;
-    if (!poll.output.startsWith("RUNNING")) {
-      const m = poll.output.match(/^DONE=(\d+)/);
-      const code = m ? Number(m[1]) : -1;
-      const body = poll.output.replace(/^DONE=\d+\n?/, "");
-      return { ok: code === 0, code, output: body };
-    }
-  }
-  return { ok: false, code: null, output: "", error: "等待超时（任务可能仍在服务器上运行）" };
-}
-
-function sleep(ms: number) {
-  return new Promise<void>((r) => setTimeout(r, ms));
-}
-
-function parseResult(text: string): UpdateResult {
-  const raw = typeof text === "string" ? text : String(text ?? "");
-  const idx = raw.lastIndexOf("__EXIT__");
-  if (idx < 0) return { ok: false, code: null, output: raw.trim(), error: "未收到退出码（连接可能中断）" };
-  const code = Number(raw.slice(idx + 8).trim().split(/\s/)[0]);
-  const output = raw.slice(0, idx).trim();
-  return { ok: code === 0, code: Number.isFinite(code) ? code : null, output };
+/** 保存预设；token 传空表示不修改已有的 */
+export function setTgPreset(preset: { bot: string; chat: string; token?: string }): void {
+  Storage.set(KEY_TG_PRESET(), { bot: preset.bot, chat: preset.chat });
+  const tok = (preset.token || "").trim();
+  if (tok) Keychain.set(KC_TG_TOKEN, tok);
 }
 
 // ---------- 业务动作 ----------------------------------------------------------
@@ -364,9 +290,42 @@ export async function sendTestNotification(cfg: UpdateConfig): Promise<UpdateRes
   return await runRemote(cfg, `${SG} notify-test`, 60);
 }
 
-/** 校验配置能否连上：跑一次 check，拿到状态即通 */
-export async function testConnection(cfg: UpdateConfig): Promise<{ ok: boolean; message: string; state?: UpdateState }> {
+/**
+ * 校验配置能否连上。分两层：先确认 SSH 本身能登录（这是用户最常撞的坑），
+ * 再看服务器上有没有装 /root/bin/sg-update。两层混在一起时，「没装助手」会被
+ * 报成「连接失败」，让人以为是密钥/端口问题。
+ */
+export async function testConnection(
+  cfg: UpdateConfig,
+): Promise<{ ok: boolean; message: string; state?: UpdateState; needInstall?: boolean }> {
+  // 1) 连通性：能拿到 hostname 就说明认证与网络都通
+  const probe = await runRemote(
+    cfg,
+    `echo "__HOST__$(hostname 2>/dev/null)"; if [ -x ${SG} ]; then echo __SG_YES__; else echo __SG_NO__; fi`,
+    45,
+  );
+  if (probe.code !== 0) {
+    return { ok: false, message: probe.error || probe.output.slice(-160) || "连接失败" };
+  }
+  const hostMatch = probe.output.match(/__HOST__([^\n]*)/);
+  const hostName = (hostMatch?.[1] || "").trim();
+  const hasSg = probe.output.includes("__SG_YES__");
+
+  if (!hasSg) {
+    return {
+      ok: false,
+      needInstall: true,
+      message: `SSH 已连上${hostName ? `（${hostName}）` : ""}，但服务器上没有 ${SG}。请先安装更新助手（deploy/ 下的 sg-update）。`,
+    };
+  }
+
+  // 2) 助手可用性：跑一次 check 拿版本
   const { state, result } = await checkUpdates(cfg);
-  if (state) return { ok: true, message: "连接成功", state };
-  return { ok: false, message: result.error || result.output.slice(-120) || "连接失败" };
+  if (state) {
+    return { ok: true, message: `连接成功${hostName ? `（${hostName}）` : ""}`, state };
+  }
+  return {
+    ok: false,
+    message: result.error || result.output.slice(-160) || "sg-update 执行失败",
+  };
 }

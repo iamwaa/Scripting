@@ -1,8 +1,8 @@
 // ============================================================================
-// 节点更新配置 — 为「某一台 VPS」填写 SSH 连接信息，顺带管理服务器侧的
-// Telegram 通知（按机器存，不跟节点走）。
+// 节点更新配置 — 为「某一台 VPS」填写 SSH 连接信息。
+// Telegram 通知已拆到 page/notify.tsx（按机器存，可与更新设置分开改）。
 // 空窗期/开关/频率属于升级策略，在 page/update.tsx 的「自动更新」分组里改。
-// S: 一个节点的配置表单（新建 / 编辑 / 删除），带「测试连接」「发测试通知」。
+// S: 一个节点的 SSH 配置表单（新建 / 编辑 / 删除），带「测试连接」。
 // ============================================================================
 import {
   Button,
@@ -11,10 +11,12 @@ import {
   List,
   Navigation,
   NavigationStack,
+  Picker,
   Section,
   SecureField,
   Text,
   TextField,
+  Toggle,
   useEffect,
   useObservable,
 } from "scripting";
@@ -23,14 +25,10 @@ import {
   getDefaultKeyPath,
   getDefaultUser,
   getNodeUpdateConfig,
-  isUpdatable,
   keyFileExists,
-  readSettings,
-  sendTestNotification,
-  setDefaultKeyPath,
-  setDefaultUser,
+  normalizeHost,
+  normalizeUser,
   setNodeUpdateConfig,
-  setOption,
   testConnection,
   type UpdateConfig,
 } from "../class/update";
@@ -82,8 +80,6 @@ function FormRow({
 /** 保存后的节点配置（null 表示已删除） */
 export type SaveResult = UpdateConfig | null;
 
-type Baseline = { chat: string; bot: string };
-
 export function View({
   instanceId,
   nodeUuid,
@@ -109,93 +105,53 @@ export function View({
   const user = useObservable<string>(existing?.user ?? getDefaultUser());
   const keyPath = useObservable<string>(existing?.keyPath ?? getDefaultKeyPath());
   const password = useObservable<string>("");
-
-  // 服务器侧设置：Telegram 通知（不跟节点走，按机器存）。
-  // 空窗期与自动更新开关/频率属于升级策略，在 page/update.tsx 的「自动更新」分组里改。
-  const tgChat = useObservable<string>("");
-  const tgBot = useObservable<string>("");
-  const tgToken = useObservable<string>("");
-  const tgTokenSet = useObservable<boolean>(false);
-  const settingsBusy = useObservable<boolean>(false);
-  /** 服务器上一次读到的值（判“用户是否改过”的基准） */
-  const baseline = useObservable<Baseline | null>(null);
+  /** 传输方式：ssh = SSHClient（密钥/密码）；cli = 系统 ssh（无密钥网关） */
+  const transport = useObservable<string>(existing?.transport ?? "ssh");
+  /** 非 root 账号需要 sudo -n 提权才能跑 /root/bin/sg-update */
+  const sudoOn = useObservable<boolean>(existing?.sudo ?? false);
 
   const busy = useObservable<boolean>(false);
   const message = useObservable<string>("");
   const messageOk = useObservable<boolean>(false);
   const keyMissing = useObservable<boolean>(false);
 
-  // 挂载时：检查私钥是否存在；已有配置就连服务器拉一次 Telegram 配置
+  // 挂载时：检查私钥是否存在（cli 通道不需要）
   useEffect(() => {
     void (async () => {
+      if (transport.value === "cli") {
+        keyMissing.setValue(false);
+        return;
+      }
       keyMissing.setValue(!(await keyFileExists(keyPath.value)));
     })();
-    if (isUpdatable(existing)) void loadSettings(existing);
     // 只在挂载时跑一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function build(): UpdateConfig | null {
-    const h = host.value.trim();
+    // 主机/账号框里可能被粘进了 `user@host`、`Hostname` 标签或整行（复制 SSH 连接信息时的常见误填）
+    const hostNorm = normalizeHost(host.value);
+    const userNorm = normalizeUser(user.value);
+    const h = hostNorm.host || userNorm.host || "";
     if (!h) return null;
     const cfg: UpdateConfig = {
       host: h,
       port: Number(port.value.trim()) || 22,
-      user: user.value.trim() || "root",
-      keyPath: keyPath.value.trim(),
+      // 粘贴的 `user@host` 里的用户名最可信，其次才是输入框
+      user: hostNorm.user || userNorm.user || "root",
+      transport: transport.value === "cli" ? "cli" : "ssh",
     };
-    const pwd = password.value.trim() || existing?.password;
-    if (pwd) cfg.password = pwd;
+    if (sudoOn.value) cfg.sudo = true;
+    // cli 通道不存私钥/密码（服务端不校验它们）
+    if (cfg.transport === "ssh") {
+      cfg.keyPath = keyPath.value.trim();
+      const pwd = password.value.trim() || existing?.password;
+      if (pwd) cfg.password = pwd;
+    }
     return cfg;
   }
 
-  /** 从服务器拉一次 Telegram 配置，用于回填与判改 */
-  async function loadSettings(cfg?: UpdateConfig | null) {
-    const target = cfg ?? build();
-    if (!target) return;
-    settingsBusy.setValue(true);
-    try {
-      const s = await readSettings(target);
-      if (s) {
-        tgChat.setValue(s.tg_chat);
-        tgBot.setValue(s.tg_bot);
-        tgTokenSet.setValue(s.tg_token_set);
-        baseline.setValue({ chat: s.tg_chat, bot: s.tg_bot });
-      }
-    } catch {
-      // 读不到就保持原样，用户仍可填完保存
-    } finally {
-      settingsBusy.setValue(false);
-    }
-  }
-
-  /** 把与服务器不同的设置项下发；返回失败项描述 */
-  async function pushSettings(cfg: UpdateConfig) {
-    const fails: string[] = [];
-    const cur: Baseline = { chat: tgChat.value.trim(), bot: tgBot.value.trim() };
-    const base = baseline.value;
-
-    // 有基线：只下发改过的（也允许主动清空）。
-    // 无基线：只推用户明确填了的非空值——空字符串会把服务器上已有的通知配置抹掉
-    //（往同一台服务器配第二个节点时最容易撞上）。
-    const shouldPush = (k: keyof Baseline) => (base ? base[k] !== cur[k] : cur[k] !== "");
-
-    const push = async (label: string, key: string, value: string) => {
-      const r = await setOption(cfg, key, value);
-      if (!r.ok) fails.push(`${label}：${(r.error ?? r.output).trim().slice(-80)}`);
-    };
-
-    if (shouldPush("chat")) await push("Telegram chat", "tg_chat", cur.chat);
-    if (shouldPush("bot")) await push("Bot 用户名", "tg_bot", cur.bot);
-    // token 只在填了新值时才覆盖；留空表示不动
-    const tok = tgToken.value.trim();
-    if (tok) await push("Bot Token", "tg_token", tok);
-
-    // 下发成功部分归入基准，避免下次重复推
-    if (fails.length === 0) baseline.setValue(cur);
-    return fails;
-  }
-
+  /** 保存：只写本机配置（通知已拆到独立的 page/notify.tsx） */
   function save() {
     const cfg = build();
     if (!cfg) {
@@ -204,29 +160,8 @@ export function View({
       return;
     }
     setNodeUpdateConfig(instanceId, nodeUuid, cfg);
-    // 记住这台机器的私钥路径/账号，下次给别的节点预填
-    setDefaultKeyPath(cfg.keyPath || "");
-    setDefaultUser(cfg.user || "root");
     onSaved?.(cfg);
-
-    // 服务器设置异步下发，失败时留在当前页提示
-    busy.setValue(true);
-    void (async () => {
-      try {
-        const fails = await pushSettings(cfg);
-        busy.setValue(false);
-        if (fails.length > 0) {
-          messageOk.setValue(false);
-          message.setValue(`配置已保存在本机，但服务器设置未生效：${fails.join("；")}`);
-          return;
-        }
-        dismiss();
-      } catch (e) {
-        busy.setValue(false);
-        messageOk.setValue(false);
-        message.setValue(`配置已保存在本机，服务器设置下发失败：${e}`);
-      }
-    })();
+    dismiss();
   }
 
   async function test() {
@@ -241,49 +176,20 @@ export function View({
     try {
       const r = await testConnection(cfg);
       messageOk.setValue(r.ok);
-      message.setValue(
-        r.ok
-          ? `连接成功 · magpie v${r.state?.magpie_version ?? "?"} · cf-probe v${r.state?.probe_version ?? "?"}`
-          : `连接失败：${r.message}`,
-      );
+      if (r.ok) {
+        message.setValue(
+          `${r.message} · magpie v${r.state?.magpie_version || "未安装"} · cf-probe v${r.state?.probe_version || "未安装"}`,
+        );
+      } else {
+        message.setValue(r.needInstall ? r.message : `连接失败：${r.message}`);
+      }
       busy.setValue(false);
-      // 连上后读取服务器现有的 Telegram 设置
-      if (r.ok) await loadSettings();
       return;
     } catch (e) {
       messageOk.setValue(false);
       message.setValue(`连接失败：${e}`);
     } finally {
       busy.setValue(false);
-    }
-  }
-
-  /** 发一条测试通知（先确保当前填的已下发） */
-  async function testNotify() {
-    const cfg = build();
-    if (!cfg) {
-      messageOk.setValue(false);
-      message.setValue("请先填写 SSH 主机地址");
-      return;
-    }
-    settingsBusy.setValue(true);
-    message.setValue("正在发送测试通知…");
-    try {
-      const fails = await pushSettings(cfg);
-      if (fails.length > 0) {
-        messageOk.setValue(false);
-        message.setValue(`设置未生效：${fails.join("；")}`);
-        return;
-      }
-      const r = await sendTestNotification(cfg);
-      messageOk.setValue(r.ok);
-      message.setValue(r.ok ? "测试通知已发送，请在 Telegram 查看" : `发送失败：${(r.error ?? r.output).trim().slice(-120)}`);
-      tgToken.setValue("");
-    } catch (e) {
-      messageOk.setValue(false);
-      message.setValue(`发送失败：${e}`);
-    } finally {
-      settingsBusy.setValue(false);
     }
   }
 
@@ -314,11 +220,23 @@ export function View({
           header={<Text font={13}>SSH 连接</Text>}
           footer={
             <Text font={12} foregroundStyle={DIM}>
-              这台 VPS 上需要有 /root/bin/sg-update。私钥路径相对 App 的 Documents 目录（默认 .ssh/id_ed12345；
-              私钥读不到时才会用下面的密码。
+              {transport.value === "cli"
+                ? "无密钥网关：服务端用 none 认证，只校验用户名（公钥/密码都会被拒）。需要本机系统 ssh 可用；账号不是 root 时打开下面的 sudo 提权。"
+                : "这台 VPS 上需要有 /root/bin/sg-update。私钥路径相对 App 的 Documents 目录，留空则不用密钥；下面的密码是备选。"}
             </Text>
           }
         >
+          <Picker
+            title="登录方式"
+            value={transport.value}
+            onChanged={(v: string) => {
+              transport.setValue(v);
+              keyMissing.setValue(false);
+            }}
+          >
+            <Text tag={"ssh"}>SSH 密钥 / 密码</Text>
+            <Text tag={"cli"}>无密钥网关</Text>
+          </Picker>
           <FormRow
             label="主机"
             value={host.value}
@@ -333,77 +251,43 @@ export function View({
             onChanged={(v) => port.setValue(v)}
           />
           <FormRow label="账号" value={user.value} prompt="root" onChanged={(v) => user.setValue(v)} />
-          <FormRow
-            label="私钥路径"
-            value={keyPath.value}
-            prompt=".ssh/id_ed12345"
-            onChanged={(v) => {
-              keyPath.setValue(v);
-              keyMissing.setValue(false);
-            }}
-          />
-          {keyMissing.value ? (
-            <Text font={12} foregroundStyle={"systemOrange"}>
-              没找到这个私钥文件，请填下面的密码，或修正路径。
-            </Text>
-          ) : null}
-          <FormRow
-            label="密码"
-            value={password.value}
-            prompt={existing?.password ? "已保存，留空不修改" : "没有私钥时填写"}
-            secure={true}
-            onChanged={(v) => password.setValue(v)}
-          />
-          <Button title="测试连接" action={test} disabled={busy.value || settingsBusy.value} />
+          {transport.value === "ssh" ? (
+            <>
+              <FormRow
+                label="私钥路径"
+                value={keyPath.value}
+                prompt="留空则用密码"
+                onChanged={(v) => {
+                  keyPath.setValue(v);
+                  keyMissing.setValue(false);
+                }}
+              />
+              {keyMissing.value ? (
+                <Text font={12} foregroundStyle={"systemOrange"}>
+                  没找到这个私钥文件，请填下面的密码，或修正路径。
+                </Text>
+              ) : null}
+              <FormRow
+                label="密码"
+                value={password.value}
+                prompt={existing?.password ? "已保存，留空不修改" : "没有私钥时填写"}
+                secure={true}
+                onChanged={(v) => password.setValue(v)}
+              />
+            </>
+          ) : (
+            <Toggle
+              title="sudo 提权"
+              value={sudoOn.value}
+              onChanged={(v: boolean) => sudoOn.setValue(v)}
+            />
+          )}
+          <Button title="测试连接" action={test} disabled={busy.value} />
           {message.value ? (
             <Text font={14} foregroundStyle={messageOk.value ? GOOD : BAD}>
               {message.value}
             </Text>
           ) : null}
-          
-        </Section>
-
-        <Section
-          header={<Text font={13}>Telegram 通知（可选）</Text>}
-          footer={
-            <Text font={12} foregroundStyle={DIM}>
-              自动升级成功/失败会推送到这个 chat。在 Telegram 里找 @BotFather 建 bot 拿 token，再给自己发一条消息，
-              然后浏览器打开 api.telegram.org/bot【token】/getUpdates 拿 chat id（负数也要完整填写）。
-              Token 只存服务器上一个 600 权限文件，不会写回手机。
-            </Text>
-          }
-        >
-          <FormRow
-            label="Bot Token"
-            value={tgToken.value}
-            prompt={tgTokenSet.value ? "已配置，留空不修改" : "123456:ABC-DEF..."}
-            secure={true}
-            onChanged={(v) => tgToken.setValue(v)}
-          />
-          <FormRow
-            label="Bot 用户名"
-            value={tgBot.value}
-            prompt="例如 my_notify_bot"
-            onChanged={(v) => tgBot.setValue(v)}
-          />
-          <FormRow
-            label="Chat ID"
-            value={tgChat.value}
-            prompt="-1001234567890 或 123456789"
-            keyboardType={"numbersAndPunctuation"}
-            onChanged={(v) => tgChat.setValue(v)}
-          />
-          {tgTokenSet.value ? (
-            <Text font={12} foregroundStyle={GOOD}>
-              服务器上已有 token{tgChat.value.trim() ? "，配置齐备" : "，还差 chat id"}
-            </Text>
-          ) : null}
-          <Button
-            title="发送测试通知"
-            systemImage={"paperplane"}
-            action={testNotify}
-            disabled={busy.value || settingsBusy.value}
-          />
         </Section>
 
         {existing ? (

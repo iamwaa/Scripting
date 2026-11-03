@@ -232,6 +232,15 @@ export type UpdateConfig = {
   keyPath?: string;
   /** 没有私钥时用的密码 */
   password?: string;
+  /**
+   * 传输方式：
+   * - `ssh`（默认）：走 SSHClient，必须提供私钥或密码。
+   * - `cli`：走系统 ssh 命令，用于「无密钥网关」（服务端用 none 认证，
+   *   只要用户名对就放行，SSHClient 无法表达这种认证方式）。
+   */
+  transport?: "ssh" | "cli";
+  /** 登录用户不是 root 时，远端命令统一加 `sudo -n` 前缀（需免密 sudo） */
+  sudo?: boolean;
 };
 
 /** A single saved dashboard endpoint (Komari or Nezha). */
