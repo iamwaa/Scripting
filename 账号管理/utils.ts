@@ -346,33 +346,101 @@ export const fetchSiteInfo = async (url: string): Promise<SiteInfo> => {
 }
 
 // --- WebDAV 同步 ---
-export const testWebDAVConnection = async (config: WebDAVConfig): Promise<boolean> => {
+// 连接检查结果：除成败外带上可直接展示给用户的原因，以及本次新建的目录名
+export type WebDAVCheckResult = { ok: boolean; message: string; created: string[] }
+
+const WEBDAV_SYNC_FILE = "accounts-sync-secure-v1.txt"
+
+const webdavAuthHeader = (config: WebDAVConfig): string => {
+  const authData = Data.fromRawString(`${config.username}:${config.password}`)
+  if (!authData) throw new Error("无法生成认证信息")
+  return `Basic ${authData.toBase64String()}`
+}
+
+// 统一去掉地址末尾的斜杠，拼文件路径时不会出现双斜杠
+const webdavBaseUrl = (config: WebDAVConfig): string => config.url.trim().replace(/\/+$/, "")
+
+const webdavRequest = (config: WebDAVConfig, url: string, method: string, headers: Record<string, string> = {}, body?: string) =>
+  fetch(url, { method, headers: { Authorization: webdavAuthHeader(config), ...headers }, ...(body === undefined ? {} : { body }) })
+
+// 把状态码翻译成可执行的提示，避免一律显示“连接失败”
+const webdavStatusText = (status: number): string => {
+  if (status === 401) return "用户名或密码不正确"
+  if (status === 403) return "服务器拒绝访问，请确认已开启 WebDAV 且账号有权限"
+  if (status === 404) return "路径不存在或 WebDAV 未开启"
+  if (status === 409) return "上级目录不存在"
+  if (status === 507) return "服务器存储空间不足"
+  return `请求失败（HTTP ${status}）`
+}
+
+// 目录名在 URL 里是百分号编码的，展示时还原成可读文字
+const decodeSegment = (segment: string): string => {
+  try { return decodeURIComponent(segment) } catch { return segment }
+}
+
+// 路径不存在时逐级 MKCOL 补齐目录；返回本次真正创建的目录名
+const ensureWebDAVDirectory = async (config: WebDAVConfig): Promise<string[]> => {
+  const baseUrl = webdavBaseUrl(config)
+  if (!baseUrl) throw new Error("WebDAV 地址为空")
+
+  const probe = await webdavRequest(config, baseUrl, "PROPFIND", { Depth: "0" })
+  if (probe.ok) return []
+  if (probe.status !== 404) throw new Error(webdavStatusText(probe.status))
+
+  const parsed = new URL(baseUrl)
+  const segments = parsed.pathname.split("/").filter(Boolean)
+  if (segments.length === 0) throw new Error("地址缺少路径，请填写形如 https://域名/webdav/ 的地址")
+
+  // 从深到浅找最深的已存在目录，避免在服务器根路径上乱建目录
+  let existingCount = segments.length - 1
+  while (existingCount > 0) {
+    const ancestorUrl = `${parsed.origin}/${segments.slice(0, existingCount).join("/")}`
+    const response = await webdavRequest(config, ancestorUrl, "PROPFIND", { Depth: "0" })
+    if (response.ok) break
+    if (response.status === 401 || response.status === 403) throw new Error(webdavStatusText(response.status))
+    existingCount--
+  }
+
+  const created: string[] = []
+  for (let index = existingCount; index < segments.length; index++) {
+    const directoryUrl = `${parsed.origin}/${segments.slice(0, index + 1).join("/")}`
+    const response = await webdavRequest(config, directoryUrl, "MKCOL")
+    // 201 表示新建成功；405 表示目录已存在，可继续下一级
+    if (response.status === 201) { created.push(decodeSegment(segments[index])); continue }
+    if (response.ok || response.status === 405) continue
+    throw new Error(`创建目录「${decodeSegment(segments[index])}」失败：${webdavStatusText(response.status)}`)
+  }
+
+  const verify = await webdavRequest(config, baseUrl, "PROPFIND", { Depth: "0" })
+  if (!verify.ok) throw new Error(`目标路径仍不可用：${webdavStatusText(verify.status)}`)
+  return created
+}
+
+// 连接测试：目录不存在会自动创建，失败时给出具体原因
+export const testWebDAVConnection = async (config: WebDAVConfig): Promise<WebDAVCheckResult> => {
   try {
-    const authData = Data.fromRawString(`${config.username}:${config.password}`)
-    if (!authData) throw new Error("Auth data invalid")
-    const auth = authData.toBase64String()
-    const response = await fetch(config.url, { method: "PROPFIND", headers: { "Authorization": `Basic ${auth}`, "Depth": "0" } })
-    return response.ok
-  } catch { return false }
+    const created = await ensureWebDAVDirectory(config)
+    return { ok: true, message: created.length > 0 ? `已自动创建目录：${created.join(" / ")}` : "连接正常", created }
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "连接失败", created: [] }
+  }
 }
 
 export const uploadToWebDAV = async (config: WebDAVConfig, encryptedData: string): Promise<void> => {
-  const authData = Data.fromRawString(`${config.username}:${config.password}`)
-  if (!authData) throw new Error("Auth data invalid")
-  const auth = authData.toBase64String()
-  const baseUrl = config.url.replace(/\/+$/, "")
-  const fileUrl = `${baseUrl}/accounts-sync-secure-v1.txt`
-  const response = await fetch(fileUrl, { method: "PUT", headers: { "Authorization": `Basic ${auth}`, "Content-Type": "text/plain" }, body: encryptedData })
-  if (!response.ok) throw new Error(`上传失败: ${response.status}`)
+  try {
+    await ensureWebDAVDirectory(config)
+  } catch (error) {
+    throw new Error(`备份目录不可用：${error instanceof Error ? error.message : "未知错误"}`)
+  }
+  const fileUrl = `${webdavBaseUrl(config)}/${WEBDAV_SYNC_FILE}`
+  const response = await webdavRequest(config, fileUrl, "PUT", { "Content-Type": "text/plain" }, encryptedData)
+  if (!response.ok) throw new Error(`上传失败：${webdavStatusText(response.status)}`)
 }
 
 export const downloadFromWebDAV = async (config: WebDAVConfig): Promise<string> => {
-  const authData = Data.fromRawString(`${config.username}:${config.password}`)
-  if (!authData) throw new Error("Auth data invalid")
-  const auth = authData.toBase64String()
-  const baseUrl = config.url.replace(/\/+$/, "")
-  const fileUrl = `${baseUrl}/accounts-sync-secure-v1.txt`
-  const response = await fetch(fileUrl, { method: "GET", headers: { "Authorization": `Basic ${auth}` } })
-  if (!response.ok) throw new Error(`下载失败: ${response.status}`)
+  const fileUrl = `${webdavBaseUrl(config)}/${WEBDAV_SYNC_FILE}`
+  const response = await webdavRequest(config, fileUrl, "GET")
+  if (response.status === 404) throw new Error("云端还没有备份文件，请先上传一次")
+  if (!response.ok) throw new Error(`下载失败：${webdavStatusText(response.status)}`)
   return await response.text()
 }

@@ -1555,12 +1555,12 @@ export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, w
     if (!username) return
     const password = await Dialog.prompt({ title: "WebDAV 配置", message: "请输入密码", defaultValue: webdavConfig?.password || "" })
     if (!password) return
-    const config: WebDAVConfig = { url: url.trim().replace(/\/$/, ""), username: username.trim(), password: password.trim() }
-    const isValid = await testWebDAVConnection(config)
-    if (!isValid) return showToast("WebDAV 连接失败，请检查地址、用户名或密码", true)
+    const config: WebDAVConfig = { url: url.trim().replace(/\/+$/, ""), username: username.trim(), password: password.trim() }
+    const check = await testWebDAVConnection(config)
+    if (!check.ok) return showToast(check.message, true)
     await saveWebDAVConfig(config)
     setWebdavConfig(config)
-    showToast("WebDAV 配置已保存，连接测试通过")
+    showToast(check.message === "连接正常" ? "WebDAV 配置已保存，连接正常" : `${check.message}，配置已保存`)
   }
 
   const clearWebDAV = async () => {
@@ -1641,7 +1641,7 @@ export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, w
           showToast(`已从 WebDAV 导入 ${payload.accounts.length} 个账号和 ${payload.bookmarks.length} 个书签${applied.length > 0 ? `，并恢复 ${applied.join("、")}` : ""}`)
         }
       }
-    } catch { showToast("同步失败：可能是连接异常、密码错误或文件损坏", true) }
+    } catch (error) { showToast(`同步失败：${error instanceof Error ? error.message : "未知错误"}`, true) }
   }
 
   const importFile = async () => {
@@ -1745,7 +1745,7 @@ export const SettingsPage = ({ accounts, setAccounts, bookmarks, setBookmarks, w
             <>
               <Button action={() => handleWebDAVSync(true)}><Text foregroundStyle="#007AFF">强制上传到 WebDAV</Text></Button>
               <Button action={() => handleWebDAVSync(false)}><Text foregroundStyle="#007AFF">从 WebDAV 恢复 (覆盖本地)</Text></Button>
-              <Button action={async () => { const ok = await testWebDAVConnection(webdavConfig!); showToast(ok ? "测试通过，连接正常" : "测试失败，无法连接", !ok) }}><Text>测试服务器连接</Text></Button>
+              <Button action={async () => { const check = await testWebDAVConnection(webdavConfig!); showToast(check.ok ? check.message : `连接失败：${check.message}`, !check.ok) }}><Text>测试服务器连接</Text></Button>
             </>
           )}
         </Section>
