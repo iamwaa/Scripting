@@ -1,0 +1,42 @@
+{
+  "description" : "Narwhal Cloud client: market, virtual machines and account.",
+  "version" : "1.0.0",
+  "runInApp" : true,
+  "icon" : "cloud.fill",
+  "contributors" : [
+
+  ],
+  "localizedNames" : {
+    "en" : "",
+    "it" : "",
+    "pt" : "",
+    "fr" : "",
+    "zh" : "",
+    "de" : "",
+    "es" : "",
+    "ja" : "",
+    "ru" : ""
+  },
+  "entry" : "index.tsx",
+  "name" : "独角鲸云",
+  "permissions" : null,
+  "color" : "#007AFF",
+  "intentInputTypes" : [
+
+  ],
+  "author" : null,
+  "localizedDescriptions" : {
+    "en" : "",
+    "it" : "",
+    "pt" : "",
+    "fr" : "",
+    "zh" : "",
+    "de" : "",
+    "es" : "",
+    "ja" : "",
+    "ru" : ""
+  },
+  "remoteDefinitionId" : null,
+  "iconImage" : null,
+  "remoteResource" : null
+}
