@@ -22,13 +22,17 @@ export function BalanceCard({ user }: { user: User | null }) {
 }
 
 export function VMCard({ vm }: { vm: VM }) {
-  // 主标题展示母机名称；备注仍保留在副标题，便于区分同母机实例。
-  const subtitle = [vm.remark, regionText(vm.machine_region), vm.os_name || vm.type].filter(Boolean).join(' · ')
+  // 主标题优先展示备注名，未设置时依次回退母机名、系统与短 ID。
+  const remark = vm.remark?.trim() || ''
+  const machineName = vm.machine_name?.trim() || ''
+  const title = remark || machineName || vm.os_name || vm.id.slice(0, 8)
+  // 副标题按地区、母机名、系统列出；未设备注时标题已是母机名，不再重复展示。
+  const subtitle = [regionText(vm.machine_region), remark && machineName ? machineName : '', (vm.os_name || vm.type || '').trim()].filter(Boolean).join(' · ')
   return <VStack alignment="leading" spacing={12} padding={{ vertical: 9 }}>
     <HStack spacing={10}>
       <Image systemName="server.rack" font={22} foregroundStyle="systemBlue" />
       <VStack alignment="leading" spacing={4}>
-        <Text font={17} fontWeight="semibold" fixedSize={{ horizontal: false, vertical: true }}>{vm.machine_name || vm.remark || vm.os_name || vm.id.slice(0, 8)}</Text>
+        <Text font={17} fontWeight="semibold" fixedSize={{ horizontal: false, vertical: true }}>{title}</Text>
         <Text font={11} foregroundStyle="secondaryLabel">{subtitle || '云实例'}</Text>
       </VStack>
       <Spacer />

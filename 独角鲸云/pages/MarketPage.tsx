@@ -1,5 +1,5 @@
 import { NavigationStack, NavigationLink, List, Section, Text, Button, Image, Picker, HStack, VStack, Spacer, useState, useEffect, useRef, useMemo } from 'scripting'
-import { request } from '../api/client'
+import { errorMessage, request } from '../api/client'
 import { PublicPlan, MarketMachine } from '../types'
 import { InfoRow, LinkNotice, useTopToast } from '../components'
 import { money, regionText } from '../utils'
@@ -7,6 +7,35 @@ import { MarketMachineCard, EmptyState } from '../components/DashboardCards'
 
 const PAGE_SIZE = 30
 type SortKey = 'price' | 'plans' | 'region' | 'name'
+
+const SPEED_TEST_NODES = [
+  { id: 'cn-telecom', label: '电信' },
+  { id: 'cn-unicom', label: '联通' },
+  { id: 'cn-mobile', label: '移动' },
+]
+
+type SpeedTestResult = {
+  node_id?: string
+  success?: boolean
+  is_up?: boolean
+  avg_rtt?: number
+  packet_loss?: number
+}
+
+function speedTestText(result?: SpeedTestResult): string {
+  if (!result) return '未返回结果'
+  if (result.success === false) return '探针测试失败'
+
+  const parts: string[] = []
+  if (result.is_up === false) parts.push('探针未收到响应')
+  else if (typeof result.avg_rtt === 'number' && Number.isFinite(result.avg_rtt) && result.avg_rtt >= 0) {
+    parts.push(`平均 ${result.avg_rtt.toFixed(1)} ms`)
+  }
+  if (typeof result.packet_loss === 'number' && Number.isFinite(result.packet_loss) && result.packet_loss >= 0 && result.packet_loss <= 100) {
+    parts.push(`丢包 ${result.packet_loss}%`)
+  }
+  return parts.join(' · ') || '未返回指标'
+}
 
 // 一次加载全部套餐后在客户端按机器聚合，避免多次请求公开接口。
 function groupMachines(plans: PublicPlan[]): MarketMachine[] {
@@ -43,10 +72,36 @@ function groupMachines(plans: PublicPlan[]): MarketMachine[] {
 }
 
 function MachineDetail({ machine }: { machine: MarketMachine }) {
+  const [testing, setTesting] = useState(false)
+  const [testResults, setTestResults] = useState<SpeedTestResult[] | null>(null)
+  const testLock = useRef(false)
+  const toast = useTopToast()
   // 排序后售罄套餐统一排在后，避免可用套餐被埋没。
   const plans = [...machine.availablePlans, ...machine.plans.filter(plan => plan.sold_out)]
   const description = machine.description?.trim()
-  return <List navigationTitle={machine.name} navigationBarTitleDisplayMode="inline" tabBarVisibility="hidden">
+
+  async function testSpeed() {
+    if (testLock.current) return
+    testLock.current = true
+    setTesting(true)
+    setTestResults(null)
+    toast.show('官方探针正在测试…', true)
+    try {
+      const path = `/machines/${encodeURIComponent(machine.id)}/test-speed`
+      const nodes = SPEED_TEST_NODES.map(node => node.id)
+      const results = await request<SpeedTestResult[]>(path, '', 'POST', { nodes })
+      if (!Array.isArray(results)) throw new Error('官方测速返回格式异常')
+      setTestResults(results)
+    } catch (e) {
+      toast.show(`官方测速未完成：${errorMessage(e)}`)
+    } finally {
+      testLock.current = false
+      setTesting(false)
+      toast.finish()
+    }
+  }
+
+  return <List navigationTitle={machine.name} navigationBarTitleDisplayMode="inline" tabBarVisibility="hidden" toast={toast.props}>
     {/* 头部只显示归属与保障，母机卡片里已有的起价、可购数不重复。 */}
     <Section>
       <InfoRow label="商家" value={machine.ownerName || '—'} />
@@ -54,6 +109,14 @@ function MachineDetail({ machine }: { machine: MarketMachine }) {
       <InfoRow label="虚拟化" value={machine.vmType || '—'} />
       <InfoRow label="SLA" value={machine.sla == null ? '—' : `${machine.sla}%`} />
       {description ? <LinkNotice message={description} /> : null}
+    </Section>
+    <Section footer={<Text>由平台的电信、联通、移动探针发起 ICMP Ping。</Text>}>
+      <Button title={testing ? '正在测试三网…' : '三网测试'} action={() => void testSpeed()} disabled={testing} />
+      {testResults ? SPEED_TEST_NODES.map(node => <InfoRow
+        key={node.id}
+        label={node.label}
+        value={speedTestText(testResults.find(result => result?.node_id === node.id))}
+      />) : null}
     </Section>
     <Section header={<Text font={13} foregroundStyle="secondaryLabel">套餐 {machine.availablePlans.length} 可购 / 共 {plans.length}</Text>}>
       {plans.map(plan => <NavigationLink key={plan.id} destination={<PlanDetail plan={plan} />}>

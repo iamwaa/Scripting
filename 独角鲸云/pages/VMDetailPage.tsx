@@ -98,7 +98,8 @@ export default function VMDetailPage({ token, initial }: { token: string; initia
   const bandwidthText = vm.bandwidth_mbps == null ? '—' : vm.bandwidth_mbps === 0 ? '不限' : `${vm.bandwidth_mbps} Mbps`
   const machineName = vm.machine_name?.trim() || ''
   const instanceName = vm.remark?.trim() || machineName || '未命名实例'
-  const region = regionText(vm.machine_region)
+  // 标题已是母机名时不再重复；设备注时展示备注标题 + 地区 · 母机名。
+  const locationText = [regionText(vm.machine_region), vm.remark?.trim() ? machineName : ''].filter(Boolean).join(' · ')
   const systemText = [vm.os_name || vm.os_image, vm.type].filter(Boolean).join(' · ') || '—'
 
   return <List navigationTitle={vm.remark || vm.machine_name || '主机详情'} navigationBarTitleDisplayMode="inline" tabBarVisibility="hidden" refreshable={refresh}
@@ -121,11 +122,10 @@ export default function VMDetailPage({ token, initial }: { token: string; initia
           </Button>
         </HStack>
         <HStack spacing={12} alignment="top" padding={{ leading: 34 }}>
-          {region ? <Text font={13} foregroundStyle="secondaryLabel" fixedSize={{ horizontal: false, vertical: true }} frame={{ maxWidth: Infinity, alignment: 'leading' }}>{region}</Text> : <Spacer />}
+          {locationText ? <Text font={13} foregroundStyle="secondaryLabel" fixedSize={{ horizontal: false, vertical: true }} frame={{ maxWidth: Infinity, alignment: 'leading' }}>{locationText}</Text> : <Spacer />}
           <StatusBadge status={vm.status} />
         </HStack>
       </VStack>
-      {machineName && machineName !== instanceName ? <InfoRow label="母机" value={machineName} /> : null}
       <InfoRow label="系统" value={systemText} />
       <InfoRow label="商家" value={vm.owner_name || '—'} />
       <VStack alignment="leading" spacing={5} padding={{ vertical: 2 }} frame={{ maxWidth: Infinity, alignment: 'leading' }}>

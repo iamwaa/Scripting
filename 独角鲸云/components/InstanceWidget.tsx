@@ -41,16 +41,23 @@ function traffic(vm: VM): { text: string; ratio?: number } {
 }
 
 function ExpiryDate({ vm, size = 11 }: { vm: VM; size?: number }) {
-  let text = '到期 —'
-  if (vm.expires_at === 0) text = '不限期'
-  else if (vm.expires_at != null && Number.isFinite(vm.expires_at)) {
+  // 用日历符号代替「到期」二字，腾出宽度给日期，图文规则与指标标题一致。
+  let text = '—'
+  let symbol = 'calendar'
+  if (vm.expires_at === 0) {
+    text = '不限期'
+    symbol = 'infinity'
+  } else if (vm.expires_at != null && Number.isFinite(vm.expires_at)) {
     const date = new Date(vm.expires_at < 1e12 ? vm.expires_at * 1000 : vm.expires_at)
     if (Number.isFinite(date.getTime())) {
       const year = date.getFullYear() === new Date().getFullYear() ? '' : `${date.getFullYear()}/`
-      text = `到期 ${year}${date.getMonth() + 1}/${date.getDate()}`
+      text = `${year}${date.getMonth() + 1}/${date.getDate()}`
     }
   }
-  return <Text font={size} foregroundStyle="secondaryLabel" monospacedDigit lineLimit={1} minScaleFactor={0.85}>{text}</Text>
+  return <HStack spacing={3} foregroundStyle="secondaryLabel">
+    <Image systemName={symbol} font={size - 1} imageScale="small" />
+    <Text font={size} monospacedDigit lineLimit={1} minScaleFactor={0.85}>{text}</Text>
+  </HStack>
 }
 
 function MetricTitle({ title, symbol, size = 11 }: { title: string; symbol: string; size?: number }) {
@@ -98,8 +105,9 @@ function InstanceRow({ vm, large, first }: { vm: VM; large: boolean; first: bool
   return <VStack alignment="leading" spacing={large ? 7 : 3} padding={{ top: first ? 0 : large ? 8 : 2 }} frame={{ maxWidth: 'infinity', maxHeight: 'infinity', alignment: 'top' }} offset={large || first ? undefined : { x: 0, y: 4 }}>
     <HStack spacing={8}>
       <Text font={large ? 16 : 15} fontWeight="semibold" lineLimit={1} truncationMode="middle" frame={{ maxWidth: 'infinity', alignment: 'leading' }}>{widgetInstanceName(vm)}</Text>
-      <WidgetStatus status={vm.status} size={titleSize} />
+      {/* 顶行顺序：名称、到期、状态。 */}
       <ExpiryDate vm={vm} size={titleSize} />
+      <WidgetStatus status={vm.status} size={titleSize} />
     </HStack>
     <HStack alignment="top" spacing={16}>
       <VStack frame={{ width: large ? 164 : 140 }}><UsageMetrics vm={vm} size={metricSize} titleSize={titleSize} /></VStack>
@@ -112,7 +120,8 @@ function SmallInstance({ vm }: { vm: VM }) {
   return <VStack alignment="leading" spacing={0} frame={{ maxWidth: 'infinity', maxHeight: 'infinity', alignment: 'top' }}>
     <Text font={17} fontWeight="semibold" lineLimit={2} truncationMode="middle">{widgetInstanceName(vm)}</Text>
     <Spacer minLength={1} />
-    <HStack spacing={4}><WidgetStatus status={vm.status} /><Spacer minLength={0} /><ExpiryDate vm={vm} /></HStack>
+    {/* 小号同一行：左侧到期，右侧状态。 */}
+    <HStack spacing={4}><ExpiryDate vm={vm} /><Spacer minLength={0} /><WidgetStatus status={vm.status} /></HStack>
     <Spacer minLength={1} />
     <UsageMetrics vm={vm} size={24} />
     <Spacer minLength={1} />
